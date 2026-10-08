@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stackwallet",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "observability": { "enabled": false },
+
+  // Assets-only Worker: no server code runs (D3). The SPA is client-routed, so
+  // any path that is not a real file serves index.html.
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "html_handling": "auto-trailing-slash"
+  }
+}

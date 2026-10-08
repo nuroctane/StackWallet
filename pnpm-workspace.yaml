@@ -5,6 +5,7 @@ packages:
 allowBuilds:
   esbuild: true
   '@tauri-apps/cli': true
+  workerd: true
 
 # Supply-chain defense: a package version must be at least one day old before
 # pnpm will install it. Malicious npm releases are usually pulled within hours.
