@@ -76,3 +76,16 @@ When the user says **ship**, **push**, **deploy**, **put on main**, **release**,
 Pattern: `StackWallet_YYYY-MM-DD_<sha>_<slug>.7z` (exclude target, .git, node_modules, dist, .next, .nur)
 
 Never bare-push without backup. Report commit + remote + full backup path.
+
+**Deploy (web):** remote is private `github.com/nuroctane/StackWallet`. Every push to `main`
+runs `.github/workflows/deploy.yml`, which builds `apps/web` and deploys the assets-only
+Worker `stackwallet` (config in `apps/web/wrangler.jsonc`) to
+`https://stackwallet.civetadeicollegium.workers.dev`, then verifies the page is live and
+opens+closes a `deployment` issue. It needs the repo secrets `CLOUDFLARE_API_TOKEN`
+(Workers Scripts: Edit) and `CLOUDFLARE_ACCOUNT_ID`; without the token the run stays green
+and skips the deploy. Do not also run `wrangler deploy` by hand after a push (double deploy).
+Manual fallback: `pnpm --filter @stackwallet/web build; pnpm --filter @stackwallet/web deploy`.
+
+**Windows shell note:** this machine's `PATH` is longer than cmd.exe's 8191-char limit, so pnpm
+lifecycle scripts fail with `'node' is not recognized`. Set a trimmed `$env:Path` (nodejs, pnpm,
+cargo, Git, System32) in the same command before running `pnpm`.
