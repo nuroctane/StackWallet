@@ -1,0 +1,15 @@
+[package]
+name = "stackwallet-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Headless StackWallet: pairing, signing party, scheduler"
+
+[[bin]]
+name = "stackwallet"
+path = "src/main.rs"
+
+[dependencies]
+stackwallet-core = { path = "../stackwallet-core" }
+serde_json.workspace = true

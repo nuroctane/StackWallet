@@ -1,0 +1,32 @@
+# Rust
+target/
+**/*.rs.bk
+
+# Node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+coverage/
+
+# WASM output
+packages/core-client/wasm/
+
+# Tauri
+apps/desktop/src-tauri/gen/
+
+# Agent workspace artifacts
+.nur/
+.meta/
+
+# Local secrets and vaults (never commit)
+*.vault
+*.share
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

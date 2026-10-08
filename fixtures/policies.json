@@ -1,0 +1,37 @@
+[
+  {
+    "id": "pol-folder",
+    "name": "trading-folder",
+    "mode": "enforce",
+    "rules": [
+      { "rule": "spendCap", "window": "24h", "usdMicros": 100000000 },
+      { "rule": "spendCap", "window": "tx", "usdMicros": 50000000 },
+      {
+        "rule": "chainAllow",
+        "chainIds": ["eip155:1", "eip155:8453", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"]
+      },
+      { "rule": "requireSimulationPass" },
+      { "rule": "cooldown", "seconds": 30 },
+      { "rule": "maxPendingProposals", "count": 3 }
+    ]
+  },
+  {
+    "id": "pol-wallet",
+    "name": "evm-lane",
+    "mode": "enforce",
+    "rules": [
+      { "rule": "destinationAllow", "addresses": ["0xSAFE", "0xdex"] },
+      { "rule": "destinationDeny", "addresses": ["0xEVIL"] },
+      { "rule": "assetAllow", "assets": ["eip155:1:native", "eip155:1:erc20:0xusdc"] },
+      { "rule": "maxSlippageBps", "bps": 50 },
+      { "rule": "requireApprovers", "deviceIds": ["phone", "laptop"], "atLeast": 1 },
+      { "rule": "refuseUntrustedDestinations" }
+    ]
+  },
+  {
+    "id": "pol-shadow",
+    "name": "shadow-tight",
+    "mode": "audit",
+    "rules": [{ "rule": "spendCap", "window": "tx", "usdMicros": 1000000 }]
+  }
+]

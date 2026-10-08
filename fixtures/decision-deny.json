@@ -1,0 +1,9 @@
+{
+  "decision": "deny",
+  "reasons": [
+    "[evm-lane] asset eip155:1:erc20:0xshitcoin is not allowed",
+    "[evm-lane] slippage 300 bps exceeds 50 bps",
+    "[trading-folder] spend cap H24: 110000000 micro-USD would exceed 100000000"
+  ],
+  "auditNotes": ["[shadow-tight] spend cap Tx: 20000000 micro-USD would exceed 1000000"]
+}

@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/stackwallet-core",
+  "crates/stackwallet-wasm",
+  "crates/stackwallet-cli",
+  "apps/desktop/src-tauri",
+]
+# The Tauri crate needs platform webview libraries, so plain `cargo test` skips it.
+# The wasm crate only makes sense for wasm32, so it is checked explicitly in CI.
+default-members = ["crates/stackwallet-core", "crates/stackwallet-cli"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/nuroctane/StackWallet"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+sha2 = "0.10"
+hex = "0.4"
+zeroize = { version = "1", features = ["derive"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"

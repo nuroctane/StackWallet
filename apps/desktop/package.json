@@ -1,0 +1,18 @@
+{
+  "name": "@stackwallet/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "desktop": "tauri dev",
+    "desktop:build": "tauri build",
+    "icons": "tauri icon ../../packages/ui/brand/app-icon.png",
+    "check": "echo \"desktop: no TypeScript sources; frontend lives in @stackwallet/web\"",
+    "build": "echo \"desktop: use pnpm desktop:build (needs Rust + WebView2)\"",
+    "test": "echo \"desktop: no tests yet\""
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

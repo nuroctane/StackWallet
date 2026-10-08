@@ -1,0 +1,23 @@
+{
+  "name": "@stackwallet/core-client",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit --pretty false",
+    "build": "pnpm check",
+    "test": "vitest run --passWithNoTests",
+    "build:wasm": "wasm-pack build ../../crates/stackwallet-wasm --target web --out-dir ../../packages/core-client/wasm --out-name stackwallet_wasm"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "typescript": "7.0.2",
+    "vitest": "3.2.6"
+  }
+}

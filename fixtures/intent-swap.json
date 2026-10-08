@@ -1,0 +1,17 @@
+{
+  "id": "tx-swap-1",
+  "walletId": "wallet-evm-lane",
+  "accountId": "acct-eth-mainnet",
+  "chainId": "eip155:1",
+  "proposer": { "kind": "automation", "automationId": "auto-dca", "runId": "run-7" },
+  "kind": "swap",
+  "sell": "eip155:1:native",
+  "sellAmount": "10000000000000000",
+  "buy": "eip155:1:erc20:0xshitcoin",
+  "minBuyAmount": "1",
+  "maxSlippageBps": 300,
+  "aggregator": "0x",
+  "usdMicros": 20000000,
+  "untrustedDestinations": [],
+  "createdAtMs": 1760000000000
+}

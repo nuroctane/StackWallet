@@ -1,0 +1,16 @@
+[package]
+name = "stackwallet-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Browser surface for stackwallet-core"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+stackwallet-core = { path = "../stackwallet-core" }
+serde.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "0.2"

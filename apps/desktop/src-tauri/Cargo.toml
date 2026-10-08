@@ -1,0 +1,20 @@
+[package]
+name = "stackwallet-tauri"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "StackWallet desktop shell"
+
+[lib]
+name = "stackwallet_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+stackwallet-core = { path = "../../../crates/stackwallet-core" }
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true

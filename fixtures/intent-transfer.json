@@ -1,0 +1,19 @@
+{
+  "id": "tx-transfer-1",
+  "walletId": "wallet-evm-lane",
+  "accountId": "acct-eth-mainnet",
+  "chainId": "eip155:1",
+  "proposer": {
+    "kind": "agent",
+    "sessionId": "sess-1",
+    "grantId": "grant-trading",
+    "rationale": "Move 5 USD of ETH to the DEX router for the rebalance."
+  },
+  "kind": "transfer",
+  "to": "0xsafe",
+  "asset": "eip155:1:native",
+  "amount": "2500000000000000",
+  "usdMicros": 5000000,
+  "untrustedDestinations": [],
+  "createdAtMs": 1760000000000
+}

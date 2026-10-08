@@ -1,0 +1,145 @@
+/* StackWallet night glass tokens. Source of truth: docs/DESIGN.md.
+   Tailwind v4 reads @theme; plain CSS reads the --sw-* variables. */
+@import 'tailwindcss';
+
+@theme {
+  --color-paper: #050505;
+  --color-surface: #141414;
+  --color-elevated: #1b1b1b;
+  --color-ink: #f2f2f2;
+  --color-muted: #a0a0a0;
+  --color-faint: #777777;
+  --color-edge: rgb(255 255 255 / 12%);
+  --color-edge-strong: rgb(255 255 255 / 30%);
+  --color-sheen: rgb(255 255 255 / 9%);
+  --color-hover: rgb(255 255 255 / 7%);
+  --color-danger: #ff453a;
+  --color-danger-soft: rgb(255 69 58 / 22%);
+  --color-warm: #e2c27b;
+  --color-ok: #d8d8d8;
+
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', 'SF Mono', Menlo, monospace;
+
+  --radius-sw: 12px;
+  --radius-sw-sm: 6px;
+
+  --ease-sw: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-sw-morph: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-sw-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+:root {
+  --sw-paper: var(--color-paper);
+  --sw-surface: var(--color-surface);
+  --sw-elevated: var(--color-elevated);
+  --sw-ink: var(--color-ink);
+  --sw-muted: var(--color-muted);
+  --sw-faint: var(--color-faint);
+  --sw-edge: var(--color-edge);
+  --sw-edge-strong: var(--color-edge-strong);
+  --sw-sheen: var(--color-sheen);
+  --sw-hover: var(--color-hover);
+  --sw-danger: var(--color-danger);
+  --sw-danger-soft: var(--color-danger-soft);
+  --sw-warm: var(--color-warm);
+  --sw-ok: var(--color-ok);
+  --sw-radius: var(--radius-sw);
+  --sw-radius-sm: var(--radius-sw-sm);
+  --sw-ease: var(--ease-sw);
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--sw-paper);
+  color: var(--sw-ink);
+  font: 400 13px/1.5 var(--font-mono);
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+  overscroll-behavior: none;
+}
+
+/* Glass panel: surface fill, hairline edge, top specular. */
+.sw-glass {
+  background: var(--sw-surface);
+  border: 1px solid var(--sw-edge);
+  border-radius: var(--sw-radius);
+  box-shadow: inset 0 1px 0 var(--sw-sheen);
+}
+
+@supports (backdrop-filter: blur(1px)) {
+  @media not (prefers-reduced-transparency: reduce) {
+    .sw-glass {
+      background: color-mix(in srgb, var(--sw-surface) 88%, transparent);
+      backdrop-filter: blur(18px);
+    }
+  }
+}
+
+.sw-elevated {
+  background: var(--sw-elevated);
+  border: 1px solid var(--sw-edge);
+  border-radius: var(--sw-radius);
+}
+
+/* Every pressable scales to 0.97. Only transform and opacity animate. */
+.sw-pressable {
+  transition:
+    transform 140ms var(--sw-ease),
+    opacity 140ms var(--sw-ease),
+    background-color 140ms var(--sw-ease);
+}
+.sw-pressable:active {
+  transform: scale(0.97);
+}
+@media (hover: hover) and (pointer: fine) {
+  .sw-pressable:hover {
+    background-color: var(--sw-hover);
+  }
+}
+
+.sw-enter {
+  animation: sw-enter 200ms var(--sw-ease) both;
+}
+@keyframes sw-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sw-pressable:active {
+    transform: none;
+  }
+  .sw-enter {
+    animation: sw-enter-fade 200ms var(--sw-ease) both;
+  }
+  @keyframes sw-enter-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+:focus-visible {
+  outline: 1px solid var(--sw-edge-strong);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgb(255 255 255 / 18%);
+}

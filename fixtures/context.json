@@ -1,0 +1,18 @@
+{
+  "nowMs": 1760000000000,
+  "spentUsdMicros": { "24h": 90000000, "7d": 250000000 },
+  "pendingProposals": 1,
+  "lastTxAtMs": 1759999900000,
+  "simulationOk": true,
+  "keyGroup": {
+    "id": "kg-evm-lane",
+    "threshold": 2,
+    "parties": [
+      { "deviceId": "laptop", "role": "human" },
+      { "deviceId": "phone", "role": "human" },
+      { "deviceId": "agent", "role": "agent" }
+    ],
+    "curves": ["secp256k1", "ed25519"],
+    "publicKeys": []
+  }
+}

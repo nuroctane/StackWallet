@@ -1,0 +1,30 @@
+{
+  "name": "@stackwallet/web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "build": "tsc -p tsconfig.json --noEmit --pretty false && vite build",
+    "check": "tsc -p tsconfig.json --noEmit --pretty false",
+    "preview": "vite preview --host 127.0.0.1 --port 1420",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@stackwallet/chains": "workspace:*",
+    "@stackwallet/core-client": "workspace:*",
+    "@stackwallet/ui": "workspace:*",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "@vitejs/plugin-react": "6.1.1",
+    "tailwindcss": "^4.1.0",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "3.2.6"
+  }
+}

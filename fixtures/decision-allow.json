@@ -1,0 +1,5 @@
+{
+  "decision": "allow",
+  "requiredApprovers": [{ "deviceIds": ["phone", "laptop"], "atLeast": 1 }],
+  "auditNotes": ["[shadow-tight] spend cap Tx: 5000000 micro-USD would exceed 1000000"]
+}
