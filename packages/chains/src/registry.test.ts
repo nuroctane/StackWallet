@@ -18,6 +18,7 @@ function fakeAdapter(family: ChainAdapter['family'], chainId: string): ChainAdap
       },
     ],
     deriveAddress: () => '0x0',
+    validateAddress: () => true,
     getBalances: notYet,
     getHistory: notYet,
     build: notYet,

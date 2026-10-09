@@ -192,13 +192,18 @@ See section 10.
 See section 6.
 
 **Asset** `{ ref: "<chainId>:<kind>:<identifier>", symbol, name, decimals, logo?, sources{} }`
-Examples: `eip155:1:erc20:0xa0b8…`, `bip122:000000000019d6…:native`, `solana:mainnet:spl:EPjF…`,
-`cosmos:osmosis-1:ibc/27394F…`. Chain ids follow CAIP-2.
+Examples: `eip155:1:erc20:0xa0b8…`, `bip122:000000000019d6689c085ae165831e93:native`,
+`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp:spl:EPjF…`, `cosmos:osmosis-1:ibc:27394F…` (the `ibc/`
+prefix of the on-chain denom is folded into the kind). Chain ids follow CAIP-2.
 
 **Price** `{ assetRef, quote: 'usd', value, source, fetchedAt, confidence }`
 **Holding** `{ accountId, assetRef, amount, updatedAt }`
 
 ### 4.2 Storage
+
+Interim: until the encrypted store ships, the web app keeps the directory (folders, wallets,
+watch-only accounts, no secrets) as a Zod-validated JSON blob in `localStorage`. Nothing
+sensitive is ever written there; the vault below replaces it.
 
 SQLite everywhere (rusqlite natively, SQLite-WASM over OPFS in the browser). The whole database
 is encrypted at rest with XChaCha20-Poly1305 using a data encryption key (DEK). The DEK is

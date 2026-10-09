@@ -26,6 +26,18 @@ importers:
       '@stackwallet/chains':
         specifier: workspace:*
         version: link:../../packages/chains
+      '@stackwallet/chains-bitcoin':
+        specifier: workspace:*
+        version: link:../../packages/chains-bitcoin
+      '@stackwallet/chains-cosmos':
+        specifier: workspace:*
+        version: link:../../packages/chains-cosmos
+      '@stackwallet/chains-evm':
+        specifier: workspace:*
+        version: link:../../packages/chains-evm
+      '@stackwallet/chains-solana':
+        specifier: workspace:*
+        version: link:../../packages/chains-solana
       '@stackwallet/core-client':
         specifier: workspace:*
         version: link:../../packages/core-client
@@ -38,6 +50,9 @@ importers:
       react-dom:
         specifier: 19.2.8
         version: 19.2.8(react@19.2.8)
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
     devDependencies:
       '@tailwindcss/vite':
         specifier: ^4.1.0
@@ -69,6 +84,106 @@ importers:
 
   packages/chains:
     dependencies:
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-bitcoin:
+    dependencies:
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-cosmos:
+    dependencies:
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-evm:
+    dependencies:
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-solana:
+    dependencies:
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
       '@stackwallet/core-client':
         specifier: workspace:*
         version: link:../core-client
@@ -672,6 +787,10 @@ packages:
     os: [linux]
     libc: [glibc]
 
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
+
   '@oxc-project/types@0.153.0':
     resolution: {integrity: sha512-jSNrRIyvPVLL5E1z/tS5zLAprosGz/FuI1PWwEOz59j3E4TTTzSpqKb/RDGqJhhW0QHYISGXxq582wGx6T11Tw==}
 
@@ -920,6 +1039,9 @@ packages:
     resolution: {integrity: sha512-JY1rQdWOJrKutORqKO1uzrHXV86jFiQzfLFKx2s8S1CjLXL9fC5LOIvk0q7Z7PXJvsByt+sdoE1Q2a9gBr4gLQ==}
     cpu: [x64]
     os: [win32]
+
+  '@scure/base@2.4.0':
+    resolution: {integrity: sha512-thZ1TuJwFwBblOhgsjDKvvGirBxNp+wSvY/DR6tJBJOTDhdAAcHJ8Vbr2eFnqaxeca4+t0i9KBf+uHYGWwZORg==}
 
   '@sindresorhus/is@7.2.0':
     resolution: {integrity: sha512-P1Cz1dWaFfR4IR+U13mqqiGsLFf1KbayybWwdd2vfctdV6hDpUkgCY0nKOLLTMSoRd/jJNjtbqzf13K8DCCXQw==}
@@ -2156,6 +2278,8 @@ snapshots:
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
 
+  '@noble/hashes@2.4.0': {}
+
   '@oxc-project/types@0.153.0': {}
 
   '@poppinss/colors@4.1.6':
@@ -2291,6 +2415,8 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.64.2':
     optional: true
+
+  '@scure/base@2.4.0': {}
 
   '@sindresorhus/is@7.2.0': {}
 

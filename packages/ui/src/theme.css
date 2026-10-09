@@ -118,20 +118,37 @@ body {
   }
 }
 
+/* Native dialog in the top layer. The UA sets display:none while closed, so the
+   open display value lives on the element (Tailwind `open:flex`). */
+dialog.sw-dialog {
+  color: var(--sw-ink);
+  inset: 0;
+}
+dialog.sw-dialog[open] {
+  animation: sw-enter 200ms var(--sw-ease) both;
+}
+dialog.sw-dialog::backdrop {
+  background: rgb(0 0 0 / 60%);
+}
+dialog.sw-dialog[open]::backdrop {
+  animation: sw-enter-fade 200ms var(--sw-ease) both;
+}
+@keyframes sw-enter-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sw-pressable:active {
     transform: none;
   }
-  .sw-enter {
+  .sw-enter,
+  dialog.sw-dialog[open] {
     animation: sw-enter-fade 200ms var(--sw-ease) both;
-  }
-  @keyframes sw-enter-fade {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
   }
 }
 

@@ -120,6 +120,11 @@ export async function createCoreClient(opts: CreateCoreClientOptions = {}): Prom
     if (typeof m.default === 'function') await m.default();
     return new WasmCoreClient(m);
   } catch (err) {
-    return new UnavailableCoreClient(err instanceof Error ? err.message : String(err));
+    const message = err instanceof Error ? err.message : String(err);
+    // A missing bundle is the normal state until the wasm build is wired in;
+    // keep the status line short and leave the raw error for the console.
+    const missing = /fetch dynamically imported module|Failed to fetch|404/i.test(message);
+    if (missing) console.warn(`[stackwallet] wasm core not found at ${url}: ${message}`);
+    return new UnavailableCoreClient(missing ? 'wasm core not bundled' : message);
   }
 }

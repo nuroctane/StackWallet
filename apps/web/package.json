@@ -13,10 +13,15 @@
   },
   "dependencies": {
     "@stackwallet/chains": "workspace:*",
+    "@stackwallet/chains-bitcoin": "workspace:*",
+    "@stackwallet/chains-cosmos": "workspace:*",
+    "@stackwallet/chains-evm": "workspace:*",
+    "@stackwallet/chains-solana": "workspace:*",
     "@stackwallet/core-client": "workspace:*",
     "@stackwallet/ui": "workspace:*",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.0",

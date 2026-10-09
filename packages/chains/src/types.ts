@@ -18,14 +18,40 @@ import type {
 export type Address = string;
 export type TxHash = string;
 
+/**
+ * Family-specific facts an adapter needs for offline work (address derivation
+ * and validation). Every key is optional so one schema serves all families.
+ */
+export const ChainExtra = z.object({
+  /** Cosmos account prefix or Bitcoin segwit human-readable part. */
+  bech32Prefix: z.string().optional(),
+  /** SLIP-44 coin type used by the chain's wallets. */
+  coinType: z.number().int().nonnegative().optional(),
+  /** Cosmos: how a secp256k1 public key becomes an account address. */
+  addressAlgo: z.enum(['secp256k1', 'ethsecp256k1']).optional(),
+  /** Cosmos base denom of the native asset, e.g. `uatom`. */
+  baseDenom: z.string().optional(),
+  /** Cosmos suggested gas price as `<amount><denom>`, e.g. `0.025uatom`. */
+  gasPrice: z.string().optional(),
+  /** Bitcoin family base58check version bytes. */
+  p2pkhVersion: z.number().int().min(0).max(255).optional(),
+  p2shVersion: z.number().int().min(0).max(255).optional(),
+  /** Bitcoin family: whether bech32 segwit addresses are valid on this network. */
+  segwit: z.boolean().optional(),
+});
+export type ChainExtra = z.infer<typeof ChainExtra>;
+
 export const ChainInfo = z.object({
   chainId: z.string(),
   family: z.enum(['evm', 'bitcoin', 'solana', 'cosmos']),
   name: z.string(),
   nativeAsset: z.object({ ref: z.string(), symbol: z.string(), decimals: z.number().int() }),
   testnet: z.boolean().default(false),
+  /** Explorer link template with a `{hash}` placeholder. */
   explorerTxUrl: z.string().optional(),
+  /** JSON-RPC urls for evm/solana; REST base urls for bitcoin (mempool API) and cosmos (LCD). */
   defaultRpcs: z.array(z.string().url()).default([]),
+  extra: ChainExtra.optional(),
 });
 export type ChainInfo = z.infer<typeof ChainInfo>;
 
@@ -113,6 +139,8 @@ export interface ChainAdapter {
   readonly family: ChainFamily;
   chains(): ChainInfo[];
   deriveAddress(pub: PublicKey, chainId: ChainId): Address;
+  /** Syntactic + checksum validation only; never touches the network. */
+  validateAddress(addr: string, chainId: ChainId): boolean;
   getBalances(addr: Address, chainId: ChainId): Promise<Holding[]>;
   getHistory(addr: Address, chainId: ChainId, cursor?: string): Promise<Page<TxRecord>>;
   build(intent: TxIntent, chainId: ChainId): Promise<UnsignedTx>;
