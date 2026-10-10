@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChainRegistry } from '@stackwallet/chains';
-import { createCoreClient, type CoreClient } from '@stackwallet/core-client';
 import { ToastProvider, useMediaQuery, useToasts } from '@stackwallet/ui';
 
+import { useCoreStatus } from './core/bridge.js';
 import { createDefaultRegistry } from './data/registry.js';
 import { AddFolderDialog } from './shell/AddFolderDialog.js';
 import { AddWatchWalletDialog } from './shell/AddWatchWalletDialog.js';
@@ -17,6 +17,7 @@ import {
   type UiRoute,
 } from './shell/ShellContext.js';
 import { StatusBar } from './shell/StatusBar.js';
+import { VaultDialog } from './shell/VaultDialog.js';
 import { balanceCache } from './store/balances.js';
 import { devicesQuarantinedKey } from './store/devices.js';
 import { directoryQuarantinedKey, useDirectory } from './store/persist.js';
@@ -40,43 +41,6 @@ import {
   WorkspaceContext,
   type WorkspaceApi,
 } from './workspace/WorkspaceContext.js';
-
-export interface CoreStatus {
-  backend: CoreClient['backend'];
-  version?: string;
-  reason?: string;
-}
-
-function useCoreStatus(): CoreStatus {
-  const [core, setCore] = useState<CoreStatus>({ backend: 'unavailable', reason: 'loading' });
-
-  useEffect(() => {
-    let cancelled = false;
-    void createCoreClient().then(async (client) => {
-      if (cancelled) return;
-      if (client.backend === 'unavailable') {
-        setCore({
-          backend: 'unavailable',
-          reason: 'reason' in client ? String(client.reason) : 'unknown',
-        });
-        return;
-      }
-      try {
-        setCore({ backend: client.backend, version: await client.coreVersion() });
-      } catch (err) {
-        setCore({
-          backend: 'unavailable',
-          reason: err instanceof Error ? err.message : String(err),
-        });
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return core;
-}
 
 function buildRegistry(): { registry: ChainRegistry; error?: string } {
   try {
@@ -185,6 +149,7 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       openSearch: () => setSearchOpen(true),
       openCatalogue: (anchor) => setCatalogue(anchor),
       openSettings: (paneId, anchor) => setSettings({ paneId, anchor }),
+      openVault: () => setDialog({ kind: 'vault' }),
       coreLabel,
       coreState:
         core.backend === 'unavailable'
@@ -287,6 +252,7 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
         target={deleteTarget}
         onClose={closeDialog}
       />
+      <VaultDialog open={dialog?.kind === 'vault'} onClose={closeDialog} />
     </ShellContext>
   );
 }

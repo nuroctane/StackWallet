@@ -1,6 +1,6 @@
 import { Kbd, StatusDot } from '@stackwallet/ui';
 
-import type { CoreStatus } from '../App.js';
+import type { CoreStatus } from '../core/bridge.js';
 import { listChains, listFamilies } from '../lib/chains.js';
 import { activeDevices, useDevices } from '../store/devices.js';
 import { useRegistry } from '../store/RegistryContext.js';

@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
-    "build": "tsc -p tsconfig.json --noEmit --pretty false && vite build",
+    "build": "pnpm build:wasm && tsc -p tsconfig.json --noEmit --pretty false && vite build",
+    "build:wasm": "wasm-pack build ../../crates/stackwallet-wasm --target web --release --no-pack --no-typescript --out-dir ../../apps/web/public/wasm --out-name stackwallet_wasm",
+    "build:web": "tsc -p tsconfig.json --noEmit --pretty false && vite build",
     "check": "tsc -p tsconfig.json --noEmit --pretty false",
     "preview": "vite preview --host 127.0.0.1 --port 1420",
     "test": "vitest run --passWithNoTests",

@@ -9,6 +9,11 @@ description = "Browser surface for stackwallet-core"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# Current rustc emits bulk-memory and non-trapping float ops for wasm32; the
+# wasm-opt that wasm-pack pins rejects them unless told they are allowed.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Os", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+
 [dependencies]
 stackwallet-core = { path = "../stackwallet-core", default-features = false }
 serde.workspace = true

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Chip, Dialog, Input, Kbd } from '@stackwallet/ui';
 
+import { vault } from '../core/bridge.js';
+import { useVaultView } from '../core/vault.js';
 import { fuzzyMatch } from '../lib/format.js';
 import { listChains } from '../lib/chains.js';
 import { activeDevices, useDevices } from '../store/devices.js';
@@ -86,6 +88,7 @@ function SearchBody({
   const devices = useDevices();
   const registryCtx = useRegistry();
   const shell = useShell();
+  const vaultView = useVaultView(vault);
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
@@ -144,6 +147,23 @@ function SearchBody({
         label: ws.locked ? 'unlock layout' : 'lock layout',
         dim: 'drag and resize',
         run: () => workspace.toggleLock(),
+      },
+      {
+        id: 'a:vault',
+        type: 'action',
+        label:
+          vaultView.status.kind === 'absent'
+            ? 'create vault'
+            : vaultView.status.kind === 'locked'
+              ? 'unlock vault'
+              : vaultView.status.kind === 'unlocked'
+                ? 'lock vault'
+                : 'vault',
+        dim: 'device identity',
+        run: () => {
+          if (vaultView.status.kind === 'unlocked') void vault.lock();
+          else shell.openDialog({ kind: 'vault' });
+        },
       },
       {
         id: 'a:newlayout',
@@ -232,7 +252,7 @@ function SearchBody({
     }
     return out;
     // `shell` is stable per layout; the lists rebuild when state changes.
-  }, [state, ws, devices, registryCtx, shell]);
+  }, [state, ws, devices, registryCtx, shell, vaultView]);
 
   const visible = useMemo(() => {
     const ranked = rank(query, all);

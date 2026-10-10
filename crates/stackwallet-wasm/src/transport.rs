@@ -15,8 +15,9 @@ use wasm_bindgen::prelude::*;
 use crate::core_err;
 
 /// The device's long-term identity held inside the wasm instance. Public
-/// halves are readable; the seed leaves only through `to_seed`, whose sole
-/// consumer is the vault that seals it.
+/// halves are readable; the seed never crosses to JS. It is minted and sealed
+/// by `WasmVault::create_identity` and reconstituted by `WasmVault::identity`
+/// while the vault is unlocked.
 #[wasm_bindgen]
 pub struct WasmIdentity {
     inner: DeviceIdentity,
@@ -61,11 +62,11 @@ impl WasmIdentity {
         })
         .to_string()
     }
+}
 
-    /// Seed bytes for sealing in the vault. The caller must hand them straight
-    /// to `WasmVault::put` and drop its reference; nothing else should read them.
-    pub fn to_seed(&self) -> Vec<u8> {
-        self.inner.to_secret().expose().to_vec()
+impl WasmIdentity {
+    pub(crate) fn from_inner(inner: DeviceIdentity) -> Self {
+        Self { inner }
     }
 }
 

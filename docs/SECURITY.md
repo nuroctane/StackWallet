@@ -74,11 +74,12 @@ other paired devices (their own core)
   implementations; no bespoke protocol code. Pre-release crates are not accepted for signing
   schemes: the ECDSA scheme stays disabled until `cggmp24` ships a stable release (SPEC §5.1).
 - Randomness: OS CSPRNG via `getrandom`. No userland PRNG seeding for key material.
-- Secrets are `Zeroize`d on drop, with two documented exceptions: `snow` holds the in-progress
-  handshake keys without zeroizing (library limitation), and the wasm identity seed crosses the
-  JS boundary exactly once in each direction (out via `to_seed` into the vault, in via
-  `from_seed` on unlock) because the vault itself is the only legitimate consumer. Everything
-  else — Noise statics, DEK/KEK, shares — stays in Rust-owned memory.
+- Secrets are `Zeroize`d on drop, with one documented exception: `snow` holds the in-progress
+  handshake keys without zeroizing (library limitation). The wasm identity seed never crosses
+  the JS boundary: `WasmVault::create_identity` mints and seals it in one call and
+  `WasmVault::identity` reconstitutes a session identity inside wasm memory while the vault is
+  unlocked. JS only ever holds opaque handles. Everything else — Noise statics, DEK/KEK,
+  shares — stays in Rust-owned memory.
 - The pairing one-time code's single-use property is enforced by the carrier, not the
   stateless core: the CLI issuer burns the offer after one success; the wasm bridge must do the
   same when it is wired, and the browser must never re-emit an offer after a `paired` event.

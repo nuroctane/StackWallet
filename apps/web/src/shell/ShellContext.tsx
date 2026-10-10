@@ -5,7 +5,8 @@ export type ShellDialog =
   | { kind: 'watch'; folderId?: string }
   | { kind: 'deleteWallet'; walletId: string }
   | { kind: 'deleteFolder'; folderId: string }
-  | { kind: 'move'; walletId: string };
+  | { kind: 'move'; walletId: string }
+  | { kind: 'vault' };
 
 export type UiRoute = { kind: 'directory' } | { kind: 'network' } | { kind: 'devices' };
 

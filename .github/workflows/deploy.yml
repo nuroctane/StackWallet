@@ -45,6 +45,22 @@ jobs:
             echo "::warning::CLOUDFLARE_API_TOKEN unset - deploy skipped. Set it with: gh secret set CLOUDFLARE_API_TOKEN"
           fi
 
+      - name: Setup Rust (wasm core)
+        if: steps.cf.outputs.has_token == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust cache
+        if: steps.cf.outputs.has_token == 'true'
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        if: steps.cf.outputs.has_token == 'true'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.15.0
+
       - name: Setup pnpm
         if: steps.cf.outputs.has_token == 'true'
         uses: pnpm/action-setup@v4

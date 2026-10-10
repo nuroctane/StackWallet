@@ -492,7 +492,12 @@ account change / UTXO arrival)`, `manual`, `agent`.
    them land in Phase 3 alongside the directory work; presignature-based resumption (§5.3) is
    likewise deferred.
 3. **Directory + EVM**: folders / wallets / accounts UI, EVM adapter end to end on testnets,
-   lifecycle + audit log, Approval Queue.
+   lifecycle + audit log, Approval Queue. Also the wasm bridge: the web build ships the core as
+   a static `wasm/` asset (built by `wasm-pack` in CI and deploy), `CoreClient` exposes vault,
+   identity and `Session` handles over it, the browser keeps its vault ciphertext locally
+   (localStorage until the SQLite-WASM/OPFS store lands) and mints its device identity inside
+   it, and the Devices element issues signed pairing offers. The WebRTC carrier that lets
+   another device reach the browser follows in the same phase.
 4. **Chains**: Bitcoin (PSBT, Taproot via FROST secp256k1-tr), Solana, Cosmos; swaps per family.
 5. **Agent runtime**: providers, tools, run loop, grants, agent party.
 6. **Automations + scheduler**: triggers / actions, headless CLI as automation device.

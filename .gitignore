@@ -10,7 +10,7 @@ dist/
 coverage/
 
 # WASM output
-packages/core-client/wasm/
+apps/web/public/wasm/
 
 # Tauri
 apps/desktop/src-tauri/gen/

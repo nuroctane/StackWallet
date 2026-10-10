@@ -1,5 +1,7 @@
 import { Kbd } from '@stackwallet/ui';
 
+import { vault } from '../core/bridge.js';
+import { useVaultView } from '../core/vault.js';
 import { useWorkspace, workspace } from './persist.js';
 import { canvasPointRef, useWorkspaceApi, type CoreState } from './WorkspaceContext.js';
 
@@ -66,7 +68,9 @@ export function TopBar({ trayOpen, onToggleTray }: TopBarProps) {
         </span>
       </button>
 
-      <span className="ml-auto inline-flex items-center gap-1.5 px-1 text-[11px] text-faint">
+      <VaultChip onOpen={() => api.openVault()} />
+
+      <span className="inline-flex items-center gap-1.5 px-1 text-[11px] text-faint">
         <span
           aria-hidden
           className={`inline-block h-1.5 w-1.5 rounded-full ${coreDot[api.coreState]}`}
@@ -87,6 +91,48 @@ export function TopBar({ trayOpen, onToggleTray }: TopBarProps) {
         </button>
       )}
     </header>
+  );
+}
+
+/**
+ * Vault state at a glance, pushed to the right edge. Warm while a passphrase is
+ * being stretched, red only when the core itself is missing, since that is the
+ * one state the user cannot fix from here.
+ */
+function VaultChip({ onOpen }: { onOpen: () => void }) {
+  const { status, busy } = useVaultView(vault);
+  const label =
+    status.kind === 'loading'
+      ? 'vault'
+      : status.kind === 'unavailable'
+        ? 'vault · no core'
+        : status.kind === 'absent'
+          ? 'create vault'
+          : status.kind === 'corrupt'
+            ? 'vault · unreadable'
+            : status.kind === 'locked'
+              ? 'vault · locked'
+              : 'vault · unlocked';
+  const dot = busy
+    ? 'bg-warm'
+    : status.kind === 'unlocked'
+      ? 'bg-ok'
+      : status.kind === 'unavailable' || status.kind === 'corrupt'
+        ? 'bg-danger'
+        : 'bg-faint';
+  return (
+    <button
+      type="button"
+      className={`${ghost} ml-auto ${status.kind === 'unlocked' ? 'text-ink' : ''}`}
+      aria-haspopup="dialog"
+      title={status.kind === 'locked' ? 'unlock vault' : 'vault'}
+      disabled={status.kind === 'loading'}
+      onClick={onOpen}
+    >
+      <PadlockIcon locked={status.kind !== 'unlocked'} />
+      <span>{label}</span>
+      <span aria-hidden className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
+    </button>
   );
 }
 

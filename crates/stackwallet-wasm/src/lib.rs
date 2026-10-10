@@ -154,16 +154,27 @@ impl WasmVault {
     }
 
     /// Generate an Ed25519 device identity and seal its seed under `label`.
-    /// Returns `{ deviceId, publicHex }`; the seed never leaves the vault.
+    /// Returns `{ deviceId, publicHex, noiseStaticHex }`; the seed never leaves the vault.
     pub fn create_identity(&mut self, label: &str) -> Result<String, JsError> {
         let id = DeviceIdentity::generate().map_err(core_err)?;
         self.inner.put(label, id.to_secret()).map_err(core_err)?;
         Ok(identity_json(&id))
     }
 
-    /// `{ deviceId, publicHex }` for the identity sealed under `label`.
+    /// `{ deviceId, publicHex, noiseStaticHex }` for the identity sealed under `label`.
     pub fn identity_info(&self, label: &str) -> Result<String, JsError> {
         self.with_identity(label, |id| Ok(identity_json(id)))
+    }
+
+    /// A live `WasmIdentity` for driving sessions. The seed is copied within
+    /// wasm memory only; JS receives an opaque handle it should `free()` once
+    /// the session that needed it is over.
+    pub fn identity(&self, label: &str) -> Result<WasmIdentity, JsError> {
+        self.with_identity(label, |id| {
+            DeviceIdentity::from_secret(&id.to_secret())
+                .map(WasmIdentity::from_inner)
+                .map_err(core_err)
+        })
     }
 
     /// Sign a `CeremonyMessage` JSON with the identity under `label`;
@@ -195,7 +206,12 @@ impl WasmVault {
 }
 
 fn identity_json(id: &DeviceIdentity) -> String {
-    serde_json::json!({ "deviceId": id.device_id(), "publicHex": id.public_hex() }).to_string()
+    serde_json::json!({
+        "deviceId": id.device_id(),
+        "publicHex": id.public_hex(),
+        "noiseStaticHex": id.noise_static_public_hex(),
+    })
+    .to_string()
 }
 
 /// Verify a `SignedCeremonyMessage` JSON against the sender's pinned public key.

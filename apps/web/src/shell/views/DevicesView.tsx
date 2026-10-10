@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
   decodePairingOffer,
+  encodePairingOffer,
   isPairingOfferExpired,
   PAIRING_OFFER_PREFIX,
   PairingOfferError,
@@ -9,20 +10,35 @@ import {
   type DeviceKind,
   type PairingOffer,
 } from '@stackwallet/core-client';
-import { Badge, Button, Dialog, EmptyState, Field, Input, Kbd, useToasts } from '@stackwallet/ui';
+import {
+  Badge,
+  Button,
+  Dialog,
+  EmptyState,
+  Field,
+  Input,
+  Kbd,
+  LoadingWord,
+  useToasts,
+} from '@stackwallet/ui';
 
+import { vault } from '../../core/bridge.js';
+import { useVaultView } from '../../core/vault.js';
 import { relativeTime } from '../../lib/format.js';
 import { devices, sortedDevices, useDevices, type LocalDevice } from '../../store/devices.js';
 import { useShell } from '../ShellContext.js';
 import { QrCode } from './QrCode.js';
 
 /**
- * Identity generation and the Noise handshake both run in the wasm core, which
- * this build does not load yet. Every control that would need it says so with
- * the same words rather than pretending to work.
+ * The identity lives in the vault, so everything that signs needs it unlocked.
+ * The handshake itself also needs a carrier the browser does not have yet;
+ * every control that is blocked says which of the two it is waiting for.
  */
-const BRIDGE_REASON =
-  'This browser has no device identity yet. Pairing becomes available once the core bridge is loaded.';
+const NO_IDENTITY_REASON = 'This browser has no device identity yet. Create a vault to mint one.';
+const LOCKED_REASON = "Unlock the vault to use this device's identity.";
+const NO_CARRIER_REASON =
+  'Pinning runs the pairing handshake over a channel to the other device; the browser carrier (WebRTC) is not wired yet.';
+const OFFER_TTL_MS = 10 * 60_000;
 
 const KIND_LABEL: Record<DeviceKind, string> = {
   desktop: 'desktop',
@@ -116,40 +132,171 @@ function SectionHeader({
 }
 
 function ThisDeviceSection({ local }: { local: LocalDevice | null }) {
+  const shell = useShell();
+  const { status, busy } = useVaultView(vault);
+  const unlocked = status.kind === 'unlocked';
+
+  if (local === null) {
+    const absent = status.kind === 'absent' || status.kind === 'corrupt';
+    const reason =
+      status.kind === 'loading'
+        ? 'Loading the core.'
+        : status.kind === 'unavailable'
+          ? `The core did not load (${status.reason}), so this browser cannot hold an identity.`
+          : status.kind === 'locked'
+            ? LOCKED_REASON
+            : NO_IDENTITY_REASON;
+    return (
+      <section className="sw-elevated flex min-w-0 flex-col overflow-hidden">
+        <SectionHeader title="This device" />
+        <div className="flex flex-col gap-3 px-4 py-3">
+          <p className="text-[12px] text-faint">{reason}</p>
+          {(absent || status.kind === 'locked') && (
+            <Button
+              size="sm"
+              variant="primary"
+              className="self-start"
+              disabled={busy}
+              onClick={() => shell.openDialog({ kind: 'vault' })}
+            >
+              {absent ? 'Create vault' : 'Unlock vault'}
+            </Button>
+          )}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="sw-elevated flex min-w-0 flex-col overflow-hidden">
-      <SectionHeader title="This device" />
-      {local === null ? (
-        <div className="flex flex-col gap-3 px-4 py-3">
-          <p className="text-[12px] text-faint">{BRIDGE_REASON}</p>
-          <div className="flex flex-col gap-1">
-            <Button size="sm" disabled className="self-start" title={BRIDGE_REASON}>
-              Show my pairing code
+      <SectionHeader title="This device" meta={unlocked ? 'vault unlocked' : 'vault locked'}>
+        {!unlocked && status.kind === 'locked' && (
+          <Button size="sm" variant="ghost" onClick={() => shell.openDialog({ kind: 'vault' })}>
+            Unlock
+          </Button>
+        )}
+      </SectionHeader>
+      <div className="grid gap-x-6 gap-y-2 px-4 py-3 text-[12px] min-[700px]:grid-cols-[auto_1fr]">
+        <span className="text-faint">Name</span>
+        <span className="text-ink">{local.name}</span>
+        <span className="text-faint">Kind</span>
+        <span>
+          <Badge>{KIND_LABEL[local.kind]}</Badge>
+        </span>
+        <span className="text-faint">Device id</span>
+        <span className="font-mono text-muted" title={local.id}>
+          {shortId(local.id)}
+        </span>
+        <span className="text-faint">Identity key</span>
+        <Fingerprint hex={local.identityPubHex} />
+        <span className="text-faint">Noise static</span>
+        <Fingerprint hex={local.noiseStaticHex} />
+      </div>
+      <MyPairingCode local={local} unlocked={unlocked} />
+    </section>
+  );
+}
+
+/**
+ * The offer another device scans to pair with this browser. The one-time code
+ * comes from the core's CSPRNG and the offer is re-issued on demand; it is kept
+ * only in component state, so closing the pane forgets it.
+ */
+function MyPairingCode({ local, unlocked }: { local: LocalDevice; unlocked: boolean }) {
+  const toasts = useToasts();
+  const now = useNow();
+  const [offer, setOffer] = useState<{ offer: PairingOffer; text: string } | null>(null);
+  const [issuing, setIssuing] = useState(false);
+  const live = offer !== null && !isPairingOfferExpired(offer.offer, now);
+
+  const issue = async () => {
+    const core = vault.core;
+    if (!core) return;
+    setIssuing(true);
+    try {
+      const fresh: PairingOffer = {
+        version: 1,
+        deviceId: local.id,
+        deviceName: local.name,
+        kind: local.kind,
+        identityPubHex: local.identityPubHex,
+        noiseStaticHex: local.noiseStaticHex,
+        endpoints: [],
+        oneTimeCodeHex: await core.newPairingCodeHex(),
+        expiresAtMs: Date.now() + OFFER_TTL_MS,
+      };
+      setOffer({ offer: fresh, text: encodePairingOffer(fresh) });
+    } catch (err) {
+      toasts.push(err instanceof Error ? err.message : String(err), 'danger');
+    } finally {
+      setIssuing(false);
+    }
+  };
+
+  const copy = async () => {
+    if (!offer) return;
+    try {
+      await navigator.clipboard.writeText(offer.text);
+      toasts.push('Pairing code copied');
+    } catch {
+      toasts.push('Clipboard unavailable', 'danger');
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-edge px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          disabled={!unlocked || issuing}
+          title={unlocked ? undefined : LOCKED_REASON}
+          onClick={() => void issue()}
+        >
+          {issuing ? (
+            <LoadingWord label="issuing" />
+          ) : live ? (
+            'New pairing code'
+          ) : (
+            'Show my pairing code'
+          )}
+        </Button>
+        {live && (
+          <>
+            <Button size="sm" variant="ghost" onClick={() => void copy()}>
+              Copy
             </Button>
+            <Button size="sm" variant="ghost" onClick={() => setOffer(null)}>
+              Hide
+            </Button>
+            <span className="text-[11px] text-faint tabular-nums">
+              expires in {countdown(offer.offer.expiresAtMs - now)}
+            </span>
+          </>
+        )}
+        {offer !== null && !live && <Badge>expired</Badge>}
+      </div>
+      {live ? (
+        <div className="grid gap-4 min-[700px]:grid-cols-[auto_1fr]">
+          <QrCode text={offer.text} className="w-[min(100%,220px)]" />
+          <div className="flex min-w-0 flex-col gap-2">
+            <code className="block max-h-32 overflow-auto rounded-sw-sm border border-edge bg-paper p-2 font-mono text-[11px] break-all text-muted select-all">
+              {offer.text}
+            </code>
             <span className="text-[11px] text-faint">
-              Needs an identity to sign the offer; nothing to show yet.
+              No endpoint is advertised yet: another device can read this code, but it cannot reach
+              this browser until the WebRTC carrier is wired. The one-time code is single use and
+              dies with the countdown.
             </span>
           </div>
         </div>
       ) : (
-        <div className="grid gap-x-6 gap-y-2 px-4 py-3 text-[12px] min-[700px]:grid-cols-[auto_1fr]">
-          <span className="text-faint">Name</span>
-          <span className="text-ink">{local.name}</span>
-          <span className="text-faint">Kind</span>
-          <span>
-            <Badge>{KIND_LABEL[local.kind]}</Badge>
-          </span>
-          <span className="text-faint">Device id</span>
-          <span className="font-mono text-muted" title={local.id}>
-            {shortId(local.id)}
-          </span>
-          <span className="text-faint">Identity key</span>
-          <Fingerprint hex={local.identityPubHex} />
-          <span className="text-faint">Noise static</span>
-          <Fingerprint hex={local.noiseStaticHex} />
-        </div>
+        <span className="text-[11px] text-faint">
+          {unlocked
+            ? 'Issues a signed offer with a fresh one-time code for another device to scan or paste.'
+            : LOCKED_REASON}
+        </span>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -177,7 +324,7 @@ function PairedDevicesSection({ list }: { list: Device[] }) {
       {list.length === 0 ? (
         <EmptyState
           title="No paired devices"
-          description="Paste a pairing code below to preview a device. Pinning it needs the core bridge."
+          description="Paste a pairing code below to preview a device. Pinning it needs a channel to that device."
         />
       ) : (
         <div className="overflow-auto">
@@ -513,8 +660,8 @@ function OfferPreview({
         : expired
           ? 'This code has expired; ask for a fresh one'
           : local === null
-            ? BRIDGE_REASON
-            : 'Pinning runs the pairing handshake in the core bridge, which this build has not loaded';
+            ? NO_IDENTITY_REASON
+            : NO_CARRIER_REASON;
 
   return (
     <div className="flex min-w-0 flex-col gap-3 rounded-sw-sm border border-edge p-3">
