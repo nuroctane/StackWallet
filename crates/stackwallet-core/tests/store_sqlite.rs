@@ -61,6 +61,7 @@ fn device(id: &str, pub_hex: &str) -> Device {
         name: "Laptop".into(),
         kind: DeviceKind::Desktop,
         identity_pub_hex: pub_hex.into(),
+        noise_static_hex: "ab".repeat(32),
         endpoints: vec!["192.168.1.2:4000".into()],
         paired_at_ms: 10,
         last_seen_at_ms: None,

@@ -130,6 +130,7 @@ pub fn init(dir: &str, device_name: &str) -> Result<Opened, String> {
             name: device_name.to_owned(),
             kind: DeviceKind::Cli,
             identity_pub_hex: identity.public_hex(),
+            noise_static_hex: identity.noise_static_public_hex(),
             endpoints: Vec::new(),
             paired_at_ms: at,
             last_seen_at_ms: Some(at),

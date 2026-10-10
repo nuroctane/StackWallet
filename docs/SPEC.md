@@ -282,17 +282,33 @@ Example setups:
 
 ### 5.3 Transport (device-to-device only)
 
-- **Pairing**: one device shows a QR carrying `{deviceId, identityPubKey, endpoints[], oneTimeCode}`;
-  the other scans or pastes it. A Noise-IK handshake with the one-time code as a PSK pins both
-  identities. Pairing happens once; later sessions reuse the pinned identity.
+- **Pairing**: one device shows a QR (text form `stackwallet-pair:<base64url JSON>`) carrying
+  `{version, deviceId, deviceName, kind, identityPubHex, noiseStaticHex, endpoints[],
+  oneTimeCodeHex, expiresAtMs}`; the other scans or pastes it. The scanner initiates
+  `Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s` against the issuer's static from the QR, with the
+  one-time code as the PSK. Each device holds two keys derived from one vault-held seed: the
+  Ed25519 identity key (signatures only) and an X25519 Noise static (HKDF label
+  `stackwallet/v1/noise-static`). After the handshake both sides exchange a `Hello` frame signed
+  with the identity key over the Noise handshake hash, which binds the channel to the identity.
+  The resulting `Device` record (identity key, Noise static, endpoints) is pinned; the one-time
+  code is forgotten after one successful handshake or at `expiresAtMs`. Pairing happens once;
+  later sessions are `Noise_IK` against the pinned static and a handshake from an unpinned or
+  revoked static is refused before any application byte is read.
+- **Sans-IO core**: the core owns pairing, handshake, cipher state and framing as a `Session`
+  state machine (`handle_incoming` / `take_outgoing`). Carriers only move length-prefixed
+  ciphertexts: TCP on desktop and CLI, WebRTC data channels in the browser. All carriers
+  therefore get the same authentication and replay protection.
 - **Discovery**: desktop and CLI advertise `_stackwallet._tcp` via mDNS. Browsers cannot do mDNS,
   so a paired desktop acts as the LAN signaling point for browser peers (SDP offers/answers over
   the already-authenticated channel). Two browsers with no desktop exchange SDP via QR or paste.
 - **Channel**: WebRTC data channels in the browser; direct TCP with Noise between desktop/CLI.
   Every protocol message is authenticated by the device identity and bound to a `sessionId` and
   the exact `SignRequest` hash, so a party cannot be tricked into signing a different payload
-  mid-ceremony.
-- **Resumption**: presignatures (CGGMP21) and nonce pre-commitment (FROST) let parties pre-commit
+  mid-ceremony. Ceremony envelopes are signed end to end by their author, so a device that
+  relays messages for others (the initiating CLI acts as a star hub) can delay or drop them,
+  which only aborts the ceremony, but cannot forge or alter them.
+- **Resumption** *(not yet implemented)*: presignatures (CGGMP21) and nonce pre-commitment
+  (FROST) let parties pre-commit
   so a phone's co-sign is one round when the request arrives. Ceremonies have a TTL; expired
   presignatures are discarded, never reused.
 
@@ -465,7 +481,11 @@ account change / UTXO arrival)`, `manual`, `agent`.
    FROST-Ed25519 and FROST-secp256k1-tr, local multi-party test harness, CLI `vault` /
    `keygen` / `sign`. CGGMP24 ECDSA follows as **1b** once the crate has a stable release
    (see §5.1).
-2. **Transport**: QR pairing, Noise channel, WebRTC with LAN signaling via desktop, resumption.
+2. **Transport**: QR pairing with one-time PSK, Noise channel (`IKpsk2`/`IK`), TCP carrier + mDNS
+   for desktop/CLI, CLI as a real ceremony party (star hub, n-party relay), Devices UI shell in
+   the web app, sans-IO `Session` in core and its wasm wrapper. WebRTC data channels and the
+   wasm bridge that drives them land in Phase 3 alongside the directory work; ceremony TTL and
+   presignature-based resumption (§5.3) are likewise deferred and are not yet enforced.
 3. **Directory + EVM**: folders / wallets / accounts UI, EVM adapter end to end on testnets,
    lifecycle + audit log, Approval Queue.
 4. **Chains**: Bitcoin (PSBT, Taproot via FROST secp256k1-tr), Solana, Cosmos; swaps per family.

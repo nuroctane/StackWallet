@@ -4,6 +4,7 @@
 //! refused before any protocol code runs.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
@@ -19,6 +20,9 @@ pub const SIGNATURE_LEN: usize = 64;
 /// Separates ceremony signatures from any other message a device might sign
 /// with the same key, so a signature can never be replayed across purposes.
 const CEREMONY_DOMAIN: &[u8] = b"stackwallet/v1/ceremony-message";
+
+/// HKDF label for the X25519 Noise static key derived from the identity seed.
+const NOISE_STATIC_INFO: &[u8] = b"stackwallet/v1/noise-static";
 
 /// The device's long-term Ed25519 signing key.
 pub struct DeviceIdentity {
@@ -77,6 +81,26 @@ impl DeviceIdentity {
 
     pub fn sign(&self, msg: &[u8]) -> [u8; SIGNATURE_LEN] {
         self.signing.sign(msg).to_bytes()
+    }
+
+    /// The X25519 static key the Noise channel authenticates with. Derived from
+    /// the seed with its own HKDF label rather than by converting the Ed25519
+    /// key, so the two keys never share algebraic structure and the identity
+    /// key is only ever used for signatures.
+    pub fn noise_static(&self) -> Zeroizing<x25519_dalek::StaticSecret> {
+        let mut raw = Zeroizing::new([0u8; 32]);
+        Hkdf::<sha2_v011::Sha256>::new(None, &self.signing.to_bytes())
+            .expand(NOISE_STATIC_INFO, raw.as_mut())
+            .expect("32 bytes is within the HKDF-SHA256 output limit");
+        Zeroizing::new(x25519_dalek::StaticSecret::from(*raw))
+    }
+
+    pub fn noise_static_public(&self) -> [u8; PUBLIC_KEY_LEN] {
+        x25519_dalek::PublicKey::from(&*self.noise_static()).to_bytes()
+    }
+
+    pub fn noise_static_public_hex(&self) -> String {
+        hex::encode(self.noise_static_public())
     }
 }
 

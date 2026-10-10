@@ -43,7 +43,10 @@ other paired devices (their own core)
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Agent is prompt-injected into sending funds to an attacker | D6: agent is at most one party; every agent-inclusive threshold needs a non-agent share. Policy caps and allowlists. Destinations sourced from untrusted content are flagged in the proposal. Hard per-session caps in the run loop. |
 | Agent exfiltrates keys                                     | Agent never receives keys, shares, provider keys, or RPC credentials. Tools are a fixed allowlist with Zod-validated arguments.                                                                                                      |
-| Malicious peer joins a ceremony                            | Pairing pins Ed25519 identities with a one-time PSK; later sessions require the pinned identity. Unknown identities are refused, not prompted.                                                                                       |
+| Malicious peer joins a ceremony                            | Pairing pins the Ed25519 identity and X25519 Noise static under a one-time PSK; later sessions are Noise IK against the pinned static. Unknown or revoked statics are refused before any application byte is read, not prompted.      |
+| Attacker on the LAN during pairing                         | The pairing handshake is `IKpsk2` keyed with the QR one-time code, so observing or injecting traffic without the QR cannot complete it; the code is single-use and expires. mDNS is a hint only and never pins anything.             |
+| Malicious WebRTC signalling via a relay                  | `Signal` frames are opaque to the relay and unauthenticated by design; the browser validates SDP/ICE at the WebRTC layer, and the data channel still requires the Noise handshake against a pinned static.        |
+| Replay or reorder of channel traffic                       | Noise nonces are strictly increasing per direction; any decrypt failure closes the session rather than skipping the message. A relaying device can drop or delay envelopes (aborts the ceremony) but cannot forge them.             |
 | Peer substitutes a different payload mid-ceremony          | Every protocol message is bound to `sessionId` and the `SignRequest` hash. Mismatch aborts the ceremony and writes an audit row.                                                                                                     |
 | Replay of an old signing request                           | Requests carry a nonce and TTL; presignatures are single-use and discarded on expiry.                                                                                                                                                |
 | Device theft                                               | DB encrypted at rest (XChaCha20-Poly1305, Argon2id-wrapped DEK). Shares encrypted again with a per-share key. Platform unlock is optional and never the only factor for share material.                                              |
@@ -59,7 +62,12 @@ other paired devices (their own core)
 
 - Encryption at rest: XChaCha20-Poly1305. KDF: Argon2id (memory-hard parameters tuned per
   platform, never below OWASP minimums).
-- Device identity: Ed25519. Channel: Noise IK with PSK at pairing, then Noise with pinned statics.
+- Device identity: Ed25519 (signatures only). Channel static: X25519 derived from the same seed by
+  HKDF with a distinct label, never by converting the Ed25519 key. Channel:
+  `Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s` at pairing, `Noise_IK_25519_ChaChaPoly_BLAKE2s` after,
+  via `snow` with pure-Rust primitives so the same code runs in the browser build. Both sides sign
+  the handshake hash and their own Noise static with the identity key in the first frame, so a
+  Hello cannot be reflected back at its author.
 - TSS: CGGMP21 (secp256k1 ECDSA), FROST (Ed25519, secp256k1-tr). Only audited, maintained
   implementations; no bespoke protocol code. Pre-release crates are not accepted for signing
   schemes: the ECDSA scheme stays disabled until `cggmp24` ships a stable release (SPEC §5.1).

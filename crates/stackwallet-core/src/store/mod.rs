@@ -77,7 +77,9 @@ pub enum DeviceKind {
 }
 
 /// A paired peer. `identity_pub_hex` is the pinned Ed25519 key; `id` is the
-/// identifier derived from it by `identity::device_id_for_public_key`.
+/// identifier derived from it by `identity::device_id_for_public_key`;
+/// `noise_static_hex` is the pinned X25519 key the Noise channel authenticates
+/// with. Both are learned once at pairing and never prompted for again.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Device {
@@ -85,6 +87,8 @@ pub struct Device {
     pub name: String,
     pub kind: DeviceKind,
     pub identity_pub_hex: String,
+    #[serde(default)]
+    pub noise_static_hex: String,
     #[serde(default)]
     pub endpoints: Vec<String>,
     pub paired_at_ms: i64,
@@ -171,6 +175,7 @@ CREATE TABLE IF NOT EXISTS device (
   name TEXT NOT NULL,
   kind TEXT NOT NULL,
   identity_pub_hex TEXT NOT NULL UNIQUE,
+  noise_static_hex TEXT NOT NULL DEFAULT '',
   endpoints_json TEXT NOT NULL DEFAULT '[]',
   paired_at_ms INTEGER NOT NULL,
   last_seen_at_ms INTEGER,

@@ -102,6 +102,11 @@ export function Overview({ state }: { state: DirectoryState }) {
               title="Pair a device and create a TSS wallet"
               body="Threshold keys split across your devices. No single party ever holds the key."
               badge={<Badge>phase 1</Badge>}
+              action={
+                <Button size="sm" onClick={() => shell.navigate({ kind: 'devices' })}>
+                  Devices
+                </Button>
+              }
             />
             <Step
               n={3}

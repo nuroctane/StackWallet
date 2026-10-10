@@ -69,6 +69,12 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
         label: 'Network: RPC endpoints',
         run: () => shell.navigate({ kind: 'network' }),
       },
+      {
+        id: 'action:devices',
+        group: 'actions',
+        label: 'Devices: pairing',
+        run: () => shell.navigate({ kind: 'devices' }),
+      },
     ];
     const selectedWallet = state.wallets.find((w) => w.id === state.ui.selectedId);
     if (selectedWallet) {

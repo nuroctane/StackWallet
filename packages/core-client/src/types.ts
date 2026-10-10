@@ -277,3 +277,253 @@ export const Account = z.object({
   hidden: z.boolean().default(false),
 });
 export type Account = z.infer<typeof Account>;
+
+// ---------------------------------------------------------------------------
+// Devices and transport (core `store::Device`, `transport::*`)
+// ---------------------------------------------------------------------------
+
+/** 32 bytes as lowercase hex: Ed25519 and X25519 public keys, one-time codes. */
+export const Hex32 = z.string().regex(/^[0-9a-f]{64}$/, 'expected 32 hex-encoded bytes');
+export type Hex32 = z.infer<typeof Hex32>;
+
+/** First 16 bytes of SHA-256(identity key) as hex; see `identity::device_id_for_public_key`. */
+export const DeviceId = z.string().regex(/^[0-9a-f]{32}$/, 'expected a 16-byte hex device id');
+export type DeviceId = z.infer<typeof DeviceId>;
+
+export const DeviceKind = z.enum(['desktop', 'browser', 'cli', 'mobile']);
+export type DeviceKind = z.infer<typeof DeviceKind>;
+
+export const MAX_DEVICE_NAME_BYTES = 64;
+export const MAX_ENDPOINTS = 16;
+export const MAX_ENDPOINT_LENGTH = 256;
+
+const utf8Length = (s: string) => new TextEncoder().encode(s).length;
+
+/** The core checks byte length, not code units, so a name full of multi-byte glyphs must fail here too. */
+export const DeviceName = z
+  .string()
+  .refine((s) => s.trim().length > 0, 'device name must not be blank')
+  .refine((s) => utf8Length(s) <= MAX_DEVICE_NAME_BYTES, 'device name must be 1-64 bytes');
+
+export const EndpointText = z.string().max(MAX_ENDPOINT_LENGTH);
+export const Endpoints = z.array(EndpointText).max(MAX_ENDPOINTS);
+
+/** A paired peer as the core stores it. Both keys are learned once at pairing. */
+export const Device = z.object({
+  id: DeviceId,
+  name: DeviceName,
+  kind: DeviceKind,
+  identityPubHex: Hex32,
+  noiseStaticHex: z.string().default(''),
+  endpoints: Endpoints.default([]),
+  pairedAtMs: z.number().int(),
+  lastSeenAtMs: z.number().int().nullable(),
+  revokedAtMs: z.number().int().nullable(),
+});
+export type Device = z.infer<typeof Device>;
+
+/** Mirrors `transport::Endpoint` (`#[serde(tag = "kind")]`). */
+export const Endpoint = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('tcp'), addr: z.string().min(1) }),
+  z.object({ kind: z.literal('webRtc'), viaDeviceId: DeviceId }),
+]);
+export type Endpoint = z.infer<typeof Endpoint>;
+
+/** `tcp://host:port` or `webrtc-via://<deviceId>`; anything else is not an endpoint. */
+export function parseEndpoint(text: string): Endpoint | undefined {
+  if (text.startsWith('tcp://')) {
+    const addr = text.slice('tcp://'.length);
+    return addr === '' ? undefined : { kind: 'tcp', addr };
+  }
+  if (text.startsWith('webrtc-via://')) {
+    const via = DeviceId.safeParse(text.slice('webrtc-via://'.length));
+    return via.success ? { kind: 'webRtc', viaDeviceId: via.data } : undefined;
+  }
+  return undefined;
+}
+
+export function formatEndpoint(endpoint: Endpoint): string {
+  return endpoint.kind === 'tcp'
+    ? `tcp://${endpoint.addr}`
+    : `webrtc-via://${endpoint.viaDeviceId}`;
+}
+
+export const TRANSPORT_VERSION = 1 as const;
+export const PAIRING_OFFER_PREFIX = 'stackwallet-pair:';
+
+/** Contents of the pairing QR (`transport::pairing::PairingOffer`). */
+export const PairingOffer = z.object({
+  version: z.literal(TRANSPORT_VERSION),
+  deviceId: DeviceId,
+  deviceName: DeviceName,
+  kind: DeviceKind,
+  identityPubHex: Hex32,
+  noiseStaticHex: Hex32,
+  endpoints: Endpoints,
+  oneTimeCodeHex: Hex32,
+  expiresAtMs: z.number().int(),
+});
+export type PairingOffer = z.infer<typeof PairingOffer>;
+
+export type PairingOfferErrorCode = 'prefix' | 'base64' | 'json' | 'version' | 'shape' | 'deviceId';
+
+export class PairingOfferError extends Error {
+  override readonly name = 'PairingOfferError';
+  constructor(
+    readonly code: PairingOfferErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function base64UrlDecode(body: string): Uint8Array | undefined {
+  // Unpadded input is what the core emits; tolerate padding since a QR
+  // scanner or chat client may have normalized the string.
+  const unpadded = body.replace(/=+$/, '');
+  if (!/^[A-Za-z0-9_-]*$/.test(unpadded)) return undefined;
+  const padded = unpadded
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .padEnd(Math.ceil(unpadded.length / 4) * 4, '=');
+  try {
+    const bin = atob(padded);
+    return Uint8Array.from(bin, (ch) => ch.charCodeAt(0));
+  } catch {
+    return undefined;
+  }
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let bin = '';
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Shape-level decode of a pasted or scanned `stackwallet-pair:` string. The
+ * core repeats every check (and adds the ones that need key material, such as
+ * the device id derivation) before a handshake starts; this exists so the UI
+ * can preview an offer and explain a bad paste without the wasm bridge.
+ */
+export function decodePairingOffer(text: string): PairingOffer {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith(PAIRING_OFFER_PREFIX)) {
+    throw new PairingOfferError('prefix', `missing ${PAIRING_OFFER_PREFIX} prefix`);
+  }
+  const bytes = base64UrlDecode(trimmed.slice(PAIRING_OFFER_PREFIX.length));
+  if (!bytes) throw new PairingOfferError('base64', 'not base64url');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  } catch {
+    throw new PairingOfferError('json', 'malformed');
+  }
+  if (
+    typeof parsed === 'object' &&
+    parsed !== null &&
+    'version' in parsed &&
+    parsed.version !== TRANSPORT_VERSION
+  ) {
+    throw new PairingOfferError('version', 'unsupported version');
+  }
+  const result = PairingOffer.safeParse(parsed);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const where = first?.path.map(String).join('.') ?? '';
+    throw new PairingOfferError('shape', where ? `${where}: ${first?.message}` : 'malformed');
+  }
+  return result.data;
+}
+
+export function encodePairingOffer(offer: PairingOffer): string {
+  const json = JSON.stringify(PairingOffer.parse(offer));
+  return `${PAIRING_OFFER_PREFIX}${base64UrlEncode(new TextEncoder().encode(json))}`;
+}
+
+export function isPairingOfferExpired(offer: Pick<PairingOffer, 'expiresAtMs'>, nowMs: number) {
+  return nowMs >= offer.expiresAtMs;
+}
+
+/**
+ * Same derivation as the core (`identity::device_id_from_public_hex`): hex of
+ * the first 16 bytes of SHA-256 over the raw key. Async because the browser
+ * only exposes SHA-256 through SubtleCrypto. Does not check that the bytes
+ * are a valid Ed25519 point; only the core can.
+ */
+export async function deviceIdFromPublicHex(publicHex: string): Promise<DeviceId> {
+  const hex = Hex32.parse(publicHex);
+  const key = Uint8Array.from(hex.match(/../g) ?? [], (h) => parseInt(h, 16));
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', key));
+  return Array.from(digest.subarray(0, 16), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Checks the one thing `decodePairingOffer` cannot do synchronously. */
+export async function pairingOfferIdMatches(offer: PairingOffer): Promise<boolean> {
+  return (await deviceIdFromPublicHex(offer.identityPubHex)) === offer.deviceId;
+}
+
+/** The ceremony envelope the transport carries (`tss::CeremonyMessage`). */
+export const CeremonyMessage = z.object({
+  sessionId: z.string(),
+  payloadHashHex: z.string().regex(/^[0-9a-f]{64}$/),
+  fromDeviceId: z.string(),
+  toDeviceId: z.string().nullable(),
+  round: z.number().int().min(0).max(255),
+  bodyHex: z.string().regex(/^[0-9a-f]*$/),
+});
+export type CeremonyMessage = z.infer<typeof CeremonyMessage>;
+
+export const SignedCeremonyMessage = z.object({
+  msg: CeremonyMessage,
+  signatureHex: z.string().regex(/^[0-9a-f]{128}$/),
+});
+export type SignedCeremonyMessage = z.infer<typeof SignedCeremonyMessage>;
+
+/** First frame after the handshake; `transport::frame::Hello`. */
+export const Hello = z.object({
+  deviceId: DeviceId,
+  deviceName: DeviceName,
+  kind: DeviceKind,
+  identityPubHex: Hex32,
+  handshakeSigHex: z.string().regex(/^[0-9a-f]{128}$/),
+  endpoints: Endpoints.default([]),
+});
+export type Hello = z.infer<typeof Hello>;
+
+/**
+ * `transport::frame::Frame` with `#[serde(tag = "type")]`: newtype variants
+ * (`hello`, `ceremony`) flatten their struct into the tagged object.
+ */
+export const Frame = z.discriminatedUnion('type', [
+  Hello.extend({ type: z.literal('hello') }),
+  SignedCeremonyMessage.extend({ type: z.literal('ceremony') }),
+  z.object({
+    type: z.literal('signal'),
+    toDeviceId: z.string(),
+    fromDeviceId: z.string(),
+    sdpOrIceJson: z.string(),
+  }),
+  z.object({ type: z.literal('ping'), nonce: z.number().int().nonnegative() }),
+  z.object({ type: z.literal('pong'), nonce: z.number().int().nonnegative() }),
+  z.object({ type: z.literal('bye'), reason: z.string() }),
+]);
+export type Frame = z.infer<typeof Frame>;
+
+export const SessionStateName = z.enum(['handshaking', 'awaitingHello', 'open', 'closed']);
+export type SessionStateName = z.infer<typeof SessionStateName>;
+
+/**
+ * What `WasmSession.handle_incoming` yields, one object per `SessionEvent`.
+ * A `relayed` envelope was forwarded by the peer on another device's behalf;
+ * the channel vouches for the relay only, so the caller must verify `signed`
+ * against its own pinned record for `msg.fromDeviceId` before using it.
+ */
+export const SessionEvent = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('opened'), peer: Device }),
+  z.object({ type: z.literal('paired'), peer: Device }),
+  z.object({ type: z.literal('frame'), frame: Frame }),
+  z.object({ type: z.literal('relayed'), signed: SignedCeremonyMessage }),
+  z.object({ type: z.literal('closed'), reason: z.string() }),
+]);
+export type SessionEvent = z.infer<typeof SessionEvent>;

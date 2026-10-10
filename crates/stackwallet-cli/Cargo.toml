@@ -12,10 +12,16 @@ path = "src/main.rs"
 
 [dependencies]
 stackwallet-core = { path = "../stackwallet-core" }
+serde.workspace = true
 serde_json.workspace = true
 zeroize.workspace = true
 sha2.workspace = true
 hex.workspace = true
+# LAN discovery is a hint only (the pinned device table decides who is
+# trusted), so a blocking, runtime-free mDNS client is all the CLI needs.
+mdns-sd = "0.21"
 
 [dev-dependencies]
 serde_json.workspace = true
+base64 = "0.22"
+ed25519-dalek = "3"

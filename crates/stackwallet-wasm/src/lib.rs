@@ -1,10 +1,17 @@
-//! wasm-bindgen surface. Everything crosses as JSON strings so the TypeScript
-//! side can Zod-validate it and the Rust side never hands out raw pointers.
+//! wasm-bindgen surface. Everything crosses as JSON (strings in, strings or
+//! plain JS values out) so the TypeScript side can Zod-validate it and the
+//! Rust side never hands out raw pointers.
+
+mod transport;
 
 use stackwallet_core::identity::{DeviceIdentity, SignedCeremonyMessage};
 use stackwallet_core::tss::CeremonyMessage;
 use stackwallet_core::vault::{EncryptedVault, KdfParams, Secret, SecretHandle, Vault};
 use wasm_bindgen::prelude::*;
+
+pub use transport::{
+    pairing_new_code_hex, pairing_offer_decode, pairing_offer_encode, WasmIdentity, WasmSession,
+};
 
 #[wasm_bindgen]
 pub fn core_version() -> String {

@@ -444,17 +444,18 @@ impl SqliteStore {
 
     pub fn upsert_device(&self, d: &Device) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO device (id, name, kind, identity_pub_hex, endpoints_json, paired_at_ms, last_seen_at_ms, revoked_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO device (id, name, kind, identity_pub_hex, noise_static_hex, endpoints_json, paired_at_ms, last_seen_at_ms, revoked_at_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                name = excluded.name, kind = excluded.kind, identity_pub_hex = excluded.identity_pub_hex,
-               endpoints_json = excluded.endpoints_json, paired_at_ms = excluded.paired_at_ms,
+               noise_static_hex = excluded.noise_static_hex, endpoints_json = excluded.endpoints_json, paired_at_ms = excluded.paired_at_ms,
                last_seen_at_ms = excluded.last_seen_at_ms, revoked_at_ms = excluded.revoked_at_ms",
             params![
                 d.id,
                 d.name,
                 enum_to_text(&d.kind)?,
                 d.identity_pub_hex,
+                d.noise_static_hex,
                 to_json(&d.endpoints)?,
                 d.paired_at_ms,
                 d.last_seen_at_ms,
@@ -589,7 +590,7 @@ impl SqliteStore {
 const FOLDER_SELECT: &str = "SELECT id, parent_id, name, color, tags_json, default_policy_ids_json, created_at_ms, updated_at_ms FROM folder";
 const WALLET_SELECT: &str = "SELECT id, folder_id, name, kind, key_group_id, tags_json, notes, created_at_ms, updated_at_ms FROM wallet";
 const ACCOUNT_SELECT: &str = "SELECT id, wallet_id, family, chain_id, address, derivation_path, public_key_hex, label, hidden FROM account";
-const DEVICE_SELECT: &str = "SELECT id, name, kind, identity_pub_hex, endpoints_json, paired_at_ms, last_seen_at_ms, revoked_at_ms FROM device";
+const DEVICE_SELECT: &str = "SELECT id, name, kind, identity_pub_hex, noise_static_hex, endpoints_json, paired_at_ms, last_seen_at_ms, revoked_at_ms FROM device";
 
 /// JSON columns decode inside rusqlite's row callback, so their errors have to
 /// be expressed as rusqlite errors to flow through `query_row`.
@@ -652,10 +653,11 @@ fn device_from_row(r: &Row<'_>) -> rusqlite::Result<Device> {
         name: r.get(1)?,
         kind: enum_from_row(r.get::<_, String>(2)?)?,
         identity_pub_hex: r.get(3)?,
-        endpoints: from_json_row(r.get::<_, String>(4)?)?,
-        paired_at_ms: r.get(5)?,
-        last_seen_at_ms: r.get(6)?,
-        revoked_at_ms: r.get(7)?,
+        noise_static_hex: r.get(4)?,
+        endpoints: from_json_row(r.get::<_, String>(5)?)?,
+        paired_at_ms: r.get(6)?,
+        last_seen_at_ms: r.get(7)?,
+        revoked_at_ms: r.get(8)?,
     })
 }
 

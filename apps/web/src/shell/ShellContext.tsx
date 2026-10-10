@@ -7,7 +7,7 @@ export type ShellDialog =
   | { kind: 'deleteFolder'; folderId: string }
   | { kind: 'move'; walletId: string };
 
-export type UiRoute = { kind: 'directory' } | { kind: 'network' };
+export type UiRoute = { kind: 'directory' } | { kind: 'network' } | { kind: 'devices' };
 
 /**
  * `three`: tree, main and rail side by side. `two`: the rail is a sheet.

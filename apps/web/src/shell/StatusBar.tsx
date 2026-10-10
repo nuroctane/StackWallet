@@ -2,6 +2,7 @@ import { Kbd, StatusDot } from '@stackwallet/ui';
 
 import type { CoreStatus } from '../App.js';
 import { listChains, listFamilies } from '../lib/chains.js';
+import { activeDevices, useDevices } from '../store/devices.js';
 import { useRegistry } from '../store/RegistryContext.js';
 import { MOD_KEY, useShell } from './ShellContext.js';
 
@@ -26,6 +27,9 @@ export function StatusBar({
       ? 'no chain adapters loaded'
       : `${chains} ${chains === 1 ? 'chain' : 'chains'} · ${families} ${families === 1 ? 'family' : 'families'}`;
   const onNetwork = shell.route.kind === 'network';
+  const onDevices = shell.route.kind === 'devices';
+  const paired = activeDevices(useDevices()).length;
+  const deviceLabel = `${paired} ${paired === 1 ? 'device' : 'devices'}`;
 
   return (
     <footer className="flex min-w-0 items-center justify-between gap-4 border-t border-edge px-4 py-1.5 text-[11px] text-faint">
@@ -41,6 +45,15 @@ export function StatusBar({
           className={`sw-pressable -mx-1 truncate rounded-sw-sm px-1 ${onNetwork ? 'text-ink' : ''}`}
         >
           {chainLabel}
+        </button>
+        <button
+          type="button"
+          title="Paired devices"
+          aria-pressed={onDevices}
+          onClick={() => shell.navigate(onDevices ? { kind: 'directory' } : { kind: 'devices' })}
+          className={`sw-pressable -mx-1 shrink-0 rounded-sw-sm px-1 ${onDevices ? 'text-ink' : ''}`}
+        >
+          {deviceLabel}
         </button>
       </div>
       <div className="flex shrink-0 items-center gap-3">

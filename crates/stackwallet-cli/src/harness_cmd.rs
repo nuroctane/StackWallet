@@ -12,7 +12,7 @@ use stackwallet_core::audit::{Actor, AuditEvent};
 use stackwallet_core::intent::{SignRequest, Signature};
 use stackwallet_core::model::{Curve, KeyGroup, PartyRef, PartyRole, PublicKey};
 use stackwallet_core::store::KeyGroupRecord;
-use stackwallet_core::tss::frost::{Ed25519Sha512, FrostCurve, Secp256K1Sha256TR};
+use stackwallet_core::tss::frost::FrostCurve;
 use stackwallet_core::tss::harness::{Delivery, Faithful, LocalHarness, Shuffled};
 use stackwallet_core::tss::{CeremonyKind, ShareBlob, ThresholdScheme};
 use stackwallet_core::vault::{Secret, Vault};
@@ -33,12 +33,12 @@ Commands:
 Shares are stored in the vault as `harness/<group-id>/<curve>/<device>`.
 ";
 
-const ECDSA_UNAVAILABLE: &str =
+pub(crate) const ECDSA_UNAVAILABLE: &str =
     "secp256k1 ECDSA is not available yet: CGGMP24 has no stable release (SPEC 5.1)";
 
 /// Curve names on the command line are the same kebab-case strings the
 /// `Curve` enum uses in JSON and in the store.
-fn parse_curve(s: &str) -> Result<Curve, String> {
+pub(crate) fn parse_curve(s: &str) -> Result<Curve, String> {
     match serde_json::from_value::<Curve>(serde_json::Value::String(s.to_owned())) {
         Ok(Curve::Secp256k1) => Err(ECDSA_UNAVAILABLE.into()),
         Ok(curve) => Ok(curve),
@@ -46,7 +46,7 @@ fn parse_curve(s: &str) -> Result<Curve, String> {
     }
 }
 
-fn curve_slug(curve: Curve) -> String {
+pub(crate) fn curve_slug(curve: Curve) -> String {
     match serde_json::to_value(curve) {
         Ok(serde_json::Value::String(s)) => s,
         _ => format!("{curve:?}").to_lowercase(),
@@ -57,12 +57,19 @@ fn curve_slug(curve: Curve) -> String {
 macro_rules! with_frost_curve {
     ($curve:expr, $f:ident($($arg:expr),* $(,)?)) => {
         match $curve {
-            Curve::Ed25519 => $f::<Ed25519Sha512>($($arg),*),
-            Curve::Secp256k1Tr => $f::<Secp256K1Sha256TR>($($arg),*),
-            Curve::Secp256k1 => Err(ECDSA_UNAVAILABLE.to_owned()),
+            stackwallet_core::model::Curve::Ed25519 => {
+                $f::<stackwallet_core::tss::frost::Ed25519Sha512>($($arg),*)
+            }
+            stackwallet_core::model::Curve::Secp256k1Tr => {
+                $f::<stackwallet_core::tss::frost::Secp256K1Sha256TR>($($arg),*)
+            }
+            stackwallet_core::model::Curve::Secp256k1 => {
+                Err($crate::harness_cmd::ECDSA_UNAVAILABLE.to_owned())
+            }
         }
     };
 }
+pub(crate) use with_frost_curve;
 
 fn parse_party(spec: &str) -> Result<PartyRef, String> {
     let (device, role) = spec
@@ -103,28 +110,23 @@ fn delivery_from_args(args: &[String]) -> Result<Box<dyn Delivery>, String> {
     }
 }
 
-fn store_share(opened: &mut Opened, blob: &ShareBlob) -> Result<(), String> {
+pub(crate) fn store_share_at(
+    opened: &mut Opened,
+    label: &str,
+    blob: &ShareBlob,
+) -> Result<(), String> {
     let bytes = serde_json::to_vec(blob).map_err(|e| e.to_string())?;
     opened
         .vault
-        .put(
-            &share_label(&blob.key_group_id, blob.curve, &blob.device_id),
-            Secret::new(bytes),
-        )
+        .put(label, Secret::new(bytes))
         .map(|_| ())
         .map_err(fmt_err)
 }
 
-fn load_share(
-    opened: &Opened,
-    group_id: &str,
-    curve: Curve,
-    device_id: &str,
-) -> Result<ShareBlob, String> {
-    let label = share_label(group_id, curve, device_id);
+pub(crate) fn load_share_at(opened: &Opened, label: &str) -> Result<ShareBlob, String> {
     let handle = opened
         .vault
-        .handle_for(&label)
+        .handle_for(label)
         .ok_or_else(|| format!("no share `{label}` in the vault"))?;
     opened
         .vault
@@ -134,7 +136,24 @@ fn load_share(
         .map_err(fmt_err)?
 }
 
-fn load_group(opened: &Opened, group_id: &str) -> Result<KeyGroupRecord, String> {
+fn store_share(opened: &mut Opened, blob: &ShareBlob) -> Result<(), String> {
+    store_share_at(
+        opened,
+        &share_label(&blob.key_group_id, blob.curve, &blob.device_id),
+        blob,
+    )
+}
+
+fn load_share(
+    opened: &Opened,
+    group_id: &str,
+    curve: Curve,
+    device_id: &str,
+) -> Result<ShareBlob, String> {
+    load_share_at(opened, &share_label(group_id, curve, device_id))
+}
+
+pub(crate) fn load_group(opened: &Opened, group_id: &str) -> Result<KeyGroupRecord, String> {
     opened
         .store
         .get_key_group(group_id)
@@ -175,7 +194,7 @@ fn harness_with_shares<C: FrostCurve>(
 /// message, then `CeremonyCompleted` or `CeremonyAborted`. The store is saved
 /// after an abort so the failure is on record even though nothing else
 /// changed.
-fn audited<T>(
+pub(crate) fn audited<T>(
     opened: &mut Opened,
     session_id: String,
     sign_request_id: Option<String>,
@@ -308,7 +327,7 @@ fn keygen(args: &[String]) -> Result<serde_json::Value, String> {
     }))
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::Digest;
     hex::encode(sha2::Sha256::digest(bytes))
 }

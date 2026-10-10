@@ -1,9 +1,12 @@
-//! Headless StackWallet: the encrypted vault, the device identity and
-//! threshold ceremonies without a UI. `pair` (device-to-device transport) and
-//! `run` (the scheduler that makes this binary the automation device) are
-//! not wired yet and say so.
+//! Headless StackWallet: the encrypted vault, the device identity, pairing
+//! and threshold ceremonies over the LAN without a UI. `run` (the scheduler
+//! that makes this binary the automation device) is not wired yet and says so.
 
+mod discovery;
 mod harness_cmd;
+mod net;
+mod net_cmd;
+mod pair_cmd;
 mod vault_cmd;
 
 use std::io::Read;
@@ -22,7 +25,13 @@ Commands:
                                locked metadata; with --unlock also opens the store and
                                verifies the audit chain
   harness keygen|sign|refresh  run every FROST party in-process (see `harness` for usage)
-  pair | sign | run            not yet (Phase 2 / Phase 6)
+  pair offer|accept            pair with another device over TCP (see `pair` for usage)
+  devices <dir>                list the devices pinned at pairing
+  serve <dir> --listen host:port [--once] [--no-mdns]
+                               accept connections from paired devices and act as a
+                               FROST party in the ceremonies they start
+  net keygen|sign              start a ceremony with paired devices (see `net` for usage)
+  run                          not yet (Phase 6)
 
 The passphrase is read from STACKWALLET_PASSPHRASE or the first line of stdin.
 ";
@@ -95,7 +104,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         Some("vault") => vault(&args[1..]),
         Some("harness") => harness_cmd::run(&args[1..]),
-        Some("pair") | Some("sign") => Err("not yet: Phase 2".into()),
+        Some("pair") => pair_cmd::run(&args[1..]),
+        Some("devices") => pair_cmd::devices(&args[1..]),
+        Some("serve") => net_cmd::serve(&args[1..]),
+        Some("net") => net_cmd::run(&args[1..]),
         Some("run") => Err("not yet: Phase 6".into()),
         _ => {
             eprint!("{USAGE}");

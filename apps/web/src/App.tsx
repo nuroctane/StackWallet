@@ -22,6 +22,7 @@ import {
 } from './shell/ShellContext.js';
 import { StatusBar } from './shell/StatusBar.js';
 import { balanceCache } from './store/balances.js';
+import { devicesQuarantinedKey } from './store/devices.js';
 import { directory, directoryQuarantinedKey, useDirectory } from './store/persist.js';
 import { RegistryContext, useRegistry } from './store/RegistryContext.js';
 import { applyRpcSettings, rpcSettings, rpcSettingsQuarantinedKey } from './store/rpcSettings.js';
@@ -131,6 +132,12 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
     if (rpcSettingsQuarantinedKey) {
       toasts.push(
         `Saved RPC endpoints could not be read; kept under ${rpcSettingsQuarantinedKey}`,
+        'danger',
+      );
+    }
+    if (devicesQuarantinedKey) {
+      toasts.push(
+        `Saved device table could not be read; kept under ${devicesQuarantinedKey}`,
         'danger',
       );
     }

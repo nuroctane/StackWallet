@@ -3,6 +3,7 @@ import { Button, Panel } from '@stackwallet/ui';
 import { useDirectory } from '../store/persist.js';
 import { findNode } from '../store/selectors.js';
 import { MOD_KEY, useShell } from './ShellContext.js';
+import { DevicesView } from './views/DevicesView.js';
 import { FolderView } from './views/FolderView.js';
 import { NetworkView } from './views/NetworkView.js';
 import { Overview } from './views/Overview.js';
@@ -58,6 +59,18 @@ export function MainPane() {
         className="sw-enter min-w-0"
       >
         <NetworkView state={state} />
+      </Panel>
+    );
+  }
+  if (shell.route.kind === 'devices') {
+    return (
+      <Panel
+        title="Devices"
+        meta={withRail('pairing · trust')}
+        leading={leading}
+        className="sw-enter min-w-0"
+      >
+        <DevicesView />
       </Panel>
     );
   }
