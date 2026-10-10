@@ -1,31 +1,45 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChainRegistry } from '@stackwallet/chains';
 import { createCoreClient, type CoreClient } from '@stackwallet/core-client';
-import { Sheet, ToastProvider, useMediaQuery, useToasts } from '@stackwallet/ui';
+import { ToastProvider, useMediaQuery, useToasts } from '@stackwallet/ui';
 
 import { createDefaultRegistry } from './data/registry.js';
 import { AddFolderDialog } from './shell/AddFolderDialog.js';
 import { AddWatchWalletDialog } from './shell/AddWatchWalletDialog.js';
-import { ApprovalRail } from './shell/ApprovalRail.js';
-import { CommandPalette } from './shell/CommandPalette.js';
+import { ApprovalRailBody } from './shell/ApprovalRail.js';
 import { ConfirmDeleteDialog } from './shell/ConfirmDeleteDialog.js';
-import { DirectoryTree } from './shell/DirectoryTree.js';
-import { MainPane } from './shell/MainPane.js';
 import { MoveWalletDialog } from './shell/MoveWalletDialog.js';
 import {
   isTypingTarget,
   ShellContext,
   type ShellApi,
   type ShellDialog,
-  type ShellLayout,
   type UiRoute,
 } from './shell/ShellContext.js';
 import { StatusBar } from './shell/StatusBar.js';
 import { balanceCache } from './store/balances.js';
 import { devicesQuarantinedKey } from './store/devices.js';
-import { directory, directoryQuarantinedKey, useDirectory } from './store/persist.js';
+import { directoryQuarantinedKey, useDirectory } from './store/persist.js';
 import { RegistryContext, useRegistry } from './store/RegistryContext.js';
 import { applyRpcSettings, rpcSettings, rpcSettingsQuarantinedKey } from './store/rpcSettings.js';
+import { Canvas } from './workspace/Canvas.js';
+import { ElementCatalogue } from './workspace/ElementCatalogue.js';
+import { registry as elementRegistry } from './workspace/elements/registry.js';
+import { LayoutTabs } from './workspace/LayoutTabs.js';
+import { OmniSearch } from './workspace/OmniSearch.js';
+import { workspace, workspaceQuarantinedKey } from './workspace/persist.js';
+import { Recorders } from './workspace/Recorders.js';
+import type { ElementKind } from './workspace/schema.js';
+import { SettingsPopover } from './workspace/SettingsPopover.js';
+import { StackMode } from './workspace/StackMode.js';
+import { TopBar } from './workspace/TopBar.js';
+import { Tray } from './workspace/Tray.js';
+import {
+  canvasPointRef,
+  getCanvasViewport,
+  WorkspaceContext,
+  type WorkspaceApi,
+} from './workspace/WorkspaceContext.js';
 
 export interface CoreStatus {
   backend: CoreClient['backend'];
@@ -88,58 +102,45 @@ export function App() {
   );
 }
 
-function useLayout(): ShellLayout {
-  const wide = useMediaQuery('(min-width: 1100px)');
-  const medium = useMediaQuery('(min-width: 800px)');
-  return wide ? 'three' : medium ? 'two' : 'one';
+/** Open the first pane of a kind, or add one at the next free slot. */
+function revealElement(kind: ElementKind): void {
+  const existing = workspace.findPane(kind);
+  if (existing) {
+    workspace.raise(existing.id);
+    workspace.focus(existing.id);
+    return;
+  }
+  const def = elementRegistry[kind];
+  workspace.addPane(
+    { kind, props: { ...(def.defaultProps ?? {}) }, w: def.defaultSize.w, h: def.defaultSize.h },
+    getCanvasViewport(),
+  );
 }
+
+const ROUTE_HOME: UiRoute = { kind: 'directory' };
 
 function Shell({ registryError }: { registryError?: string | undefined }) {
   const core = useCoreStatus();
   const state = useDirectory();
   const toasts = useToasts();
   const registry = useRegistry();
-  const layout = useLayout();
+  const narrow = useMediaQuery('(max-width: 799px)');
 
-  // The inline rail remembers its own open state so collapsing it on a wide
-  // screen does not also decide whether the sheet pops open on a narrow one.
-  const [railInline, setRailInline] = useState(true);
-  const [railSheet, setRailSheet] = useState(false);
-  const [treeOpen, setTreeOpen] = useState(false);
-  const [route, setRoute] = useState<UiRoute>({ kind: 'directory' });
   const [dialog, setDialog] = useState<ShellDialog | null>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [trayOpen, setTrayOpen] = useState(false);
+  const [catalogue, setCatalogue] = useState<HTMLElement | null>(null);
+  const [settings, setSettings] = useState<{ paneId: string; anchor: HTMLElement } | null>(null);
 
   useEffect(() => {
-    if (layout === 'three') setRailSheet(false);
-    if (layout !== 'one') setTreeOpen(false);
-  }, [layout]);
-
-  // Picking or creating a node is a request to look at it, so a settings route
-  // must not keep covering the main pane.
-  const selectedId = state.ui.selectedId;
-  useEffect(() => {
-    setRoute((r) => (r.kind === 'directory' ? r : { kind: 'directory' }));
-  }, [selectedId]);
-
-  useEffect(() => {
-    if (directoryQuarantinedKey) {
-      toasts.push(
-        `Saved directory could not be read; kept under ${directoryQuarantinedKey}`,
-        'danger',
-      );
-    }
-    if (rpcSettingsQuarantinedKey) {
-      toasts.push(
-        `Saved RPC endpoints could not be read; kept under ${rpcSettingsQuarantinedKey}`,
-        'danger',
-      );
-    }
-    if (devicesQuarantinedKey) {
-      toasts.push(
-        `Saved device table could not be read; kept under ${devicesQuarantinedKey}`,
-        'danger',
-      );
+    const quarantined: [string | undefined, string][] = [
+      [directoryQuarantinedKey, 'Saved directory'],
+      [rpcSettingsQuarantinedKey, 'Saved RPC endpoints'],
+      [devicesQuarantinedKey, 'Saved device table'],
+      [workspaceQuarantinedKey, 'Saved workspace'],
+    ];
+    for (const [key, what] of quarantined) {
+      if (key) toasts.push(`${what} could not be read; kept under ${key}`, 'danger');
     }
     // Runs once: the quarantine happened at module load, before React mounted.
   }, []);
@@ -152,53 +153,75 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
     void balanceCache.refresh(registry, state.accounts);
   }, [registry, state.accounts, toasts]);
 
-  const railOpen = layout === 'three' ? railInline : railSheet;
-  const toggleRail = useCallback(() => {
-    if (layout === 'three') setRailInline((v) => !v);
-    else setRailSheet((v) => !v);
-  }, [layout]);
-
+  // Legacy views still speak the three-column shell's API; the workspace answers it with panes.
   const shell = useMemo<ShellApi>(
     () => ({
-      layout,
-      railOpen,
-      toggleRail,
-      treeOpen,
-      toggleTree: () => setTreeOpen((v) => !v),
-      closeTree: () => setTreeOpen(false),
-      route,
-      navigate: setRoute,
+      layout: 'three',
+      railOpen: trayOpen,
+      toggleRail: () => setTrayOpen((v) => !v),
+      treeOpen: false,
+      toggleTree: () => revealElement('directory'),
+      closeTree: () => undefined,
+      route: ROUTE_HOME,
+      navigate: (route) => {
+        if (route.kind === 'devices') revealElement('devices');
+        else if (route.kind === 'network') revealElement('network');
+        else revealElement('directory');
+      },
       openDialog: setDialog,
-      openPalette: () => setPaletteOpen(true),
+      openPalette: () => setSearchOpen(true),
       refreshBalances,
     }),
-    [layout, railOpen, toggleRail, treeOpen, route, refreshBalances],
+    [trayOpen, refreshBalances],
+  );
+
+  const coreLabel =
+    core.backend === 'unavailable'
+      ? `core unavailable`
+      : `core ${core.version ?? '?'} · ${core.backend}`;
+  const api = useMemo<WorkspaceApi>(
+    () => ({
+      registry: elementRegistry,
+      openSearch: () => setSearchOpen(true),
+      openCatalogue: (anchor) => setCatalogue(anchor),
+      openSettings: (paneId, anchor) => setSettings({ paneId, anchor }),
+      coreLabel,
+      coreState:
+        core.backend === 'unavailable'
+          ? core.reason === 'loading'
+            ? 'busy'
+            : 'offline'
+          : 'online',
+    }),
+    [coreLabel, core.backend, core.reason],
   );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.shiftKey && (e.key === 'E' || e.key === 'e')) {
+        e.preventDefault();
+        canvasPointRef.current = null;
+        setCatalogue(document.body);
+        return;
+      }
       if (mod && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault();
-        setPaletteOpen((v) => !v);
+        setSearchOpen((v) => !v);
         return;
       }
-      if (mod && e.key === '.') {
+      if (isTypingTarget(e.target) || mod || e.altKey) return;
+      if (e.key === '/') {
         e.preventDefault();
-        toggleRail();
-        return;
-      }
-      if (e.key === 'Escape' && !isTypingTarget(e.target)) {
-        // An open dialog or sheet owns Escape; the event target may be the
-        // body rather than the dialog when focus sits on the top layer itself.
+        setSearchOpen(true);
+      } else if (e.key === 'l' || e.key === 'L') {
         if (document.querySelector('dialog[open]')) return;
-        if (route.kind !== 'directory') setRoute({ kind: 'directory' });
-        else if (state.ui.selectedId !== null) directory.select(null);
+        workspace.toggleLock();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.ui.selectedId, toggleRail, route.kind]);
+  }, []);
 
   const closeDialog = useCallback(() => setDialog(null), []);
   const deleteTarget =
@@ -208,42 +231,42 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
         ? { kind: 'folder' as const, id: dialog.folderId }
         : null;
 
-  const columns =
-    layout === 'one'
-      ? 'grid-cols-[minmax(0,1fr)]'
-      : layout === 'two' || !railInline
-        ? 'grid-cols-[280px_minmax(0,1fr)]'
-        : 'grid-cols-[280px_minmax(0,1fr)_320px]';
-
   return (
     <ShellContext value={shell}>
-      <div className="grid h-full grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-paper text-ink">
-        <div className={`grid min-h-0 min-w-0 gap-3 p-3 ${columns}`}>
-          {layout !== 'one' && <DirectoryTree />}
-          <MainPane />
-          {layout === 'three' && railInline && <ApprovalRail />}
+      <WorkspaceContext.Provider value={api}>
+        <div className="flex h-full flex-col overflow-hidden bg-paper text-ink">
+          <TopBar trayOpen={trayOpen} onToggleTray={() => setTrayOpen((v) => !v)} />
+          <LayoutTabs />
+          {narrow ? <StackMode /> : <Canvas />}
+          <StatusBar core={core} registryError={registryError} />
         </div>
-        <StatusBar core={core} registryError={registryError} />
-      </div>
+        <Tray open={trayOpen} onOpenChange={setTrayOpen}>
+          <ApprovalRailBody />
+        </Tray>
+        <Recorders />
 
-      {layout === 'one' && (
-        <Sheet side="left" open={treeOpen} onClose={() => setTreeOpen(false)} label="Directory">
-          <DirectoryTree />
-        </Sheet>
-      )}
-      {layout !== 'three' && (
-        <Sheet
-          side="right"
-          open={railSheet}
-          onClose={() => setRailSheet(false)}
-          label="Approvals"
-          width="w-[min(88vw,360px)]"
-        >
-          <ApprovalRail />
-        </Sheet>
-      )}
+        <OmniSearch
+          open={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          viewport={getCanvasViewport}
+        />
+        <ElementCatalogue
+          anchor={catalogue}
+          open={catalogue !== null}
+          onClose={() => {
+            setCatalogue(null);
+            canvasPointRef.current = null;
+          }}
+          viewport={getCanvasViewport}
+          at={canvasPointRef.current}
+        />
+        <SettingsPopover
+          paneId={settings?.paneId ?? null}
+          anchor={settings?.anchor ?? null}
+          onClose={() => setSettings(null)}
+        />
+      </WorkspaceContext.Provider>
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <AddFolderDialog
         open={dialog?.kind === 'folder'}
         parentId={dialog?.kind === 'folder' ? dialog.parentId : undefined}

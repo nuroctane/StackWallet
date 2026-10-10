@@ -66,13 +66,53 @@ opacity 0); ease-out for UI, never ease-in on controls; only animate `transform`
 respect `prefers-reduced-motion` (keep opacity/color, drop travel); stagger lists 30–80ms; no
 animation on high-frequency actions; hover lift only on `(hover: hover) and (pointer: fine)`.
 
-## Layout
+## Workspace
 
-- Three-column shell on desktop widths: directory tree (280px), main pane (fluid), approval
-  rail (320px, collapsible). Below 1100px the rail becomes a sheet; below 800px the tree becomes
-  a drawer.
-- Screen padding 20px; card gap 12–16px.
-- Dense tables for holdings and history; 36px rows; sticky headers.
+The shell is a terminal workspace, not a page. Chrome is minimal and fixed; content lives in
+floating elements on an infinite dark canvas.
+
+- **Top bar (40px)**: wordmark · layout lock · search (`/`) · `elements ▾` · core status.
+- **Layout tabs (24px)**: saved layouts as chips, kebab for rename / duplicate / export / delete,
+  `+` for a new one. `Ctrl+1..9` switches.
+- **Canvas**: `--sw-paper` with a 32px grid at 3% white. Elements are free-floating, draggable by
+  their title row, resizable on eight handles, snapping to an 8px grid and to each other's edges
+  (6px tolerance). Double-click empty canvas to add an element there. Locked layouts ignore
+  gestures. Gestures write transforms directly; the store updates on release.
+- **Status bar** stays at the bottom; the **tray** (bottom-right pill) holds approvals and
+  activity and persists across layouts.
+- Below 800px the canvas becomes a single scrolling column of the same elements.
+
+### Element anatomy
+
+- Title row 28px: `>` glyph · lowercase title · scope chips (`+N` overflow) · optional toolbar ·
+  right icons (settings, fullscreen, close). Chips carrying a selection or a total use `--sw-warm`
+  at 14% with a warm hairline; everything else is colourless.
+- Body hugs the frame: no outer padding, hairline separators, 12px internal padding at most.
+- Settings live in an anchored popover of `label ⓘ: [control]` rows (≤ 8 rows). Complex
+  elements may use a drawer with vertical tabs.
+- Every element is a serialisable `{kind, props}` record; "copy element config" and layout export
+  produce JSON that pastes anywhere.
+
+### Density and tables
+
+- Dense tables are virtualised above ~50 rows. Row heights: 21px tight, 24px normal, 32px loose;
+  28px sticky header in 10px uppercase tracking `--sw-faint`.
+- Address cells: middle-truncated mono, copy on hover, optional filter funnel. Two-line cells
+  pair a value with dimmed context.
+- Live rows prepend and flash in three tiers (`data-age` 0/1/2 → warm at 18% / 10% / 4%),
+  decaying by age bucket, background only. Live tables carry a pause control.
+- Loading: KPI cells show `··`; a pane shows the word `loading` with a 10px ring. No shimmer.
+
+### Charts
+
+- Canvas, DPR ≤ 2, redraw only on data or size change. Right-hand y-axis, faint dotted
+  vertical gridlines, last value as a pill on the axis.
+- Hover: dotted vertical crosshair, timestamp chip grown from the x-axis, dashed horizontal with
+  the value pinned to the right axis. No floating tooltip card.
+- Series colours: gray ramp (`#d8d8d8 → #555555`), `--sw-warm` for the selected or custom series,
+  `--sw-danger` only for a falling or failing series. Up is neutral; down is red.
+- The activity terrain is an isometric extrusion (0.9/0.5 projection, three shaded faces) in the
+  gray ramp with today and the hovered cell in `--sw-warm`.
 
 ## Signing and approval screens
 

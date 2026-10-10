@@ -1,0 +1,232 @@
+/* Workspace canvas and pane frame. Tokens come from @stackwallet/ui/theme.css. */
+
+.sw-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background-color: var(--sw-paper);
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 12%) transparent;
+}
+.sw-canvas[data-fullscreen] {
+  overflow: hidden;
+}
+
+/* The grid lives on the sizer so it scrolls with the panes. */
+.sw-canvas-sizer {
+  position: relative;
+  background-image:
+    repeating-linear-gradient(0deg, rgb(255 255 255 / 3%) 0 1px, transparent 1px 32px),
+    repeating-linear-gradient(90deg, rgb(255 255 255 / 3%) 0 1px, transparent 1px 32px);
+}
+
+.sw-pane {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  background: var(--sw-surface);
+  border: 1px solid var(--sw-edge);
+  border-radius: var(--sw-radius-sm);
+  box-shadow: inset 0 1px 0 var(--sw-sheen);
+  outline: none;
+  contain: layout paint style;
+  content-visibility: auto;
+  transform-origin: center;
+  transition: border-color 140ms var(--sw-ease);
+}
+.sw-pane[data-focused] {
+  border-color: var(--sw-edge-strong);
+}
+.sw-pane[data-dragging] {
+  transition: none;
+  box-shadow:
+    inset 0 1px 0 var(--sw-sheen),
+    0 12px 40px rgb(0 0 0 / 55%);
+}
+.sw-pane[data-fullscreen] {
+  border-radius: 0;
+  content-visibility: visible;
+}
+/* Stack mode frames sit in normal flow; the enter animation still applies. */
+.sw-pane-stacked {
+  position: relative;
+  transform: none;
+  content-visibility: visible;
+}
+
+/* `scale` composes with the positioning transform; animating `transform` would override it. */
+.sw-pane-enter {
+  animation: sw-pane-enter 160ms var(--sw-ease) both;
+}
+@keyframes sw-pane-enter {
+  from {
+    opacity: 0;
+    scale: 0.95;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+.sw-pane-title {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 4px 0 8px;
+  border-bottom: 1px solid var(--sw-edge);
+  color: var(--sw-muted);
+  font-size: 11px;
+  line-height: 1;
+  user-select: none;
+  touch-action: none;
+  cursor: grab;
+}
+.sw-pane[data-locked] .sw-pane-title,
+.sw-pane[data-fullscreen] .sw-pane-title,
+.sw-pane-stacked .sw-pane-title {
+  cursor: default;
+}
+.sw-pane[data-dragging] .sw-pane-title {
+  cursor: grabbing;
+}
+.sw-pane-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: lowercase;
+}
+.sw-pane-icon-btn {
+  display: inline-flex;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sw-faint);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sw-pane-icon-btn:hover,
+.sw-pane-icon-btn:focus-visible {
+  color: var(--sw-ink);
+}
+
+.sw-pane-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Resize handles sit inside the border box because `contain: paint` clips anything outside. */
+.sw-handle {
+  position: absolute;
+  z-index: 2;
+  touch-action: none;
+}
+.sw-handle-n,
+.sw-handle-s {
+  left: 10px;
+  right: 10px;
+  height: 6px;
+}
+.sw-handle-e,
+.sw-handle-w {
+  top: 10px;
+  bottom: 10px;
+  width: 6px;
+}
+.sw-handle-n {
+  top: 0;
+  cursor: n-resize;
+}
+.sw-handle-s {
+  bottom: 0;
+  cursor: s-resize;
+}
+.sw-handle-e {
+  right: 0;
+  cursor: e-resize;
+}
+.sw-handle-w {
+  left: 0;
+  cursor: w-resize;
+}
+.sw-handle-ne,
+.sw-handle-nw,
+.sw-handle-se,
+.sw-handle-sw {
+  width: 10px;
+  height: 10px;
+}
+.sw-handle-ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+.sw-handle-nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+.sw-handle-se {
+  bottom: 0;
+  right: 0;
+  cursor: nwse-resize;
+}
+.sw-handle-sw {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.sw-canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: var(--sw-faint);
+  font-size: 12px;
+}
+
+/* Tabs row scrolls sideways without showing a bar. */
+.sw-tabs {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.sw-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.sw-tray-panel {
+  transform-origin: bottom right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sw-pane-enter {
+    animation: sw-pane-enter-fade 160ms var(--sw-ease) both;
+  }
+  @keyframes sw-pane-enter-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}

@@ -120,6 +120,51 @@ body {
   }
 }
 
+/* Ring spinner. Rotation is the only motion; reduced motion leaves a static notched ring. */
+.sw-spin {
+  animation: sw-spin 900ms linear infinite;
+}
+@keyframes sw-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Virtual table rows. The live-data flash sits on a pseudo-element with its own fade so the
+   row background itself (hover, tone, selection) stays instant. Later rules win. */
+.sw-vrow[data-tone='warm'] {
+  background-color: color-mix(in srgb, var(--sw-warm) 6%, transparent);
+}
+.sw-vrow[data-tone='danger'] {
+  background-color: color-mix(in srgb, var(--sw-danger) 10%, transparent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .sw-vrow[data-clickable]:hover {
+    background-color: var(--sw-hover);
+  }
+}
+.sw-vrow[data-selected] {
+  background-color: var(--sw-hover);
+  box-shadow: inset 2px 0 0 var(--sw-warm);
+}
+.sw-vrow::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-color: transparent;
+  transition: background-color 600ms var(--sw-ease);
+}
+.sw-vrow[data-age='2']::before {
+  background-color: color-mix(in srgb, var(--sw-warm) 4%, transparent);
+}
+.sw-vrow[data-age='1']::before {
+  background-color: color-mix(in srgb, var(--sw-warm) 10%, transparent);
+}
+.sw-vrow[data-age='0']::before {
+  background-color: color-mix(in srgb, var(--sw-warm) 18%, transparent);
+}
+
 /* Native dialog in the top layer. The UA sets display:none while closed, so the
    open display value lives on the element (Tailwind `open:flex`). */
 dialog.sw-dialog {
@@ -223,6 +268,9 @@ dialog.sw-sheet[data-side='right'] {
 @media (prefers-reduced-motion: reduce) {
   .sw-pressable:active {
     transform: none;
+  }
+  .sw-spin {
+    animation: none;
   }
   .sw-enter,
   dialog.sw-dialog[open] {

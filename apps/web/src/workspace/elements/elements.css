@@ -1,0 +1,47 @@
+/* Legacy views carry their own glass panel. Inside a pane the frame is the
+   chrome, so the panel loses its edge and its header becomes a slim toolbar. */
+.sw-embed {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.sw-embed > * {
+  flex: 1;
+  min-height: 0;
+}
+.sw-embed > .sw-glass {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  animation: none;
+}
+.sw-embed > .sw-glass > header {
+  padding: 2px 8px;
+  min-height: 24px;
+}
+.sw-embed > .sw-glass > header h2 {
+  display: none;
+}
+/* Views that were sized for the wide main pane use 20px padding; panes are denser. */
+.sw-embed .p-5 {
+  padding: 12px;
+}
+.sw-embed .gap-5 {
+  gap: 12px;
+}
+.sw-embed-padded {
+  padding: 8px;
+}
+
+/* Scrollable body for views that are not wrapped in a Panel. */
+.sw-embed-scroll {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}

@@ -12,6 +12,47 @@ export { useMediaQuery } from './useMediaQuery.js';
 export { EmptyState, type EmptyStateProps } from './EmptyState.js';
 export { Sparkline, sparklinePoints, type SparklineProps } from './Sparkline.js';
 export {
+  Chip,
+  OverflowChip,
+  type ChipProps,
+  type ChipTone,
+  type OverflowChipProps,
+} from './Chip.js';
+export {
+  Popover,
+  positionPopover,
+  type PopoverAlign,
+  type PopoverPosition,
+  type PopoverProps,
+  type PopoverRect,
+  type PopoverSide,
+  type PopoverViewport,
+  type PositionOptions,
+} from './Popover.js';
+export { LoadingWord, Placeholder, type LoadingWordProps } from './LoadingWord.js';
+export {
+  HEADER_HEIGHT,
+  VirtualTable,
+  gridTemplate,
+  visibleRange,
+  type Column,
+  type Density,
+  type RowAge,
+  type RowTone,
+  type VirtualTableProps,
+} from './VirtualTable.js';
+export {
+  CanvasChart,
+  SERIES_RAMP,
+  nearestPoint,
+  niceTicks,
+  scaleLinear,
+  type CanvasChartProps,
+  type ChartPadding,
+  type Point,
+  type Series,
+} from './CanvasChart.js';
+export {
   Toast,
   ToastProvider,
   ToastViewport,
