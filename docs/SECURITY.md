@@ -61,7 +61,8 @@ other paired devices (their own core)
   platform, never below OWASP minimums).
 - Device identity: Ed25519. Channel: Noise IK with PSK at pairing, then Noise with pinned statics.
 - TSS: CGGMP21 (secp256k1 ECDSA), FROST (Ed25519, secp256k1-tr). Only audited, maintained
-  implementations; no bespoke protocol code.
+  implementations; no bespoke protocol code. Pre-release crates are not accepted for signing
+  schemes: the ECDSA scheme stays disabled until `cggmp24` ships a stable release (SPEC §5.1).
 - Randomness: OS CSPRNG via `getrandom`. No userland PRNG seeding for key material.
 - Secrets are `Zeroize`d on drop. WASM memory for secrets is allocated in the core's own arena
   and never handed to JS as views.

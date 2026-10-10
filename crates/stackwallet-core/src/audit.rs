@@ -43,7 +43,11 @@ pub enum AuditEvent {
     },
     CeremonyStarted {
         session_id: String,
-        sign_request_id: String,
+        /// Absent for key generation and refresh.
+        sign_request_id: Option<String>,
+    },
+    CeremonyCompleted {
+        session_id: String,
     },
     CeremonyAborted {
         session_id: String,

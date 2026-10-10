@@ -16,3 +16,29 @@ thiserror.workspace = true
 sha2.workspace = true
 hex.workspace = true
 zeroize.workspace = true
+argon2 = "0.6"
+chacha20poly1305 = "0.11"
+hkdf = "0.13"
+ed25519-dalek = "3"
+frost-ed25519 = "3"
+frost-secp256k1-tr = "3"
+frost-core = "3"
+getrandom = "0.4"
+rusqlite = { version = "0.40", features = ["bundled", "serialize"], optional = true }
+k256 = { version = "0.13", features = ["schnorr"] }
+rand_core_06 = { version = "0.6", package = "rand_core", features = ["getrandom"] }
+# hkdf 0.13 is built on digest 0.11, which the workspace-wide sha2 0.10 does not implement.
+sha2_v011 = { version = "0.11", package = "sha2", default-features = false }
+hmac = { version = "0.13", default-features = false }
+
+[features]
+default = ["store"]
+# SQLite via rusqlite is native-only; the wasm build leaves it off.
+store = ["dep:rusqlite"]
+
+# Browser builds need the JS entropy backends; getrandom 0.4 also needs the
+# getrandom_backend="wasm_js" cfg set in .cargo/config.toml.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }
+getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
+

@@ -10,12 +10,14 @@
 //! - [`policy`]    deterministic rule evaluation
 //! - [`lifecycle`] the transaction state machine
 //! - [`audit`]     hash-chained audit log
-//! - [`vault`]     encrypted storage of shares and secrets (Phase 1)
-//! - [`tss`]       threshold signing parties and ceremonies (Phase 1)
-//! - [`transport`] device-to-device channel (Phase 2)
-//! - [`store`]     SQLite persistence (Phase 1)
+//! - [`vault`]     encrypted storage of shares and secrets
+//! - [`identity`]  Ed25519 device identity and message authentication
+//! - [`tss`]       threshold signing parties and ceremonies
+//! - [`transport`] device-to-device channel (interface only, not yet wired)
+//! - [`store`]     SQLite persistence
 
 pub mod audit;
+pub mod identity;
 pub mod intent;
 pub mod lifecycle;
 pub mod model;
@@ -41,6 +43,16 @@ pub enum CoreError {
     },
     #[error("audit chain broken at index {0}")]
     AuditChain(usize),
+    #[error("vault is locked")]
+    Locked,
+    #[error("wrong passphrase or corrupted vault")]
+    Unlock,
+    #[error("crypto failure in {0}")]
+    Crypto(&'static str),
+    #[error("ceremony {0}")]
+    Ceremony(String),
+    #[error("store: {0}")]
+    Store(String),
     #[error("not implemented until {phase}: {what}")]
     NotYet {
         phase: &'static str,

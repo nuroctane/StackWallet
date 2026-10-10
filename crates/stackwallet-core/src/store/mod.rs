@@ -1,11 +1,17 @@
-//! Persistence. Phase 1 implements this on SQLite (rusqlite natively,
-//! SQLite-WASM over OPFS in the browser) with the whole file encrypted by the
-//! vault's data key. Phase 0 defines the directory records and the schema.
+//! Persistence. Directory records and the schema live here for every target;
+//! the SQLite implementation ([`SqliteStore`]) is native-only behind the
+//! `store` feature. The browser build reuses the same schema through
+//! SQLite-WASM over OPFS, and the whole file is encrypted by the vault's data
+//! key on both.
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::ChainFamily;
-use crate::model::ChainId;
+use crate::model::{ChainFamily, ChainId, Curve, KeyGroup};
+
+#[cfg(feature = "store")]
+mod sqlite;
+#[cfg(feature = "store")]
+pub use sqlite::SqliteStore;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,7 +67,55 @@ pub struct Account {
     pub hidden: bool,
 }
 
-/// Schema applied by Phase 1's SQLite store. Kept here so the TypeScript
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceKind {
+    Desktop,
+    Browser,
+    Cli,
+    Mobile,
+}
+
+/// A paired peer. `identity_pub_hex` is the pinned Ed25519 key; `id` is the
+/// identifier derived from it by `identity::device_id_for_public_key`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Device {
+    pub id: String,
+    pub name: String,
+    pub kind: DeviceKind,
+    pub identity_pub_hex: String,
+    #[serde(default)]
+    pub endpoints: Vec<String>,
+    pub paired_at_ms: i64,
+    pub last_seen_at_ms: Option<i64>,
+    pub revoked_at_ms: Option<i64>,
+}
+
+/// A [`KeyGroup`] plus the bookkeeping columns the model itself does not carry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyGroupRecord {
+    #[serde(flatten)]
+    pub group: KeyGroup,
+    pub created_at_ms: i64,
+    pub refreshed_at_ms: Option<i64>,
+}
+
+/// One device's share of one group key. `encrypted_share` is sealed by the
+/// vault before it reaches the store; the store never sees share plaintext.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyShareRecord {
+    pub id: String,
+    pub key_group_id: String,
+    pub curve: Curve,
+    pub device_id: String,
+    pub encrypted_share: Vec<u8>,
+    pub created_at_ms: i64,
+}
+
+/// Schema applied by the SQLite store. Kept here so the TypeScript
 /// client and the Rust store share one source of truth through the docs.
 pub const SCHEMA_SQL: &str = r#"
 PRAGMA foreign_keys = ON;

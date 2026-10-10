@@ -214,6 +214,27 @@ OS keychain / Windows Hello on desktop). Share material is additionally encrypte
 per-share key derived from the DEK so a compromised DB export without the passphrase yields
 nothing usable.
 
+As implemented, a vault directory holds two files:
+
+- `vault.json`: the secrets. KDF parameters and salt, the DEK wrapped under the Argon2id key
+  (the parameters and salt are bound into the AEAD's associated data, so lowering them in the
+  file breaks authentication), and one entry per secret (device identity seed, key shares,
+  provider keys), each sealed under its own HKDF-SHA256(DEK, entry id) key with the id and
+  label as associated data. A generation counter and an HMAC-SHA256 manifest tag (keyed from
+  the DEK) over the counter and the ordered entry list are checked at unlock, so deleting,
+  reordering or rolling back an entry fails authentication. Labels are plaintext metadata;
+  ciphertext never is.
+- `store.swdb`: the directory and bookkeeping. The live database is an in-memory SQLite image
+  serialized on save and sealed as one XChaCha20-Poly1305 blob under HKDF-SHA256(DEK, store).
+  The header (magic, format version, vault generation, nonce) is authenticated, and the CLI
+  refuses a store whose generation does not match the vault's, so neither file can be rolled
+  back on its own. Both files are written to a sibling temp file, fsynced and renamed into
+  place.
+
+Keeping secrets apart from metadata lets the store be re-encrypted and later synced without
+touching key material. The `key_share` table in the store is reserved for the per-device model
+once ceremonies run across devices; the in-process harness keeps shares as vault entries.
+
 Sync between devices is a CRDT-free, explicit model: each device keeps its own DB; metadata
 (folders, wallets, accounts, policies, automations, grants, tx records) is exchanged as signed
 change sets over the P2P channel, last-writer-wins per row with vector clocks for conflict
@@ -225,13 +246,23 @@ visibility. Shares are never synced; they are created in place by DKG or moved b
 
 | Curve                      | Chains                             | Protocol                                                  | Implementation         |
 | -------------------------- | ---------------------------------- | --------------------------------------------------------- | ---------------------- |
-| secp256k1 ECDSA            | EVM, Bitcoin legacy/SegWit, Cosmos | CGGMP21 (DKG, auxiliary info, presign, sign, key refresh) | `cggmp21` crate family |
+| secp256k1 ECDSA            | EVM, Bitcoin legacy/SegWit, Cosmos | CGGMP21 (DKG, auxiliary info, presign, sign, key refresh) | `cggmp24` crate family |
 | Ed25519                    | Solana (Sui/Aptos later)           | FROST                                                     | `frost-ed25519`        |
 | secp256k1 Schnorr (BIP340) | Bitcoin Taproot                    | FROST                                                     | `frost-secp256k1-tr`   |
 
 Each `tss` wallet runs DKG once per curve so one wallet covers all families. Key refresh rotates
 share material without changing public keys; re-sharing changes the party set (device add or
 remove) without changing public keys.
+
+Implementation status. The FROST schemes are wired in the core through `frost-core` 3 with the
+pure-Rust `k256` / `curve25519-dalek` backends and compile for native and `wasm32`. The ECDSA
+scheme is not yet wired: the maintained CGGMP crate was renamed `cggmp21` → `cggmp24`, the
+`cggmp21` 0.6 release depends on GMP through `rug` (no MSVC or wasm build), and `cggmp24` is only
+published as a `0.7.0-alpha` pre-release without key refresh. `Curve::Secp256k1` stays in the
+model; there is no `ThresholdScheme` driver for it, and the FROST driver and the CLI refuse it
+with an explicit reason (`CoreError::Invalid`) until a stable `cggmp24` lands. Until then `tss`
+wallets can hold Ed25519 and Taproot keys only. Blocking EVM and Cosmos accounts in a `tss`
+wallet at creation time belongs to the directory phase, when wallet creation moves into the core.
 
 ### 5.2 Parties
 
@@ -431,7 +462,9 @@ account change / UTXO arrival)`, `manual`, `agent`.
 0. **Scaffold**: repo, workspaces, AGENTS.md, SPEC/SECURITY/DESIGN/CHAINS, CI, design tokens,
    empty Tauri and web shells, core types (`TxIntent`, `SignRequest`, `Policy`, lifecycle, audit).
 1. **Core vault + TSS**: encrypted SQLite store, device identity, DKG / sign / refresh for
-   FROST-Ed25519 and CGGMP21, local multi-party test harness, CLI `pair` / `sign`.
+   FROST-Ed25519 and FROST-secp256k1-tr, local multi-party test harness, CLI `vault` /
+   `keygen` / `sign`. CGGMP24 ECDSA follows as **1b** once the crate has a stable release
+   (see §5.1).
 2. **Transport**: QR pairing, Noise channel, WebRTC with LAN signaling via desktop, resumption.
 3. **Directory + EVM**: folders / wallets / accounts UI, EVM adapter end to end on testnets,
    lifecycle + audit log, Approval Queue.

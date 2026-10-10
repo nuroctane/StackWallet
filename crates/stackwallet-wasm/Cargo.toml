@@ -10,7 +10,7 @@ description = "Browser surface for stackwallet-core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-stackwallet-core = { path = "../stackwallet-core" }
+stackwallet-core = { path = "../stackwallet-core", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 wasm-bindgen = "0.2"

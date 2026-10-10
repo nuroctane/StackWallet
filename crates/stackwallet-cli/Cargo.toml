@@ -13,3 +13,9 @@ path = "src/main.rs"
 [dependencies]
 stackwallet-core = { path = "../stackwallet-core" }
 serde_json.workspace = true
+zeroize.workspace = true
+sha2.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -1,6 +1,10 @@
-//! Headless StackWallet. Phase 1 adds `pair` and `sign`; Phase 6 adds `run`
-//! (the scheduler that makes this binary the automation device). Phase 0 ships
-//! the skeleton with offline subcommands that exercise the core.
+//! Headless StackWallet: the encrypted vault, the device identity and
+//! threshold ceremonies without a UI. `pair` (device-to-device transport) and
+//! `run` (the scheduler that makes this binary the automation device) are
+//! not wired yet and say so.
+
+mod harness_cmd;
+mod vault_cmd;
 
 use std::io::Read;
 use std::process::ExitCode;
@@ -13,7 +17,14 @@ Commands:
   policy-eval <policies.json> <intent.json> <context.json>
                                evaluate policies offline; exit 0 on allow, 2 on deny
   key-group-check [file.json]  validate a KeyGroup (stdin if no file); exit 2 on violation
-  pair | sign | run            not yet (Phase 1 / Phase 6)
+  vault init <dir> [name]      create an encrypted vault + store with a fresh device identity
+  vault status <dir> [--unlock]
+                               locked metadata; with --unlock also opens the store and
+                               verifies the audit chain
+  harness keygen|sign|refresh  run every FROST party in-process (see `harness` for usage)
+  pair | sign | run            not yet (Phase 2 / Phase 6)
+
+The passphrase is read from STACKWALLET_PASSPHRASE or the first line of stdin.
 ";
 
 fn read_arg_or_stdin(path: Option<&str>) -> std::io::Result<String> {
@@ -82,8 +93,53 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 }
             }
         }
-        Some("pair") | Some("sign") => Err("not yet: Phase 1".into()),
+        Some("vault") => vault(&args[1..]),
+        Some("harness") => harness_cmd::run(&args[1..]),
+        Some("pair") | Some("sign") => Err("not yet: Phase 2".into()),
         Some("run") => Err("not yet: Phase 6".into()),
+        _ => {
+            eprint!("{USAGE}");
+            Ok(ExitCode::from(64))
+        }
+    }
+}
+
+fn print_json(v: &serde_json::Value) -> Result<(), String> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(v).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+
+fn vault(args: &[String]) -> Result<ExitCode, String> {
+    match args.first().map(String::as_str) {
+        Some("init") => {
+            let dir = args.get(1).ok_or("vault init needs a directory")?;
+            let name = args.get(2).map(String::as_str).unwrap_or("stackwallet-cli");
+            let opened = vault_cmd::init(dir, name)?;
+            print_json(&serde_json::json!({
+                "dir": opened.paths.dir.display().to_string(),
+                "device": {
+                    "id": opened.identity.device_id(),
+                    "name": name,
+                    "publicHex": opened.identity.public_hex(),
+                },
+                "kdf": opened.vault.kdf_params(),
+            }))?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some("status") => {
+            let dir = args.get(1).ok_or("vault status needs a directory")?;
+            let unlock = args.iter().skip(2).any(|a| a == "--unlock");
+            let status = if unlock {
+                vault_cmd::status_unlocked(dir)?
+            } else {
+                vault_cmd::status_locked(dir)?
+            };
+            print_json(&status)?;
+            Ok(ExitCode::SUCCESS)
+        }
         _ => {
             eprint!("{USAGE}");
             Ok(ExitCode::from(64))
