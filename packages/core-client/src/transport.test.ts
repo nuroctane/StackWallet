@@ -56,11 +56,11 @@ describe('pairing offer text form', () => {
     expect(decodePairingOffer(`  ${text}\n`)).toEqual(offer);
   });
 
-  it('decodes exactly what the core emits, padded or not', () => {
+  it('decodes exactly what the core emits and rejects padding like the core', () => {
     const json = JSON.stringify(offer);
-    expect(decodePairingOffer(`${PAIRING_OFFER_PREFIX}${base64Url(json)}`)).toEqual(offer);
-    const padded = btoa(json).replace(/\+/g, '-').replace(/\//g, '_');
-    expect(decodePairingOffer(`${PAIRING_OFFER_PREFIX}${padded}`)).toEqual(offer);
+    const body = base64Url(json);
+    expect(decodePairingOffer(`${PAIRING_OFFER_PREFIX}${body}`)).toEqual(offer);
+    expect(codeOf(() => decodePairingOffer(`${PAIRING_OFFER_PREFIX}${body}==`))).toBe('base64');
   });
 
   it('rejects a missing prefix', () => {

@@ -88,6 +88,10 @@ impl PairingOffer {
         if self.device_name.trim().is_empty() || self.device_name.len() > 64 {
             return Err(invalid("device name must be 1-64 bytes"));
         }
+        // Same bounds as `Hello`: an offer is pinned into the store as-is.
+        if self.endpoints.len() > 16 || self.endpoints.iter().any(|e| e.len() > 256) {
+            return Err(invalid("too many or too long endpoints"));
+        }
         Ok(())
     }
 

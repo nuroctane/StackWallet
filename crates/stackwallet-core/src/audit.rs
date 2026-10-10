@@ -53,6 +53,14 @@ pub enum AuditEvent {
         session_id: String,
         reason: String,
     },
+    /// A proposed ceremony was refused before it started (unknown or revoked
+    /// participant, bad binding, expired session). Refusals are the events an
+    /// operator most wants to find later, so they are audited like outcomes.
+    CeremonyRefused {
+        session_id: String,
+        proposer_device_id: String,
+        reason: String,
+    },
     DevicePaired {
         device_id: String,
     },

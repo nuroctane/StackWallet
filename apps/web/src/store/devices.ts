@@ -33,6 +33,13 @@ export type LocalDevice = z.infer<typeof LocalDevice>;
  * Pinned peers reuse the core-client `Device` schema verbatim so the same
  * records can be handed to the wasm `Session` lookup or written to the native
  * store later without a translation step.
+ *
+ * Trust note: this blob lives in localStorage, which any script on the origin
+ * can rewrite. That is acceptable only because nothing here is authoritative
+ * yet: pinning is disabled until the core bridge lands, and when it does the
+ * device table moves into the core's encrypted store and this slice becomes a
+ * read-through cache that the core re-validates on every load. Do not let a
+ * session constructor consume these records without that re-validation.
  */
 export const DevicesState = z.object({
   version: z.literal(DEVICES_VERSION),

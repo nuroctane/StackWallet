@@ -27,11 +27,12 @@ Commands:
   harness keygen|sign|refresh  run every FROST party in-process (see `harness` for usage)
   pair offer|accept            pair with another device over TCP (see `pair` for usage)
   devices <dir>                list the devices pinned at pairing
+devices revoke <dir> <id>    tombstone a peer; the record stays, connections are refused
   serve <dir> --listen host:port [--once] [--no-mdns]
                                accept connections from paired devices and act as a
                                FROST party in the ceremonies they start
   net keygen|sign              start a ceremony with paired devices (see `net` for usage)
-  run                          not yet (Phase 6)
+  run                          agent runtime (not implemented yet)
 
 The passphrase is read from STACKWALLET_PASSPHRASE or the first line of stdin.
 ";
@@ -108,7 +109,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("devices") => pair_cmd::devices(&args[1..]),
         Some("serve") => net_cmd::serve(&args[1..]),
         Some("net") => net_cmd::run(&args[1..]),
-        Some("run") => Err("not yet: Phase 6".into()),
+        Some("run") => Err("the agent runtime is not implemented yet".into()),
         _ => {
             eprint!("{USAGE}");
             Ok(ExitCode::from(64))

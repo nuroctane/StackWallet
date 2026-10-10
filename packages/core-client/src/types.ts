@@ -378,10 +378,10 @@ export class PairingOfferError extends Error {
 }
 
 function base64UrlDecode(body: string): Uint8Array | undefined {
-  // Unpadded input is what the core emits; tolerate padding since a QR
-  // scanner or chat client may have normalized the string.
-  const unpadded = body.replace(/=+$/, '');
-  if (!/^[A-Za-z0-9_-]*$/.test(unpadded)) return undefined;
+  // The core emits and accepts only unpadded base64url; stay strict here so a
+  // code that previews as valid cannot fail in the core afterwards.
+  if (!/^[A-Za-z0-9_-]*$/.test(body) || body.includes('=')) return undefined;
+  const unpadded = body;
   const padded = unpadded
     .replace(/-/g, '+')
     .replace(/_/g, '/')
@@ -466,7 +466,9 @@ export async function pairingOfferIdMatches(offer: PairingOffer): Promise<boolea
 /** The ceremony envelope the transport carries (`tss::CeremonyMessage`). */
 export const CeremonyMessage = z.object({
   sessionId: z.string(),
-  payloadHashHex: z.string().regex(/^[0-9a-f]{64}$/),
+  // Empty only on the round-0 proposal, which carries session parameters
+  // instead of a payload binding; protocol rounds always carry the hash.
+  payloadHashHex: z.string().regex(/^([0-9a-f]{64})?$/),
   fromDeviceId: z.string(),
   toDeviceId: z.string().nullable(),
   round: z.number().int().min(0).max(255),

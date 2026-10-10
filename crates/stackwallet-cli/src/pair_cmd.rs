@@ -32,7 +32,7 @@ Commands:
                                --listen is the address this device will `serve` on,
                                recorded on the peer
 
-The offer is spent by the first connection attempt, successful or not.
+Failed attempts do not spend the offer; the issuer tolerates a few, then aborts.
 ";
 
 const DEFAULT_TTL_SECS: u64 = 120;
@@ -131,6 +131,15 @@ fn pin_peer(opened: &mut Opened, mut peer: Device) -> Result<serde_json::Value, 
     let at = now_ms();
     if let Some(existing) = opened.store.get_device(&peer.id).map_err(fmt_err)? {
         peer.paired_at_ms = existing.paired_at_ms;
+        if existing.revoked_at_ms.is_some() {
+            // Re-pairing is a fresh ceremony under a fresh one-time code, so
+            // it is also how a revoked device is deliberately let back in;
+            // say so rather than silently resurrecting the record.
+            eprintln!(
+                "note: `{}` was revoked; re-pairing clears the revocation",
+                peer.id
+            );
+        }
     }
     if peer.paired_at_ms == 0 {
         peer.paired_at_ms = at;
@@ -300,6 +309,47 @@ fn accept(args: &[String]) -> Result<serde_json::Value, String> {
 }
 
 pub fn devices(args: &[String]) -> Result<ExitCode, String> {
+    // `devices revoke <dir> <device-id>` tombstones a peer; the record stays
+    // so the core keeps refusing it, and it is never deleted here.
+    if args.first().map(String::as_str) == Some("revoke") {
+        let dir = args
+            .get(1)
+            .ok_or("devices revoke needs a vault directory")?;
+        let id = args.get(2).ok_or("devices revoke needs a device id")?;
+        let opened = vault_cmd::open(dir)?;
+        let mut device = opened
+            .store
+            .get_device(id)
+            .map_err(fmt_err)?
+            .ok_or_else(|| format!("no pinned device `{id}`"))?;
+        if device.id == opened.identity.device_id() {
+            return Err("a device cannot revoke itself".into());
+        }
+        let at = now_ms();
+        device.revoked_at_ms = Some(at);
+        opened.store.upsert_device(&device).map_err(fmt_err)?;
+        opened
+            .store
+            .record_audit(
+                at,
+                Actor::Device {
+                    device_id: opened.identity.device_id(),
+                },
+                AuditEvent::DeviceRevoked {
+                    device_id: device.id.clone(),
+                },
+            )
+            .map_err(fmt_err)?;
+        opened.save()?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "revoked": { "id": device.id, "name": device.name, "revokedAtMs": at }
+            }))
+            .map_err(|e| e.to_string())?
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
     let dir = args.first().ok_or("devices needs a vault directory")?;
     let opened = vault_cmd::open(dir)?;
     let own = opened.identity.device_id();

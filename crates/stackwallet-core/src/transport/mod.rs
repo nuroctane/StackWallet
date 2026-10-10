@@ -15,9 +15,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::identity::SignedCeremonyMessage;
-use crate::Result;
-
 pub use crate::store::{Device, DeviceKind};
 
 pub mod frame;
@@ -41,16 +38,6 @@ pub const TRANSPORT_VERSION: u8 = 1;
 /// instance name and `identity`/`noise` TXT records holding the public keys,
 /// so discovery alone can never introduce an unpinned device.
 pub const MDNS_SERVICE_TYPE: &str = "_stackwallet._tcp.local.";
-
-/// What the ceremony layer needs from a carrier: deliver signed messages to
-/// paired devices and surface the ones that arrived. Implementations verify
-/// the envelope signature and the channel binding before returning a message.
-pub trait Transport {
-    fn local_device(&self) -> &Device;
-    fn peers(&self) -> Vec<Device>;
-    fn send(&mut self, msg: SignedCeremonyMessage) -> Result<()>;
-    fn poll(&mut self) -> Result<Vec<SignedCeremonyMessage>>;
-}
 
 /// How a peer can be reached. Strings in `Device::endpoints` are the
 /// serialised form so the store never needs to know the carrier set.

@@ -221,6 +221,20 @@ impl SqliteStore {
 
     fn apply_schema(&self) -> Result<()> {
         self.conn.execute_batch(SCHEMA_SQL)?;
+        // `CREATE TABLE IF NOT EXISTS` adds nothing to a table that already
+        // exists, so columns added after the fact need an explicit upgrade.
+        // Devices pinned before the column existed have no Noise static; they
+        // must re-pair, which is exactly what an empty static forces.
+        let has_noise_static = self
+            .conn
+            .prepare("PRAGMA table_info(device)")?
+            .query_map([], |r| r.get::<_, String>(1))?
+            .any(|name| name.map(|n| n == "noise_static_hex").unwrap_or(false));
+        if !has_noise_static {
+            self.conn.execute_batch(
+                "ALTER TABLE device ADD COLUMN noise_static_hex TEXT NOT NULL DEFAULT ''",
+            )?;
+        }
         let fk: i64 = self
             .conn
             .query_row("PRAGMA foreign_keys", [], |r| r.get(0))?;
@@ -680,4 +694,45 @@ fn collect<T>(
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map([], f)?;
     rows.map(|r| r.map_err(CoreError::from)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A store written before `device.noise_static_hex` existed must gain the
+    /// column when a newer core opens it; devices pinned before then carry an
+    /// empty static, which makes them re-pair instead of failing queries.
+    #[test]
+    fn opening_an_older_store_adds_the_noise_static_column() {
+        let store = SqliteStore::create().unwrap();
+        store
+            .conn
+            .execute_batch("ALTER TABLE device DROP COLUMN noise_static_hex")
+            .unwrap();
+        store.apply_schema().unwrap();
+        let names: Vec<String> = store
+            .conn
+            .prepare("PRAGMA table_info(device)")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(1))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(names.iter().any(|n| n == "noise_static_hex"));
+        // And device CRUD works on the migrated table.
+        let d = Device {
+            id: "d1".into(),
+            name: "Old peer".into(),
+            kind: crate::store::DeviceKind::Cli,
+            identity_pub_hex: "ab".repeat(32),
+            noise_static_hex: String::new(),
+            endpoints: Vec::new(),
+            paired_at_ms: 1,
+            last_seen_at_ms: None,
+            revoked_at_ms: None,
+        };
+        store.upsert_device(&d).unwrap();
+        assert_eq!(store.get_device("d1").unwrap().unwrap().name, "Old peer");
+    }
 }

@@ -99,14 +99,28 @@ pub fn message_to_sign(request: &SignRequest) -> Result<Vec<u8>> {
 /// party set. Binding round-1 messages to it turns a parameter mismatch into an
 /// immediate refusal instead of an opaque DKG failure two rounds later.
 pub fn keygen_binding_hex(group: &KeyGroup, curve: Curve) -> String {
-    let mut ids: Vec<&str> = group.parties.iter().map(|p| p.device_id.as_str()).collect();
+    // Roles are part of the binding: relabelling a party (e.g. an agent as
+    // human to dodge the D6 invariant) must change the session binding, or
+    // the proposer could rewrite roles without any peer noticing.
+    let mut ids: Vec<String> = group
+        .parties
+        .iter()
+        .map(|p| {
+            let role = serde_json::to_value(p.role)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| format!("{:?}", p.role).to_lowercase());
+            format!("{}:{role}", p.device_id)
+        })
+        .collect();
     ids.sort_unstable();
+    let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
     binding_hex(
         "keygen",
         &group.id,
         curve,
         group.threshold as u16,
-        &ids,
+        &refs,
         b"",
     )
 }

@@ -39,24 +39,26 @@ other paired devices (their own core)
 
 ## 3. Threats and mitigations
 
-| Threat                                                     | Mitigation                                                                                                                                                                                                                           |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Agent is prompt-injected into sending funds to an attacker | D6: agent is at most one party; every agent-inclusive threshold needs a non-agent share. Policy caps and allowlists. Destinations sourced from untrusted content are flagged in the proposal. Hard per-session caps in the run loop. |
-| Agent exfiltrates keys                                     | Agent never receives keys, shares, provider keys, or RPC credentials. Tools are a fixed allowlist with Zod-validated arguments.                                                                                                      |
+| Threat                                                     | Mitigation                                                                                                                                                                                                                            |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent is prompt-injected into sending funds to an attacker | D6: agent is at most one party; every agent-inclusive threshold needs a non-agent share. Policy caps and allowlists. Destinations sourced from untrusted content are flagged in the proposal. Hard per-session caps in the run loop.  |
+| Agent exfiltrates keys                                     | Agent never receives keys, shares, provider keys, or RPC credentials. Tools are a fixed allowlist with Zod-validated arguments.                                                                                                       |
 | Malicious peer joins a ceremony                            | Pairing pins the Ed25519 identity and X25519 Noise static under a one-time PSK; later sessions are Noise IK against the pinned static. Unknown or revoked statics are refused before any application byte is read, not prompted.      |
-| Attacker on the LAN during pairing                         | The pairing handshake is `IKpsk2` keyed with the QR one-time code, so observing or injecting traffic without the QR cannot complete it; the code is single-use and expires. mDNS is a hint only and never pins anything.             |
-| Malicious WebRTC signalling via a relay                  | `Signal` frames are opaque to the relay and unauthenticated by design; the browser validates SDP/ICE at the WebRTC layer, and the data channel still requires the Noise handshake against a pinned static.        |
-| Replay or reorder of channel traffic                       | Noise nonces are strictly increasing per direction; any decrypt failure closes the session rather than skipping the message. A relaying device can drop or delay envelopes (aborts the ceremony) but cannot forge them.             |
-| Peer substitutes a different payload mid-ceremony          | Every protocol message is bound to `sessionId` and the `SignRequest` hash. Mismatch aborts the ceremony and writes an audit row.                                                                                                     |
-| Replay of an old signing request                           | Requests carry a nonce and TTL; presignatures are single-use and discarded on expiry.                                                                                                                                                |
-| Device theft                                               | DB encrypted at rest (XChaCha20-Poly1305, Argon2id-wrapped DEK). Shares encrypted again with a per-share key. Platform unlock is optional and never the only factor for share material.                                              |
-| Browser storage cleared                                    | Share-level encrypted backups; recovery drills in the Devices page; re-sharing from remaining parties when `n - lost >= t`.                                                                                                          |
-| Supply chain compromise of a chain SDK                     | SDKs never see keys. Sighash is recomputed in the core from the serialized unsigned tx for families where that is tractable (EVM, Solana, Cosmos). Lockfiles pinned; `pnpm audit` and `cargo audit` in CI.                           |
-| Malicious RPC                                              | Simulation results and balances are cross-checked across at least two endpoints when available; user-editable RPC pool with health tracking. Broadcast failures never mark a tx as confirmed.                                        |
-| Fake token / lookalike address                             | Asset registry provenance; address first-seen tracking; unicode and prefix/suffix similarity warnings on approval screens.                                                                                                           |
-| Local malware with user privileges                         | Out of scope for software alone. Recommended: run the agent and the automation CLI under a separate OS account or on a separate machine with only their own share.                                                                   |
-| Time-of-check / time-of-use on caps                        | Caps count reserved spend (`Awaiting`, `Signing`) in addition to confirmed transactions.                                                                                                                                             |
-| Audit log tampering                                        | Hash-chained rows; UI verifies the chain and shows breaks.                                                                                                                                                                           |
+| Attacker on the LAN during pairing                         | The pairing handshake is `IKpsk2` keyed with the QR one-time code, so observing or injecting traffic without the QR cannot complete it; the code is single-use and expires. mDNS is a hint only and never pins anything.              |
+| Malicious WebRTC signalling via a relay                    | `Signal` frames are opaque to the relay and unauthenticated by design; the browser validates SDP/ICE at the WebRTC layer, and the data channel still requires the Noise handshake against a pinned static.                            |
+| Replay or reorder of channel traffic                       | Noise nonces are strictly increasing per direction; any decrypt failure closes the session rather than skipping the message. A relaying device can drop or delay envelopes (aborts the ceremony) but cannot forge them.               |
+| Peer substitutes a different payload mid-ceremony          | Every protocol message is bound to `sessionId` and the `SignRequest` hash. Mismatch aborts the ceremony and writes an audit row.                                                                                                      |
+| Attacker who saw the QR races the real scanner             | Residual risk of one-time-PSK pairing: a QR observer learns the code and can connect first. The issuer therefore prints the pinned peer's identity fingerprint for out-of-band comparison, and `devices` shows what was pinned.       |
+| Paired device goes rogue                                   | Pairing plus group membership is currently full signing authority within threshold: the CLI `serve` path is operator-run and does not yet evaluate policies per request. The policy gate arrives with the `SignRequest` lifecycle UI. |
+| Replay of an old signing request                           | Ceremony sessions carry an id and a TTL checked at admission; mid-ceremony stalls are bounded by the carrier idle timeout. Per-request nonces and presignature TTL land with the lifecycle and resumption work (not yet implemented). |
+| Device theft                                               | DB encrypted at rest (XChaCha20-Poly1305, Argon2id-wrapped DEK). Shares encrypted again with a per-share key. Platform unlock is optional and never the only factor for share material.                                               |
+| Browser storage cleared                                    | Share-level encrypted backups; recovery drills in the Devices page; re-sharing from remaining parties when `n - lost >= t`.                                                                                                           |
+| Supply chain compromise of a chain SDK                     | SDKs never see keys. Sighash is recomputed in the core from the serialized unsigned tx for families where that is tractable (EVM, Solana, Cosmos). Lockfiles pinned; `pnpm audit` and `cargo audit` in CI.                            |
+| Malicious RPC                                              | Simulation results and balances are cross-checked across at least two endpoints when available; user-editable RPC pool with health tracking. Broadcast failures never mark a tx as confirmed.                                         |
+| Fake token / lookalike address                             | Asset registry provenance; address first-seen tracking; unicode and prefix/suffix similarity warnings on approval screens.                                                                                                            |
+| Local malware with user privileges                         | Out of scope for software alone. Recommended: run the agent and the automation CLI under a separate OS account or on a separate machine with only their own share.                                                                    |
+| Time-of-check / time-of-use on caps                        | Caps count reserved spend (`Awaiting`, `Signing`) in addition to confirmed transactions.                                                                                                                                              |
+| Audit log tampering                                        | Hash-chained rows; UI verifies the chain and shows breaks.                                                                                                                                                                            |
 
 ## 4. Cryptography
 
@@ -72,8 +74,17 @@ other paired devices (their own core)
   implementations; no bespoke protocol code. Pre-release crates are not accepted for signing
   schemes: the ECDSA scheme stays disabled until `cggmp24` ships a stable release (SPEC §5.1).
 - Randomness: OS CSPRNG via `getrandom`. No userland PRNG seeding for key material.
-- Secrets are `Zeroize`d on drop. WASM memory for secrets is allocated in the core's own arena
-  and never handed to JS as views.
+- Secrets are `Zeroize`d on drop, with two documented exceptions: `snow` holds the in-progress
+  handshake keys without zeroizing (library limitation), and the wasm identity seed crosses the
+  JS boundary exactly once in each direction (out via `to_seed` into the vault, in via
+  `from_seed` on unlock) because the vault itself is the only legitimate consumer. Everything
+  else — Noise statics, DEK/KEK, shares — stays in Rust-owned memory.
+- The pairing one-time code's single-use property is enforced by the carrier, not the
+  stateless core: the CLI issuer burns the offer after one success; the wasm bridge must do the
+  same when it is wired, and the browser must never re-emit an offer after a `paired` event.
+- The browser's device list in localStorage is a cache, not the trust root: when the core bridge
+  lands, the pinned device table lives in the core's encrypted store and the core re-validates
+  anything the UI hands it.
 
 ## 5. Privacy
 

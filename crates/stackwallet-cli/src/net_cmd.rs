@@ -22,6 +22,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use stackwallet_core::audit::{Actor, AuditEvent};
 use stackwallet_core::identity::SignedCeremonyMessage;
 use stackwallet_core::intent::{SignRequest, Signature};
 use stackwallet_core::model::{Curve, KeyGroup, PartyRef, PartyRole, PublicKey};
@@ -982,13 +983,30 @@ fn serve_connection(
             None => return Err("connection closed before a proposal".into()),
         }
     };
-    let identities = check_proposal(opened, &proposal, &proposer, &self_id).map_err(|e| {
-        format!(
-            "refusing {} from {}: {e}",
-            proposal.kind_name(),
-            proposer.id
-        )
-    })?;
+    let identities = match check_proposal(opened, &proposal, &proposer, &self_id) {
+        Ok(identities) => identities,
+        Err(e) => {
+            // A refusal is a security event; keep it in the audit log, not
+            // just on stderr. Best-effort: a store error must not mask the
+            // refusal itself.
+            let _ = opened.store.record_audit(
+                now_ms(),
+                Actor::Device {
+                    device_id: self_id.to_owned(),
+                },
+                AuditEvent::CeremonyRefused {
+                    session_id: proposal.session().id.clone(),
+                    proposer_device_id: proposer.id.clone(),
+                    reason: e.clone(),
+                },
+            );
+            return Err(format!(
+                "refusing {} from {}: {e}",
+                proposal.kind_name(),
+                proposer.id
+            ));
+        }
+    };
     let session = proposal.session().clone();
     let outcome = audited(
         opened,

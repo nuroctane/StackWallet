@@ -13,7 +13,7 @@
 //! - [`vault`]     encrypted storage of shares and secrets
 //! - [`identity`]  Ed25519 device identity and message authentication
 //! - [`tss`]       threshold signing parties and ceremonies
-//! - [`transport`] device-to-device channel (interface only, not yet wired)
+//! - [`transport`] pairing, Noise channel and session framing (sans-IO)
 //! - [`store`]     SQLite persistence
 
 pub mod audit;
@@ -53,11 +53,6 @@ pub enum CoreError {
     Ceremony(String),
     #[error("store: {0}")]
     Store(String),
-    #[error("not implemented until {phase}: {what}")]
-    NotYet {
-        phase: &'static str,
-        what: &'static str,
-    },
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;

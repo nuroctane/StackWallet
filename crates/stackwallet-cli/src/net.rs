@@ -25,6 +25,11 @@ pub const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 /// is still starting its `serve` loop does not fail the whole ceremony.
 pub const CONNECT_RETRY: Duration = Duration::from_secs(10);
 
+/// A connection that has not finished the Noise handshake and Hello exchange by
+/// now never will; anything longer lets one silent socket stall a sequential
+/// accept loop. Raised to `IDLE_TIMEOUT` once the session opens.
+pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+
 const MAX_RECORD: usize = u16::MAX as usize;
 
 pub fn write_record(stream: &mut TcpStream, bytes: &[u8]) -> std::io::Result<()> {
@@ -98,6 +103,10 @@ struct Conn {
     /// Set once a `Closed` event has been surfaced so a later reader error
     /// does not produce a second one.
     closed_reported: bool,
+    /// Whether the read timeout was raised to ``IDLE_TIMEOUT`` after the
+    /// session opened. The socket options live on the shared handle, so the
+    /// reader thread's clone sees the new value.
+    timeout_raised: bool,
 }
 
 /// Every open connection of one process plus the events they produced.
@@ -133,7 +142,7 @@ impl Hub {
         stream.set_nodelay(true).map_err(|e| e.to_string())?;
         let reader = stream.try_clone().map_err(|e| e.to_string())?;
         reader
-            .set_read_timeout(Some(IDLE_TIMEOUT))
+            .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
             .map_err(|e| e.to_string())?;
         let idx = self.conns.len();
         self.conns.push(Conn {
@@ -141,6 +150,7 @@ impl Hub {
             session,
             peer_addr,
             closed_reported: false,
+            timeout_raised: false,
         });
         let tx = self.tx.clone();
         std::thread::spawn(move || read_loop(idx, reader, tx));
@@ -221,10 +231,21 @@ impl Hub {
                     if let Err(e) = self.flush(idx) {
                         self.fail(idx, e);
                     }
+                    self.raise_timeout_once_open(idx);
                 }
                 Inbound::Eof => self.fail(idx, "peer closed the connection".into()),
                 Inbound::Error(e) => self.fail(idx, e),
             }
+        }
+    }
+
+    /// Sessions start on the short handshake budget; once open they get the
+    /// full idle allowance ceremonies need.
+    fn raise_timeout_once_open(&mut self, idx: usize) {
+        let conn = &mut self.conns[idx];
+        if !conn.timeout_raised && conn.session.state() == SessionState::Open {
+            let _ = conn.stream.set_read_timeout(Some(IDLE_TIMEOUT));
+            conn.timeout_raised = true;
         }
     }
 
@@ -266,7 +287,7 @@ fn read_loop(idx: usize, mut stream: TcpStream, tx: Sender<(usize, Inbound)>) {
             Ok(Some(bytes)) => Inbound::Record(bytes),
             Ok(None) => Inbound::Eof,
             Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
-                Inbound::Error(format!("idle for {}s", IDLE_TIMEOUT.as_secs()))
+                Inbound::Error("read timed out".into())
             }
             Err(e) => Inbound::Error(e.to_string()),
         };

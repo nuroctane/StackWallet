@@ -872,3 +872,21 @@ fn frames_respect_the_noise_message_limit() {
     assert!(a.send(huge).is_err());
     assert_eq!(a.state(), SessionState::Open);
 }
+
+/// A carrier without its own length cap (a browser data channel) cannot make
+/// the session allocate a peer-sized buffer; oversize input closes the
+/// session before the handshake layer ever sees it.
+#[test]
+fn oversize_wire_input_closes_the_session() {
+    let alice = party("alice", DeviceKind::Desktop);
+    let bob = party("bob", DeviceKind::Cli);
+    let (a, mut b) = open_ik(&alice, &bob);
+
+    let huge = vec![0u8; u16::MAX as usize + 1];
+    let events = b.handle_incoming(&huge).unwrap();
+    assert_eq!(b.state(), SessionState::Closed);
+    assert_eq!(closed_reason(&events), "oversize message");
+
+    // The other direction is unaffected until it hears from us again.
+    assert_eq!(a.state(), SessionState::Open);
+}

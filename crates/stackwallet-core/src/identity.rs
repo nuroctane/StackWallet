@@ -89,7 +89,8 @@ impl DeviceIdentity {
     /// key is only ever used for signatures.
     pub fn noise_static(&self) -> Zeroizing<x25519_dalek::StaticSecret> {
         let mut raw = Zeroizing::new([0u8; 32]);
-        Hkdf::<sha2_v011::Sha256>::new(None, &self.signing.to_bytes())
+        let seed = Zeroizing::new(self.signing.to_bytes());
+        Hkdf::<sha2_v011::Sha256>::new(None, seed.as_ref())
             .expand(NOISE_STATIC_INFO, raw.as_mut())
             .expect("32 bytes is within the HKDF-SHA256 output limit");
         Zeroizing::new(x25519_dalek::StaticSecret::from(*raw))

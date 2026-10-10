@@ -284,7 +284,7 @@ Example setups:
 
 - **Pairing**: one device shows a QR (text form `stackwallet-pair:<base64url JSON>`) carrying
   `{version, deviceId, deviceName, kind, identityPubHex, noiseStaticHex, endpoints[],
-  oneTimeCodeHex, expiresAtMs}`; the other scans or pastes it. The scanner initiates
+oneTimeCodeHex, expiresAtMs}`; the other scans or pastes it. The scanner initiates
   `Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s` against the issuer's static from the QR, with the
   one-time code as the PSK. Each device holds two keys derived from one vault-held seed: the
   Ed25519 identity key (signatures only) and an X25519 Noise static (HKDF label
@@ -306,8 +306,12 @@ Example setups:
   the exact `SignRequest` hash, so a party cannot be tricked into signing a different payload
   mid-ceremony. Ceremony envelopes are signed end to end by their author, so a device that
   relays messages for others (the initiating CLI acts as a star hub) can delay or drop them,
-  which only aborts the ceremony, but cannot forge or alter them.
-- **Resumption** *(not yet implemented)*: presignatures (CGGMP21) and nonce pre-commitment
+  which only aborts the ceremony, but cannot forge or alter them. Because relayed envelopes are
+  admitted against each receiver's own pinned table, every participant of a network ceremony
+  must be paired with every other participant, not only with the hub. Session TTLs are checked
+  when a ceremony proposal is admitted; mid-ceremony stalls are bounded by the carrier's idle
+  timeout.
+- **Resumption** _(not yet implemented)_: presignatures (CGGMP21) and nonce pre-commitment
   (FROST) let parties pre-commit
   so a phone's co-sign is one round when the request arrives. Ceremonies have a TTL; expired
   presignatures are discarded, never reused.
@@ -482,10 +486,11 @@ account change / UTXO arrival)`, `manual`, `agent`.
    `keygen` / `sign`. CGGMP24 ECDSA follows as **1b** once the crate has a stable release
    (see §5.1).
 2. **Transport**: QR pairing with one-time PSK, Noise channel (`IKpsk2`/`IK`), TCP carrier + mDNS
-   for desktop/CLI, CLI as a real ceremony party (star hub, n-party relay), Devices UI shell in
-   the web app, sans-IO `Session` in core and its wasm wrapper. WebRTC data channels and the
-   wasm bridge that drives them land in Phase 3 alongside the directory work; ceremony TTL and
-   presignature-based resumption (§5.3) are likewise deferred and are not yet enforced.
+   in the CLI (the desktop shell inherits both from the core when it wires transport), CLI as a
+   real ceremony party (star hub, n-party relay), Devices UI shell in the web app, sans-IO
+   `Session` in core and its wasm wrapper. WebRTC data channels and the wasm bridge that drives
+   them land in Phase 3 alongside the directory work; presignature-based resumption (§5.3) is
+   likewise deferred.
 3. **Directory + EVM**: folders / wallets / accounts UI, EVM adapter end to end on testnets,
    lifecycle + audit log, Approval Queue.
 4. **Chains**: Bitcoin (PSBT, Taproot via FROST secp256k1-tr), Solana, Cosmos; swaps per family.

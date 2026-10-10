@@ -263,6 +263,13 @@ impl Session {
 
     /// Feed one wire message from the carrier.
     pub fn handle_incoming(&mut self, bytes: &[u8]) -> Result<Vec<SessionEvent>> {
+        // Carriers length-prefix with a u16, so anything larger is not a
+        // message at all; refuse before the handshake layer allocates a
+        // peer-sized buffer for it. Matters for carriers without their own
+        // cap (a browser data channel).
+        if bytes.len() > u16::MAX as usize {
+            return Ok(self.fail(None, "oversize message"));
+        }
         match std::mem::replace(&mut self.phase, Phase::Closed) {
             Phase::Closed => Err(invalid("session", "closed")),
             Phase::Handshaking(hs) => Ok(self.handshake_step(*hs, bytes)),
