@@ -135,6 +135,65 @@ describe('CosmosAdapter reads', () => {
     ]);
   });
 
+  it('narrows a disagreement to the denoms that actually differ', async () => {
+    const pool = new MemoryRpcPool(chainsForFamily('cosmos'));
+    let calls = 0;
+    const cosmos = createCosmosAdapter({
+      rpc: pool,
+      fetch: restFetch(() => ({
+        balances:
+          ++calls === 1
+            ? [
+                { denom: 'uatom', amount: '10' },
+                { denom: 'ibc/ABC', amount: '1' },
+              ]
+            : [
+                { denom: 'uatom', amount: '10' },
+                { denom: 'ibc/ABC', amount: '2' },
+              ],
+      })),
+    });
+    const holdings = await cosmos.getBalances(hubAddr, HUB);
+    expect(holdings.map((h) => [h.assetRef, h.amount, h.provenance?.kind])).toEqual([
+      [`${HUB}:native`, '10', 'agreed'],
+      [`${HUB}:ibc:ABC`, expect.stringMatching(/^[12]$/), 'disagreed'],
+    ]);
+    const ibc = holdings[1]?.provenance;
+    if (ibc?.kind === 'disagreed') {
+      expect(new Set([holdings[1]?.amount, ibc.other])).toEqual(new Set(['1', '2']));
+    }
+    expect(pool.endpoints(HUB).every((e) => e.healthy)).toBe(true);
+  });
+
+  it('keeps the indexed answer as single when the other LCD rejects the address', async () => {
+    const pool = new MemoryRpcPool(chainsForFamily('cosmos'));
+    pool.setEndpoints(HUB, ['https://indexed.example', 'https://behind.example']);
+    const cosmos = createCosmosAdapter({
+      rpc: pool,
+      fetch: restFetch((url) =>
+        url.hostname === 'behind.example'
+          ? new Response(JSON.stringify({ code: 3, message: 'decoding bech32 failed' }), {
+              status: 400,
+            })
+          : { balances: [{ denom: 'uatom', amount: '10' }] },
+      ),
+    });
+    const holdings = await cosmos.getBalances(hubAddr, HUB);
+    expect(holdings).toHaveLength(1);
+    expect(holdings[0]).toMatchObject({
+      assetRef: `${HUB}:native`,
+      amount: '10',
+      provenance: { kind: 'single', endpoint: 'https://indexed.example' },
+    });
+    expect(pool.endpoints(HUB).every((e) => e.healthy)).toBe(true);
+
+    const nowhere = createCosmosAdapter({
+      rpc: pool,
+      fetch: restFetch(() => new Response('{}', { status: 404 })),
+    });
+    await expect(nowhere.getBalances(hubAddr, HUB)).rejects.toThrow(/rejected/);
+  });
+
   it('adds a zero native holding when the account holds only other denoms', async () => {
     const cosmos = createCosmosAdapter({
       fetch: restFetch(() => ({ balances: [{ denom: 'uion', amount: '7' }] })),

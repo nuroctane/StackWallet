@@ -214,6 +214,52 @@ export function moveWallet(
   return ok(withExpanded(next, folderId, true), undefined);
 }
 
+export const MAX_TAGS = 8;
+export const MAX_TAG_LENGTH = 24;
+const TAG_PATTERN = /^[a-z0-9-]+$/;
+
+/** Lowercased, trimmed, de-duplicated tags in first-seen order; empty entries drop out. */
+export function normalizeTags(tags: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of tags) {
+    const tag = raw.trim().toLowerCase();
+    if (tag === '' || seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+  }
+  return out;
+}
+
+export function setWalletTags(
+  state: DirectoryState,
+  walletId: string,
+  tags: readonly string[],
+  ctx: ReducerContext,
+): Outcome {
+  const wallet = walletById(state, walletId);
+  if (!wallet) return fail('Wallet not found');
+  const clean = normalizeTags(tags);
+  if (clean.length > MAX_TAGS) return fail(`At most ${MAX_TAGS} tags per wallet`);
+  for (const tag of clean) {
+    if (tag.length > MAX_TAG_LENGTH) return fail(`Tag "${tag}" is too long`);
+    if (!TAG_PATTERN.test(tag)) return fail('Tags may use letters, digits and dashes only');
+  }
+  if (clean.length === wallet.tags.length && clean.every((t, i) => t === wallet.tags[i])) {
+    return ok(state, undefined);
+  }
+  const t = ctx.now();
+  return ok(
+    {
+      ...state,
+      wallets: state.wallets.map((w) =>
+        w.id === walletId ? { ...w, tags: clean, updatedAtMs: t } : w,
+      ),
+    },
+    undefined,
+  );
+}
+
 export interface WatchWalletInput {
   name: string;
   folderId: string;

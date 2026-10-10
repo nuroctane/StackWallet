@@ -64,17 +64,37 @@ describe('SolanaAdapter addresses', () => {
 });
 
 describe('SolanaAdapter reads', () => {
-  it('reads lamports through getBalance', async () => {
+  it('reads lamports through getBalance and records the slot as the head block', async () => {
     const seen: unknown[] = [];
+    const pool = new MemoryRpcPool(chainsForFamily('solana'));
     const sol = createSolanaAdapter({
+      rpc: pool,
       fetch: rpcFetch((method, params) => {
         seen.push([method, params]);
         return { context: { slot: 123, apiVersion: '2.0.0' }, value: 2500000000 };
       }),
     });
     const [h] = await sol.getBalances(WSOL_MINT, MAINNET);
-    expect(h).toMatchObject({ assetRef: `${MAINNET}:native`, amount: '2500000000' });
+    expect(h).toMatchObject({
+      assetRef: `${MAINNET}:native`,
+      amount: '2500000000',
+      provenance: { kind: 'agreed' },
+    });
     expect(seen[0]).toEqual(['getBalance', [WSOL_MINT, { commitment: 'confirmed' }]]);
+    const heads = pool.endpoints(MAINNET).map((e) => e.lastBlock);
+    expect(heads.length).toBeGreaterThanOrEqual(2);
+    expect(heads.every((lastBlock) => lastBlock === 123)).toBe(true);
+  });
+
+  it('reports a single-source balance when only one endpoint is configured', async () => {
+    const pool = new MemoryRpcPool(chainsForFamily('solana'));
+    pool.setEndpoints(MAINNET, ['https://one.example']);
+    const sol = createSolanaAdapter({
+      rpc: pool,
+      fetch: rpcFetch(() => ({ context: { slot: 1 }, value: 5 })),
+    });
+    const [h] = await sol.getBalances(WSOL_MINT, MAINNET);
+    expect(h?.provenance).toEqual({ kind: 'single', endpoint: 'https://one.example' });
   });
 
   it('rejects invalid input and malformed responses with failover bookkeeping', async () => {

@@ -10,6 +10,7 @@ export const SAVE_DEBOUNCE_MS = 150;
 export interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem(key: string): void;
 }
 
 export interface LoadResult {

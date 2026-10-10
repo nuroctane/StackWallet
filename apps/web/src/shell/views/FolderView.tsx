@@ -18,6 +18,7 @@ import {
 } from '../../store/selectors.js';
 import { Breadcrumb } from '../Breadcrumb.js';
 import { useShell } from '../ShellContext.js';
+import { TotalsStrip } from './TotalsStrip.js';
 
 export function FolderView({ state, folder }: { state: DirectoryState; folder: Folder }) {
   const shell = useShell();
@@ -30,6 +31,10 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
     const ids = new Set(wallets.map((w) => w.id));
     return state.accounts.filter((a) => ids.has(a.walletId));
   }, [state.accounts, wallets]);
+  const nestedAccounts = useMemo(() => {
+    const ids = new Set(nested.map((w) => w.id));
+    return state.accounts.filter((a) => ids.has(a.walletId));
+  }, [state.accounts, nested]);
   const balances = useBalances(accounts);
 
   return (
@@ -56,10 +61,18 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
         </div>
       </div>
 
-      <section className="grid grid-cols-3 gap-3">
+      <section className="grid grid-cols-2 gap-3 min-[900px]:grid-cols-[auto_auto_minmax(0,1fr)]">
         <Stat label="Subfolders" value={subfolders.length} />
-        <Stat label="Wallets here" value={wallets.length} />
-        <Stat label="Wallets nested" value={nested.length} />
+        <Stat
+          label="Wallets"
+          value={nested.length}
+          hint={
+            nested.length !== wallets.length
+              ? `${wallets.length} here · ${nested.length - wallets.length} nested`
+              : undefined
+          }
+        />
+        <TotalsStrip accounts={nestedAccounts} className="col-span-2 min-[900px]:col-span-1" />
       </section>
 
       {subfolders.length > 0 && (
@@ -124,13 +137,16 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({ label, value, hint }: { label: string; value: number; hint?: string | undefined }) {
   return (
-    <div className="sw-elevated flex flex-col gap-1 px-4 py-3">
+    <div className="sw-elevated flex min-w-[7rem] flex-col gap-1 px-4 py-3">
       <div className="text-[11px] font-semibold tracking-[0.12em] text-faint uppercase">
         {label}
       </div>
-      <div className="text-[18px] font-semibold tracking-[-0.01em] text-ink">{value}</div>
+      <div className="flex items-baseline gap-2">
+        <span className="text-[18px] font-semibold tracking-[-0.01em] text-ink">{value}</span>
+        {hint && <span className="text-[11px] text-faint">{hint}</span>}
+      </div>
     </div>
   );
 }

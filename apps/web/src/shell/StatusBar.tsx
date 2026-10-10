@@ -3,9 +3,7 @@ import { Kbd, StatusDot } from '@stackwallet/ui';
 import type { CoreStatus } from '../App.js';
 import { listChains, listFamilies } from '../lib/chains.js';
 import { useRegistry } from '../store/RegistryContext.js';
-
-const MOD_KEY =
-  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
+import { MOD_KEY, useShell } from './ShellContext.js';
 
 export function StatusBar({
   core,
@@ -15,6 +13,7 @@ export function StatusBar({
   registryError?: string | undefined;
 }) {
   const registry = useRegistry();
+  const shell = useShell();
   const chains = listChains(registry).length;
   const families = listFamilies(registry).length;
   const label =
@@ -26,15 +25,36 @@ export function StatusBar({
     : chains === 0
       ? 'no chain adapters loaded'
       : `${chains} ${chains === 1 ? 'chain' : 'chains'} · ${families} ${families === 1 ? 'family' : 'families'}`;
+  const onNetwork = shell.route.kind === 'network';
 
   return (
-    <footer className="flex items-center justify-between gap-4 border-t border-edge px-4 py-1.5 text-[11px] text-faint">
-      <div className="flex items-center gap-3">
-        <StatusDot state={core.backend === 'unavailable' ? 'offline' : 'online'} label={label} />
-        <span title={registryError}>{chainLabel}</span>
+    <footer className="flex min-w-0 items-center justify-between gap-4 border-t border-edge px-4 py-1.5 text-[11px] text-faint">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="hidden min-[560px]:inline-flex">
+          <StatusDot state={core.backend === 'unavailable' ? 'offline' : 'online'} label={label} />
+        </span>
+        <button
+          type="button"
+          title={registryError ?? 'RPC endpoints'}
+          aria-pressed={onNetwork}
+          onClick={() => shell.navigate(onNetwork ? { kind: 'directory' } : { kind: 'network' })}
+          className={`sw-pressable -mx-1 truncate rounded-sw-sm px-1 ${onNetwork ? 'text-ink' : ''}`}
+        >
+          {chainLabel}
+        </button>
       </div>
-      <div className="flex items-center gap-3">
-        <span>local-first · no server · no telemetry</span>
+      <div className="flex shrink-0 items-center gap-3">
+        {shell.layout !== 'three' && (
+          <button
+            type="button"
+            aria-expanded={shell.railOpen}
+            onClick={shell.toggleRail}
+            className="sw-pressable -mx-1 rounded-sw-sm px-1 text-muted"
+          >
+            approvals · 0
+          </button>
+        )}
+        <span className="hidden min-[900px]:inline">local-first · no server · no telemetry</span>
         <span className="flex items-center gap-1">
           <Kbd>{MOD_KEY}</Kbd>
           <Kbd>K</Kbd>

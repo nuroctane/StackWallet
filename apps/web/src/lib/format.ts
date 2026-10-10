@@ -1,43 +1,28 @@
+import { formatAmount } from '@stackwallet/chains';
+
 /**
- * Base-unit decimal string -> human units. BigInt only; never a float, so an
- * 18-decimal balance keeps every digit. Non-zero amounts that would round to
- * zero render as `<0.000001` rather than lying with `0`.
+ * Display wrapper over the shared `formatAmount`: groups thousands, never
+ * throws on malformed input (`?`), and renders non-zero amounts that truncate
+ * to zero as `<0.000001` so a dust balance is never shown as a flat `0`.
  */
 export function formatUnits(amount: string, decimals: number, maxFraction = 6): string {
-  const trimmed = amount.trim();
-  const m = /^(-?)(\d+)$/.exec(trimmed);
+  const m = /^(-?)(\d+)$/.exec(amount.trim());
   if (!m || !Number.isInteger(decimals) || decimals < 0) return '?';
   const sign = m[1] ?? '';
   const digits = m[2] ?? '0';
-  const value = BigInt(digits);
-  if (value === 0n) return '0';
+  if (/^0+$/.test(digits)) return '0';
 
-  const base = 10n ** BigInt(decimals);
-  const whole = value / base;
-  const frac = value % base;
-
-  let fracStr = '';
-  if (decimals > 0 && frac > 0n) {
-    fracStr = frac.toString().padStart(decimals, '0').slice(0, maxFraction).replace(/0+$/, '');
-  }
-
-  if (whole === 0n && fracStr === '') {
+  const text = formatAmount(digits, decimals, { maxFraction });
+  if (text === '0') {
     const smallest = maxFraction > 0 ? `0.${'0'.repeat(maxFraction - 1)}1` : '1';
     return sign === '-' ? `>-${smallest}` : `<${smallest}`;
   }
-
-  const wholeStr = groupThousands(whole.toString());
-  return `${sign}${wholeStr}${fracStr ? `.${fracStr}` : ''}`;
+  const [whole = '0', frac] = text.split('.');
+  return `${sign}${groupThousands(whole)}${frac ? `.${frac}` : ''}`;
 }
 
 export function groupThousands(digits: string): string {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-}
-
-/** `0x1234…abcd` style; short inputs pass through untouched. */
-export function shortAddress(address: string, head = 6, tail = 4): string {
-  if (address.length <= head + tail + 1) return address;
-  return `${address.slice(0, head)}…${address.slice(-tail)}`;
 }
 
 /** Subsequence match (every query char appears in order), case-insensitive. */
@@ -52,4 +37,19 @@ export function fuzzyMatch(query: string, text: string): boolean {
     if (i === q.length) return true;
   }
   return false;
+}
+
+/**
+ * Coarse "12s" / "3m" age text for live-updating cells, sized for a dense
+ * table column; future stamps clamp to "now".
+ */
+export function relativeTime(thenMs: number, nowMs: number): string {
+  const delta = Math.max(0, Math.floor((nowMs - thenMs) / 1000));
+  if (delta < 5) return 'now';
+  if (delta < 60) return `${delta}s`;
+  const minutes = Math.floor(delta / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
 }

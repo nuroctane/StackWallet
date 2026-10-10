@@ -7,6 +7,8 @@ export { Select, type SelectProps } from './Select.js';
 export { Field, type FieldProps } from './Field.js';
 export { Kbd, type KbdProps } from './Kbd.js';
 export { Dialog, type DialogProps } from './Dialog.js';
+export { Sheet, type SheetProps } from './Sheet.js';
+export { useMediaQuery } from './useMediaQuery.js';
 export { EmptyState, type EmptyStateProps } from './EmptyState.js';
 export { Sparkline, sparklinePoints, type SparklineProps } from './Sparkline.js';
 export {

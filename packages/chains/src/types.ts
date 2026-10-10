@@ -55,10 +55,21 @@ export const ChainInfo = z.object({
 });
 export type ChainInfo = z.infer<typeof ChainInfo>;
 
+/**
+ * Where a balance came from. A malicious or lagging endpoint can lie, so
+ * adapters ask a second endpoint when one is available and report whether the
+ * two agreed; the UI shows anything short of `agreed` as unverified.
+ */
+export type HoldingProvenance =
+  | { kind: 'single'; endpoint: string }
+  | { kind: 'agreed'; endpoints: [string, string] }
+  | { kind: 'disagreed'; endpoints: [string, string]; other: Amount };
+
 export interface Holding {
   assetRef: AssetRef;
   amount: Amount;
   updatedAtMs: number;
+  provenance?: HoldingProvenance;
 }
 
 export interface TxRecord {
@@ -128,6 +139,12 @@ export interface RpcEndpoint {
   healthy: boolean;
   latencyMs?: number;
   lastErrorAtMs?: number;
+  /** Rolling failure share over the most recent attempts, 0..1. */
+  errorRate?: number;
+  /** Chain head the endpoint last reported, when the adapter asked for one. */
+  lastBlock?: number;
+  /** True for endpoints the user added or edited rather than catalog defaults. */
+  custom?: boolean;
 }
 
 export interface RpcPool {

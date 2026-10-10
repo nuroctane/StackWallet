@@ -41,8 +41,8 @@ const EVM: ChainInfo[] = [
     explorer: 'https://etherscan.io',
     rpcs: [
       'https://ethereum-rpc.publicnode.com',
-      'https://eth.llamarpc.com',
       'https://cloudflare-eth.com',
+      'https://eth.drpc.org',
     ],
   }),
   evm({
@@ -52,8 +52,8 @@ const EVM: ChainInfo[] = [
     explorer: 'https://sepolia.etherscan.io',
     rpcs: [
       'https://ethereum-sepolia-rpc.publicnode.com',
-      'https://rpc.sepolia.org',
-      'https://sepolia.drpc.org',
+      'https://1rpc.io/sepolia',
+      'https://sepolia.gateway.tenderly.co',
     ],
     testnet: true,
   }),
@@ -62,11 +62,7 @@ const EVM: ChainInfo[] = [
     name: 'Base',
     symbol: 'ETH',
     explorer: 'https://basescan.org',
-    rpcs: [
-      'https://mainnet.base.org',
-      'https://base-rpc.publicnode.com',
-      'https://base.llamarpc.com',
-    ],
+    rpcs: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com', 'https://base.drpc.org'],
   }),
   evm({
     id: 84532,
@@ -84,7 +80,7 @@ const EVM: ChainInfo[] = [
     rpcs: [
       'https://arb1.arbitrum.io/rpc',
       'https://arbitrum-one-rpc.publicnode.com',
-      'https://arbitrum.llamarpc.com',
+      'https://arbitrum.drpc.org',
     ],
   }),
   evm({
@@ -102,7 +98,7 @@ const EVM: ChainInfo[] = [
     rpcs: [
       'https://mainnet.optimism.io',
       'https://optimism-rpc.publicnode.com',
-      'https://optimism.llamarpc.com',
+      'https://optimism.drpc.org',
     ],
   }),
   evm({
@@ -111,9 +107,9 @@ const EVM: ChainInfo[] = [
     symbol: 'POL',
     explorer: 'https://polygonscan.com',
     rpcs: [
-      'https://polygon-rpc.com',
       'https://polygon-bor-rpc.publicnode.com',
-      'https://polygon.llamarpc.com',
+      'https://polygon.drpc.org',
+      'https://1rpc.io/matic',
     ],
   }),
   evm({
@@ -124,7 +120,7 @@ const EVM: ChainInfo[] = [
     rpcs: [
       'https://bsc-dataseed.bnbchain.org',
       'https://bsc-rpc.publicnode.com',
-      'https://binance.llamarpc.com',
+      'https://1rpc.io/bnb',
     ],
   }),
   evm({
@@ -209,10 +205,7 @@ const EVM: ChainInfo[] = [
     name: 'World Chain',
     symbol: 'ETH',
     explorer: 'https://worldscan.org',
-    rpcs: [
-      'https://worldchain-mainnet.g.alchemy.com/public',
-      'https://worldchain-rpc.publicnode.com',
-    ],
+    rpcs: ['https://worldchain-mainnet.g.alchemy.com/public', 'https://worldchain.drpc.org'],
   }),
   evm({
     id: 57073,
@@ -254,7 +247,11 @@ const EVM: ChainInfo[] = [
     name: 'Moonbeam',
     symbol: 'GLMR',
     explorer: 'https://moonscan.io',
-    rpcs: ['https://rpc.api.moonbeam.network', 'https://moonbeam-rpc.publicnode.com'],
+    rpcs: [
+      'https://moonbeam.api.onfinality.io/public',
+      'https://moonbeam.drpc.org',
+      'https://1rpc.io/glmr',
+    ],
   }),
   evm({
     id: 25,
@@ -282,7 +279,7 @@ const EVM: ChainInfo[] = [
     name: 'Monad',
     symbol: 'MON',
     explorer: 'https://monadscan.com',
-    rpcs: ['https://rpc.monad.xyz', 'https://monad-rpc.publicnode.com'],
+    rpcs: ['https://rpc.monad.xyz', 'https://monad.drpc.org'],
   }),
 ];
 
@@ -535,18 +532,11 @@ const COSMOS: ChainInfo[] = [
     prefix: 'neutron',
     gasPrice: '0.0053untrn',
     explorerTxUrl: mintscan('neutron'),
-    rests: ['https://neutron-rest.publicnode.com', 'https://rest.cosmos.directory/neutron'],
-  }),
-  cosmos({
-    id: 'stargaze-1',
-    name: 'Stargaze',
-    symbol: 'STARS',
-    denom: 'ustars',
-    decimals: 6,
-    prefix: 'stars',
-    gasPrice: '1ustars',
-    explorerTxUrl: mintscan('stargaze'),
-    rests: ['https://rest.stargaze-apis.com', 'https://rest.cosmos.directory/stargaze'],
+    rests: [
+      'https://neutron-api.polkachu.com',
+      'https://rest.cosmos.directory/neutron',
+      'https://rest.lavenderfive.com/neutron',
+    ],
   }),
   cosmos({
     id: 'akashnet-2',
@@ -584,7 +574,11 @@ const COSMOS: ChainInfo[] = [
     prefix: 'stride',
     gasPrice: '0.0005ustrd',
     explorerTxUrl: mintscan('stride'),
-    rests: ['https://stride-rest.publicnode.com', 'https://rest.cosmos.directory/stride'],
+    rests: [
+      'https://stride-api.polkachu.com',
+      'https://rest.cosmos.directory/stride',
+      'https://rest.lavenderfive.com/stride',
+    ],
   }),
   cosmos({
     id: 'juno-1',
@@ -618,7 +612,11 @@ const COSMOS: ChainInfo[] = [
     coinType: 529,
     gasPrice: '0.05uscrt',
     explorerTxUrl: mintscan('secret'),
-    rests: ['https://lcd.mainnet.secretsaturn.net', 'https://rest.cosmos.directory/secretnetwork'],
+    rests: [
+      'https://rest.lavenderfive.com/secretnetwork',
+      'https://secretnetwork-api.lavenderfive.com',
+      'https://rest.cosmos.directory/secretnetwork',
+    ],
   }),
   cosmos({
     id: 'pacific-1',

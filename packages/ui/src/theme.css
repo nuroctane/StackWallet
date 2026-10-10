@@ -46,6 +46,8 @@
   --sw-radius: var(--radius-sw);
   --sw-radius-sm: var(--radius-sw-sm);
   --sw-ease: var(--ease-sw);
+  --sw-ease-morph: var(--ease-sw-morph);
+  --sw-ease-drawer: var(--ease-sw-drawer);
   color-scheme: dark;
 }
 
@@ -142,6 +144,82 @@ dialog.sw-dialog[open]::backdrop {
   }
 }
 
+/* Edge-anchored sheet. Travel is transform-only; the backdrop fades. */
+dialog.sw-sheet {
+  color: var(--sw-ink);
+  margin: 0;
+  inset: 0;
+  border-radius: 0;
+  max-width: 100vw;
+}
+dialog.sw-sheet[data-side='left'] {
+  inset-inline-end: auto;
+  border-inline-start: 0;
+  border-start-end-radius: var(--sw-radius);
+  border-end-end-radius: var(--sw-radius);
+}
+dialog.sw-sheet[data-side='right'] {
+  inset-inline-start: auto;
+  border-inline-end: 0;
+  border-start-start-radius: var(--sw-radius);
+  border-end-start-radius: var(--sw-radius);
+}
+/* A panel inside a sheet is the sheet; a second edge and enter animation would double up. */
+dialog.sw-sheet > .sw-glass {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  animation: none;
+}
+dialog.sw-sheet[open] {
+  animation: sw-sheet-in 280ms var(--sw-ease-drawer) both;
+}
+dialog.sw-sheet[open][data-closing] {
+  animation: sw-sheet-out 220ms var(--sw-ease-drawer) both;
+}
+dialog.sw-sheet::backdrop {
+  background: rgb(0 0 0 / 55%);
+}
+dialog.sw-sheet[open]::backdrop {
+  animation: sw-enter-fade 280ms var(--sw-ease-drawer) both;
+}
+dialog.sw-sheet[open][data-closing]::backdrop {
+  animation: sw-exit-fade 220ms var(--sw-ease-drawer) both;
+}
+@keyframes sw-sheet-in {
+  from {
+    transform: translateX(calc(var(--sw-sheet-dir) * 100%));
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes sw-sheet-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(var(--sw-sheet-dir) * 100%));
+  }
+}
+@keyframes sw-exit-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+dialog.sw-sheet[data-side='left'] {
+  --sw-sheet-dir: -1;
+}
+dialog.sw-sheet[data-side='right'] {
+  --sw-sheet-dir: 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .sw-pressable:active {
     transform: none;
@@ -149,6 +227,12 @@ dialog.sw-dialog[open]::backdrop {
   .sw-enter,
   dialog.sw-dialog[open] {
     animation: sw-enter-fade 200ms var(--sw-ease) both;
+  }
+  dialog.sw-sheet[open] {
+    animation: sw-enter-fade 200ms var(--sw-ease) both;
+  }
+  dialog.sw-sheet[open][data-closing] {
+    animation: sw-exit-fade 160ms var(--sw-ease) both;
   }
 }
 

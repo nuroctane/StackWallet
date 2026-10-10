@@ -47,19 +47,46 @@ User-editable list of endpoints per chain with health tracking (latency, error r
 block). Reads rotate across healthy endpoints; balance and simulation results are cross-checked
 on two endpoints when two are healthy. Broadcast goes to every healthy endpoint.
 
-Current state: `MemoryRpcPool` tracks latency and last failure, prefers the fastest healthy
-endpoint, round-robins ties, and re-admits a failed endpoint after a cooldown. Every body is
-read under the request timeout and capped at 1 MiB. Error-rate tracking, last-block tracking
-and two-endpoint cross-checks arrive with transaction building.
+Current state (`packages/chains/src/rpc.ts`):
+
+- `MemoryRpcPool` keeps, per endpoint, `healthy`, `latencyMs`, `lastErrorAtMs`, a rolling
+  `errorRate` over the last 10 attempts, and `lastBlock` (set through `markBlock` when an
+  adapter learns a head for free: Solana `getBalance` returns its slot; EVM, Bitcoin and Cosmos
+  reads do not carry one and no extra request is made for it). `pick` ranks healthy endpoints
+  by error rate, then latency, and round-robins ties; a failed endpoint is re-admitted after a
+  60 s cooldown, and when every endpoint is down the least recently failed one is still tried.
+- Endpoints set through `setEndpoints` that are not catalog defaults carry `custom: true`;
+  `resetEndpoints(chainId)` restores the defaults and `allChainIds()` lists configured chains.
+  Editing a list keeps the health history of the urls that stay.
+- `withFailover` tries endpoints in rank order until one succeeds; only thrown errors count
+  against an endpoint. Every body is read under the request timeout and capped at 1 MiB.
+- `withCrossCheck` asks two endpoints run by different operators (registrable domain, so
+  `eth.drpc.org` and `lb.drpc.org` count as one witness) in parallel and returns
+  `{ value, provenance }`. The native balance in every family's `getBalances` goes through it
+  and each `Holding` carries a `provenance`: `agreed` (both answered alike), `disagreed` (a
+  catalog default beats a user-added `custom` endpoint, otherwise the faster answer is kept; the
+  other amount is recorded, and neither endpoint is marked failed because a one-block lag is not
+  malice) or `single` (one endpoint configured, both under the same operator, or the second
+  request failed). Bitcoin and Cosmos treat "not indexed here" (404, and 400 for LCDs) from
+  exactly one side as a non-answer and keep the other side as `single`. Cosmos cross-checks the
+  whole bank response and flags only the denoms that differ. Simulation cross-checks arrive with
+  transaction building.
+- `scripts/probe-rpcs.ts` (`pnpm probe:rpcs`) hits every catalog endpoint once and verifies it
+  serves the claimed chain (`eth_chainId`, Solana `getGenesisHash`, Cosmos `node_info.network`,
+  Bitcoin `/blocks/tip/height`). It cannot check CORS, so a browser may still reject an endpoint
+  the probe accepts.
 
 ## Per-family notes
 
-Current state: every adapter implements `chains()`, `deriveAddress`, `validateAddress`,
-native-asset `getBalances` and `status` with `@noble/hashes` and `@scure/base` only, through
-the shared `fetchJson` / `fetchJsonRpc` helpers and `withFailover` over the `RpcPool`. The
-remaining methods (`getHistory`, `build`, `simulate`, `sighashes`, `attach`, `broadcast`) throw
-`NotImplementedError` until the family SDKs named below are added; they never return a fake
-success. Public keys arrive as `{ curve, hex }`; compressed secp256k1 keys are decompressed with
+Current state: every adapter extends `BaseAdapter` (`packages/chains/src/base-adapter.ts`),
+which supplies `chains()` from the catalog, the default `MemoryRpcPool`, `requireChain`
+(throws `UnknownChainError`), shared fetch options and the `NotImplementedError` stubs for the
+signing path. Each family implements `deriveAddress`, `validateAddress`, native-asset
+`getBalances` and `status` with `@noble/hashes` and `@scure/base` only, through the shared
+`fetchJson` / `fetchJsonRpc` helpers, `withFailover` and `withCrossCheck` over the `RpcPool`.
+The remaining methods (`getHistory`, `build`, `simulate`, `sighashes`, `attach`, `broadcast`)
+throw `NotImplementedError` until the family SDKs named below are added; they never return a
+fake success. Public keys arrive as `{ curve, hex }`; compressed secp256k1 keys are decompressed with
 field arithmetic in `packages/chains/src/keys.ts`, so no curve library is needed for addresses.
 
 ### EVM (`chains-evm`, viem)

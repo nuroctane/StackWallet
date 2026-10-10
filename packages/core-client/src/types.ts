@@ -258,7 +258,7 @@ export const Wallet = z.object({
   name: z.string(),
   kind: WalletKind,
   keyGroupId: z.string().nullable(),
-  tags: z.array(z.string()).default([]),
+  tags: z.array(z.string().max(24)).max(8).default([]),
   notes: z.string().nullable().optional(),
   createdAtMs: z.number().int(),
   updatedAtMs: z.number().int(),

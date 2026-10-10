@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChainRegistry } from '@stackwallet/chains';
 import { createCoreClient, type CoreClient } from '@stackwallet/core-client';
-import { ToastProvider, useToasts } from '@stackwallet/ui';
+import { Sheet, ToastProvider, useMediaQuery, useToasts } from '@stackwallet/ui';
 
 import { createDefaultRegistry } from './data/registry.js';
 import { AddFolderDialog } from './shell/AddFolderDialog.js';
@@ -11,16 +11,20 @@ import { CommandPalette } from './shell/CommandPalette.js';
 import { ConfirmDeleteDialog } from './shell/ConfirmDeleteDialog.js';
 import { DirectoryTree } from './shell/DirectoryTree.js';
 import { MainPane } from './shell/MainPane.js';
+import { MoveWalletDialog } from './shell/MoveWalletDialog.js';
 import {
   isTypingTarget,
   ShellContext,
   type ShellApi,
   type ShellDialog,
+  type ShellLayout,
+  type UiRoute,
 } from './shell/ShellContext.js';
 import { StatusBar } from './shell/StatusBar.js';
 import { balanceCache } from './store/balances.js';
 import { directory, directoryQuarantinedKey, useDirectory } from './store/persist.js';
 import { RegistryContext, useRegistry } from './store/RegistryContext.js';
+import { applyRpcSettings, rpcSettings, rpcSettingsQuarantinedKey } from './store/rpcSettings.js';
 
 export interface CoreStatus {
   backend: CoreClient['backend'];
@@ -61,7 +65,9 @@ function useCoreStatus(): CoreStatus {
 
 function buildRegistry(): { registry: ChainRegistry; error?: string } {
   try {
-    return { registry: createDefaultRegistry() };
+    const registry = createDefaultRegistry();
+    applyRpcSettings(registry, rpcSettings.getSnapshot());
+    return { registry };
   } catch (err) {
     return {
       registry: new ChainRegistry(),
@@ -81,20 +87,50 @@ export function App() {
   );
 }
 
+function useLayout(): ShellLayout {
+  const wide = useMediaQuery('(min-width: 1100px)');
+  const medium = useMediaQuery('(min-width: 800px)');
+  return wide ? 'three' : medium ? 'two' : 'one';
+}
+
 function Shell({ registryError }: { registryError?: string | undefined }) {
   const core = useCoreStatus();
   const state = useDirectory();
   const toasts = useToasts();
   const registry = useRegistry();
+  const layout = useLayout();
 
-  const [railOpen, setRailOpen] = useState(true);
+  // The inline rail remembers its own open state so collapsing it on a wide
+  // screen does not also decide whether the sheet pops open on a narrow one.
+  const [railInline, setRailInline] = useState(true);
+  const [railSheet, setRailSheet] = useState(false);
+  const [treeOpen, setTreeOpen] = useState(false);
+  const [route, setRoute] = useState<UiRoute>({ kind: 'directory' });
   const [dialog, setDialog] = useState<ShellDialog | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    if (layout === 'three') setRailSheet(false);
+    if (layout !== 'one') setTreeOpen(false);
+  }, [layout]);
+
+  // Picking or creating a node is a request to look at it, so a settings route
+  // must not keep covering the main pane.
+  const selectedId = state.ui.selectedId;
+  useEffect(() => {
+    setRoute((r) => (r.kind === 'directory' ? r : { kind: 'directory' }));
+  }, [selectedId]);
 
   useEffect(() => {
     if (directoryQuarantinedKey) {
       toasts.push(
         `Saved directory could not be read; kept under ${directoryQuarantinedKey}`,
+        'danger',
+      );
+    }
+    if (rpcSettingsQuarantinedKey) {
+      toasts.push(
+        `Saved RPC endpoints could not be read; kept under ${rpcSettingsQuarantinedKey}`,
         'danger',
       );
     }
@@ -109,15 +145,27 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
     void balanceCache.refresh(registry, state.accounts);
   }, [registry, state.accounts, toasts]);
 
+  const railOpen = layout === 'three' ? railInline : railSheet;
+  const toggleRail = useCallback(() => {
+    if (layout === 'three') setRailInline((v) => !v);
+    else setRailSheet((v) => !v);
+  }, [layout]);
+
   const shell = useMemo<ShellApi>(
     () => ({
+      layout,
       railOpen,
-      toggleRail: () => setRailOpen((v) => !v),
+      toggleRail,
+      treeOpen,
+      toggleTree: () => setTreeOpen((v) => !v),
+      closeTree: () => setTreeOpen(false),
+      route,
+      navigate: setRoute,
       openDialog: setDialog,
       openPalette: () => setPaletteOpen(true),
       refreshBalances,
     }),
-    [railOpen, refreshBalances],
+    [layout, railOpen, toggleRail, treeOpen, route, refreshBalances],
   );
 
   useEffect(() => {
@@ -130,16 +178,20 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       }
       if (mod && e.key === '.') {
         e.preventDefault();
-        setRailOpen((v) => !v);
+        toggleRail();
         return;
       }
-      if (e.key === 'Escape' && !isTypingTarget(e.target) && state.ui.selectedId !== null) {
-        directory.select(null);
+      if (e.key === 'Escape' && !isTypingTarget(e.target)) {
+        // An open dialog or sheet owns Escape; the event target may be the
+        // body rather than the dialog when focus sits on the top layer itself.
+        if (document.querySelector('dialog[open]')) return;
+        if (route.kind !== 'directory') setRoute({ kind: 'directory' });
+        else if (state.ui.selectedId !== null) directory.select(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.ui.selectedId]);
+  }, [state.ui.selectedId, toggleRail, route.kind]);
 
   const closeDialog = useCallback(() => setDialog(null), []);
   const deleteTarget =
@@ -149,22 +201,40 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
         ? { kind: 'folder' as const, id: dialog.folderId }
         : null;
 
+  const columns =
+    layout === 'one'
+      ? 'grid-cols-[minmax(0,1fr)]'
+      : layout === 'two' || !railInline
+        ? 'grid-cols-[280px_minmax(0,1fr)]'
+        : 'grid-cols-[280px_minmax(0,1fr)_320px]';
+
   return (
     <ShellContext value={shell}>
-      <div className="grid h-full grid-rows-[1fr_auto] bg-paper text-ink">
-        <div
-          className={`grid min-h-0 gap-3 p-3 ${
-            railOpen
-              ? 'grid-cols-[280px_1fr] min-[1100px]:grid-cols-[280px_1fr_320px]'
-              : 'grid-cols-[280px_1fr]'
-          }`}
-        >
-          <DirectoryTree />
+      <div className="grid h-full grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-paper text-ink">
+        <div className={`grid min-h-0 min-w-0 gap-3 p-3 ${columns}`}>
+          {layout !== 'one' && <DirectoryTree />}
           <MainPane />
-          {railOpen && <ApprovalRail />}
+          {layout === 'three' && railInline && <ApprovalRail />}
         </div>
         <StatusBar core={core} registryError={registryError} />
       </div>
+
+      {layout === 'one' && (
+        <Sheet side="left" open={treeOpen} onClose={() => setTreeOpen(false)} label="Directory">
+          <DirectoryTree />
+        </Sheet>
+      )}
+      {layout !== 'three' && (
+        <Sheet
+          side="right"
+          open={railSheet}
+          onClose={() => setRailSheet(false)}
+          label="Approvals"
+          width="w-[min(88vw,360px)]"
+        >
+          <ApprovalRail />
+        </Sheet>
+      )}
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       <AddFolderDialog
@@ -175,6 +245,11 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       <AddWatchWalletDialog
         open={dialog?.kind === 'watch'}
         folderId={dialog?.kind === 'watch' ? dialog.folderId : undefined}
+        onClose={closeDialog}
+      />
+      <MoveWalletDialog
+        open={dialog?.kind === 'move'}
+        walletId={dialog?.kind === 'move' ? dialog.walletId : undefined}
         onClose={closeDialog}
       />
       <ConfirmDeleteDialog

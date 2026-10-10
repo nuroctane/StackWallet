@@ -2,12 +2,7 @@ import { Badge, Button, EmptyState, Panel, StatusDot } from '@stackwallet/ui';
 
 export function ApprovalRail() {
   return (
-    <Panel
-      as="aside"
-      title="Approvals"
-      meta="0 pending"
-      className="sw-enter hidden min-[1100px]:flex"
-    >
+    <Panel as="aside" title="Approvals" meta="0 pending" className="sw-enter min-w-0">
       <div className="flex h-full flex-col justify-between">
         <EmptyState
           title="Nothing to approve"

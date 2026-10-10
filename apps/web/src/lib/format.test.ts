@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatUnits, fuzzyMatch, groupThousands, shortAddress } from './format.js';
+import { formatUnits, fuzzyMatch, groupThousands, relativeTime } from './format.js';
 
 describe('formatUnits', () => {
   it('formats whole and fractional parts', () => {
@@ -17,6 +17,7 @@ describe('formatUnits', () => {
 
   it('renders zero plainly and dust honestly', () => {
     expect(formatUnits('0', 18)).toBe('0');
+    expect(formatUnits('000', 18)).toBe('0');
     expect(formatUnits('1', 18)).toBe('<0.000001');
     expect(formatUnits('-1', 18)).toBe('>-0.000001');
     expect(formatUnits('5', 8, 2)).toBe('<0.01');
@@ -48,15 +49,6 @@ describe('groupThousands', () => {
   });
 });
 
-describe('shortAddress', () => {
-  it('keeps head and tail', () => {
-    expect(shortAddress('0x1234567890abcdef1234567890abcdef12345678')).toBe('0x1234…5678');
-  });
-  it('passes short strings through', () => {
-    expect(shortAddress('0x12345678')).toBe('0x12345678');
-  });
-});
-
 describe('fuzzyMatch', () => {
   it('matches substrings case-insensitively', () => {
     expect(fuzzyMatch('vault', 'BTC Vault')).toBe(true);
@@ -67,5 +59,19 @@ describe('fuzzyMatch', () => {
   });
   it('empty query matches everything', () => {
     expect(fuzzyMatch('  ', 'anything')).toBe(true);
+  });
+});
+
+describe('relativeTime', () => {
+  const now = 1_000_000_000;
+  it('steps through seconds, minutes, hours and days', () => {
+    expect(relativeTime(now - 2_000, now)).toBe('now');
+    expect(relativeTime(now - 12_000, now)).toBe('12s');
+    expect(relativeTime(now - 3 * 60_000, now)).toBe('3m');
+    expect(relativeTime(now - 5 * 3_600_000, now)).toBe('5h');
+    expect(relativeTime(now - 72 * 3_600_000, now)).toBe('3d');
+  });
+  it('clamps future stamps to now', () => {
+    expect(relativeTime(now + 60_000, now)).toBe('now');
   });
 });

@@ -11,6 +11,9 @@ class MemoryStorage implements StorageLike {
   setItem(key: string, value: string) {
     this.map.set(key, value);
   }
+  removeItem(key: string) {
+    this.map.delete(key);
+  }
 }
 
 function makeCtx(): ReducerContext {

@@ -8,37 +8,23 @@ import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bech32, bech32m, createBase58check } from '@scure/base';
 import {
-  MemoryRpcPool,
-  NotImplementedError,
-  UnknownChainError,
+  BaseAdapter,
   UnsupportedKeyError,
-  chainsForFamily,
-  fetchJson,
-  HttpError,
+  nativeHolding,
+  preferIndexedSide,
   publicKeyBytes,
   requireCurve,
   secp256k1Compressed,
+  withCrossCheck,
   withFailover,
   type Address,
-  type ChainAdapter,
+  type BaseAdapterOptions,
   type ChainInfo,
   type Holding,
-  type Page,
-  type RpcPool,
-  type SignedTx,
-  type Simulation,
   type TxHash,
-  type TxRecord,
   type TxStatus,
-  type UnsignedTx,
 } from '@stackwallet/chains';
-import type {
-  ChainId,
-  PublicKey,
-  Signature,
-  SignRequest,
-  TxIntent,
-} from '@stackwallet/core-client';
+import type { ChainId, PublicKey } from '@stackwallet/core-client';
 import { z } from 'zod';
 
 const base58check = createBase58check(sha256);
@@ -134,32 +120,24 @@ const TxStatusBody = z.object({
   block_time: z.number().int().optional(),
 });
 
-export interface BitcoinAdapterOptions {
-  rpc?: RpcPool;
-  fetch?: typeof fetch;
-  timeoutMs?: number;
+export type BitcoinAdapterOptions = BaseAdapterOptions;
+
+/** mempool.space answers 404 for an address or tx it has not indexed. */
+const NOT_FOUND: readonly number[] = [404];
+
+/** Spendable balance the mempool.space address stats describe: confirmed plus mempool delta. */
+export function balanceFromStats(stats: z.infer<typeof AddressStats>): bigint {
+  const confirmed =
+    BigInt(stats.chain_stats.funded_txo_sum) - BigInt(stats.chain_stats.spent_txo_sum);
+  const unconfirmed =
+    BigInt(stats.mempool_stats.funded_txo_sum) - BigInt(stats.mempool_stats.spent_txo_sum);
+  const total = confirmed + unconfirmed;
+  return total < 0n ? 0n : total;
 }
 
-export class BitcoinAdapter implements ChainAdapter {
-  readonly family = 'bitcoin' as const;
-  readonly rpc: RpcPool;
-  private readonly fetchImpl: typeof fetch | undefined;
-  private readonly timeoutMs: number | undefined;
-
+export class BitcoinAdapter extends BaseAdapter<'bitcoin'> {
   constructor(opts: BitcoinAdapterOptions = {}) {
-    this.rpc = opts.rpc ?? new MemoryRpcPool(chainsForFamily('bitcoin'));
-    this.fetchImpl = opts.fetch;
-    this.timeoutMs = opts.timeoutMs;
-  }
-
-  chains(): ChainInfo[] {
-    return chainsForFamily('bitcoin');
-  }
-
-  private chain(chainId: ChainId): ChainInfo {
-    const c = this.chains().find((x) => x.chainId === chainId);
-    if (!c) throw new UnknownChainError(chainId);
-    return c;
+    super('bitcoin', opts);
   }
 
   /**
@@ -168,7 +146,7 @@ export class BitcoinAdapter implements ChainAdapter {
    * applied by the signing core, so the adapter never sees the internal key.
    */
   deriveAddress(pub: PublicKey, chainId: ChainId): Address {
-    const net = networkOf(this.chain(chainId));
+    const net = networkOf(this.requireChain(chainId));
     requireCurve(pub, 'secp256k1', 'secp256k1-tr');
     const bytes = publicKeyBytes(pub);
 
@@ -186,51 +164,35 @@ export class BitcoinAdapter implements ChainAdapter {
   }
 
   validateAddress(addr: string, chainId: ChainId): boolean {
-    return isValidBitcoinAddress(addr, networkOf(this.chain(chainId)));
+    return isValidBitcoinAddress(addr, networkOf(this.requireChain(chainId)));
   }
 
-  /**
-   * Schema validation runs inside failover so a node returning garbage is
-   * skipped like a dead one. A 404 is a real answer ("not indexed here"), so
-   * it is returned as null rather than demoting the endpoint.
-   */
   private get<T>(chainId: ChainId, path: string, schema: z.ZodType<T>): Promise<T | null> {
-    const opts = {
-      ...(this.fetchImpl ? { fetch: this.fetchImpl } : {}),
-      ...(this.timeoutMs !== undefined ? { timeoutMs: this.timeoutMs } : {}),
-    };
-    return withFailover(this.rpc, chainId, async (base) => {
-      try {
-        return schema.parse(await fetchJson(`${base.replace(/\/$/, '')}${path}`, opts));
-      } catch (error) {
-        if (error instanceof HttpError && error.status === 404) return null;
-        throw error;
-      }
-    });
+    return withFailover(this.rpc, chainId, this.rest(path, schema, NOT_FOUND));
   }
 
   async getBalances(addr: Address, chainId: ChainId): Promise<Holding[]> {
-    const chain = this.chain(chainId);
+    const chain = this.requireChain(chainId);
     if (!this.validateAddress(addr, chainId))
       throw new TypeError(`invalid address ${addr} for ${chainId}`);
-    const stats = await this.get(chainId, `/address/${encodeURIComponent(addr)}`, AddressStats);
-    if (stats === null) throw new Error(`address endpoint returned 404 for ${addr} on ${chainId}`);
-    const confirmed =
-      BigInt(stats.chain_stats.funded_txo_sum) - BigInt(stats.chain_stats.spent_txo_sum);
-    const unconfirmed =
-      BigInt(stats.mempool_stats.funded_txo_sum) - BigInt(stats.mempool_stats.spent_txo_sum);
-    const total = confirmed + unconfirmed;
-    return [
-      {
-        assetRef: chain.nativeAsset.ref,
-        amount: (total < 0n ? 0n : total).toString(),
-        updatedAtMs: Date.now(),
-      },
-    ];
+    const statsFor = this.rest(`/address/${encodeURIComponent(addr)}`, AddressStats, NOT_FOUND);
+    const { value, provenance } = preferIndexedSide(
+      await withCrossCheck(
+        this.rpc,
+        chainId,
+        async (base) => {
+          const stats = await statsFor(base);
+          return stats === null ? null : balanceFromStats(stats).toString();
+        },
+        { equal: (a, b) => a === b, describe: (v) => v ?? '0' },
+      ),
+    );
+    if (value === null) throw new Error(`address endpoint returned 404 for ${addr} on ${chainId}`);
+    return [nativeHolding(chain, value, provenance)];
   }
 
   async status(hash: TxHash, chainId: ChainId): Promise<TxStatus> {
-    this.chain(chainId);
+    this.requireChain(chainId);
     if (!/^[0-9a-fA-F]{64}$/.test(hash)) return { state: 'unknown' };
     const body = await this.get(chainId, `/tx/${hash}/status`, TxStatusBody);
     if (body === null) return { state: 'unknown' };
@@ -241,30 +203,6 @@ export class BitcoinAdapter implements ChainAdapter {
       blockNumber: body.block_height,
       ...(body.block_time !== undefined ? { timestampMs: body.block_time * 1000 } : {}),
     };
-  }
-
-  getHistory(_addr: Address, _chainId: ChainId, _cursor?: string): Promise<Page<TxRecord>> {
-    return Promise.reject(new NotImplementedError('chains-bitcoin.getHistory', 'phase 4'));
-  }
-
-  build(_intent: TxIntent, _chainId: ChainId): Promise<UnsignedTx> {
-    return Promise.reject(new NotImplementedError('chains-bitcoin.build', 'phase 4'));
-  }
-
-  simulate(_tx: UnsignedTx): Promise<Simulation> {
-    return Promise.reject(new NotImplementedError('chains-bitcoin.simulate', 'phase 4'));
-  }
-
-  sighashes(_tx: UnsignedTx): SignRequest[] {
-    throw new NotImplementedError('chains-bitcoin.sighashes', 'phase 4');
-  }
-
-  attach(_tx: UnsignedTx, _sigs: Signature[]): SignedTx {
-    throw new NotImplementedError('chains-bitcoin.attach', 'phase 4');
-  }
-
-  broadcast(_tx: SignedTx): Promise<TxHash> {
-    return Promise.reject(new NotImplementedError('chains-bitcoin.broadcast', 'phase 4'));
   }
 }
 

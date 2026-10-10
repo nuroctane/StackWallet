@@ -80,8 +80,26 @@ describe('EvmAdapter reads', () => {
     expect(holdings[0]).toMatchObject({
       assetRef: 'eip155:1:native',
       amount: '1000000000000000000',
+      provenance: { kind: 'agreed' },
     });
     expect(seen[0]).toEqual(['eth_getBalance', [EXPECTED_FOR_G, 'latest']]);
+    // Two different hosts were asked.
+    expect(seen).toHaveLength(2);
+  });
+
+  it('flags a balance the second endpoint disputes without benching either', async () => {
+    const pool = new MemoryRpcPool(chainsForFamily('evm'));
+    let calls = 0;
+    const evm = createEvmAdapter({
+      rpc: pool,
+      fetch: rpcFetch(() => (++calls === 1 ? '0x64' : '0x63')),
+    });
+    const [h] = await evm.getBalances(EXPECTED_FOR_G, 'eip155:1');
+    expect(h?.provenance?.kind).toBe('disagreed');
+    if (h?.provenance?.kind === 'disagreed') {
+      expect(new Set([h.amount, h.provenance.other])).toEqual(new Set(['100', '99']));
+    }
+    expect(pool.endpoints('eip155:1').every((e) => e.healthy)).toBe(true);
   });
 
   it('rejects malformed balances and fails over between endpoints', async () => {

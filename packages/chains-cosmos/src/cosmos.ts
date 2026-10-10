@@ -9,37 +9,23 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { bech32 } from '@scure/base';
 import {
-  MemoryRpcPool,
-  NotImplementedError,
-  UnknownChainError,
-  chainsForFamily,
-  fetchJson,
-  HttpError,
+  BaseAdapter,
+  preferIndexedSide,
   publicKeyBytes,
   requireCurve,
   secp256k1Compressed,
   secp256k1Uncompressed,
+  withCrossCheck,
   withFailover,
   type Address,
-  type ChainAdapter,
+  type BaseAdapterOptions,
   type ChainInfo,
   type Holding,
-  type Page,
-  type RpcPool,
-  type SignedTx,
-  type Simulation,
+  type HoldingProvenance,
   type TxHash,
-  type TxRecord,
   type TxStatus,
-  type UnsignedTx,
 } from '@stackwallet/chains';
-import type {
-  ChainId,
-  PublicKey,
-  Signature,
-  SignRequest,
-  TxIntent,
-} from '@stackwallet/core-client';
+import type { ChainId, PublicKey } from '@stackwallet/core-client';
 import { z } from 'zod';
 
 export type CosmosAddressAlgo = 'secp256k1' | 'ethsecp256k1';
@@ -121,90 +107,112 @@ export function assetRefForDenom(chainId: ChainId, baseDenom: string, denom: str
   return `${chainId}:native:${denom}`;
 }
 
-export interface CosmosAdapterOptions {
-  rpc?: RpcPool;
-  fetch?: typeof fetch;
-  timeoutMs?: number;
+export type CosmosAdapterOptions = BaseAdapterOptions;
+
+/** LCDs answer "not found" with 400 or 404 depending on SDK version. */
+const NOT_FOUND: readonly number[] = [404, 400];
+
+/** Asset ref to base-unit amount, as one LCD reported it. */
+type BalanceMap = Map<string, string>;
+
+function sameBalances(a: BalanceMap, b: BalanceMap): boolean {
+  if (a.size !== b.size) return false;
+  for (const [ref, amount] of a) if (b.get(ref) !== amount) return false;
+  return true;
 }
 
-export class CosmosAdapter implements ChainAdapter {
-  readonly family = 'cosmos' as const;
-  readonly rpc: RpcPool;
-  private readonly fetchImpl: typeof fetch | undefined;
-  private readonly timeoutMs: number | undefined;
+/**
+ * Narrows a whole-response provenance to one asset: when the two LCDs
+ * disagreed, only the denoms whose amounts actually differ are flagged.
+ */
+function provenanceFor(
+  whole: HoldingProvenance,
+  ref: string,
+  mine: string,
+  theirs: BalanceMap | undefined,
+): HoldingProvenance {
+  if (whole.kind !== 'disagreed' || !theirs) return whole;
+  const other = theirs.get(ref) ?? '0';
+  return other === mine
+    ? { kind: 'agreed', endpoints: whole.endpoints }
+    : { kind: 'disagreed', endpoints: whole.endpoints, other };
+}
 
+export class CosmosAdapter extends BaseAdapter<'cosmos'> {
   constructor(opts: CosmosAdapterOptions = {}) {
-    this.rpc = opts.rpc ?? new MemoryRpcPool(chainsForFamily('cosmos'));
-    this.fetchImpl = opts.fetch;
-    this.timeoutMs = opts.timeoutMs;
-  }
-
-  chains(): ChainInfo[] {
-    return chainsForFamily('cosmos');
-  }
-
-  private chain(chainId: ChainId): ChainInfo {
-    const c = this.chains().find((x) => x.chainId === chainId);
-    if (!c) throw new UnknownChainError(chainId);
-    return c;
+    super('cosmos', opts);
   }
 
   deriveAddress(pub: PublicKey, chainId: ChainId): Address {
-    const meta = cosmosMetaOf(this.chain(chainId));
+    const meta = cosmosMetaOf(this.requireChain(chainId));
     requireCurve(pub, 'secp256k1');
     return encodeCosmosAddress(meta.prefix, cosmosAccountBytes(publicKeyBytes(pub), meta.algo));
   }
 
   validateAddress(addr: string, chainId: ChainId): boolean {
-    return isValidCosmosAddress(addr, cosmosMetaOf(this.chain(chainId)).prefix);
+    return isValidCosmosAddress(addr, cosmosMetaOf(this.requireChain(chainId)).prefix);
   }
 
-  /**
-   * Schema validation runs inside failover so a node returning garbage is
-   * skipped like a dead one. LCD answers "not found" with 400 or 404 depending
-   * on SDK version; both are real answers and return null.
-   */
   private get<T>(chainId: ChainId, path: string, schema: z.ZodType<T>): Promise<T | null> {
-    const opts = {
-      ...(this.fetchImpl ? { fetch: this.fetchImpl } : {}),
-      ...(this.timeoutMs !== undefined ? { timeoutMs: this.timeoutMs } : {}),
-    };
-    return withFailover(this.rpc, chainId, async (base) => {
-      try {
-        return schema.parse(await fetchJson(`${base.replace(/\/$/, '')}${path}`, opts));
-      } catch (error) {
-        if (error instanceof HttpError && (error.status === 404 || error.status === 400))
-          return null;
-        throw error;
-      }
-    });
+    return withFailover(this.rpc, chainId, this.rest(path, schema, NOT_FOUND));
   }
 
   async getBalances(addr: Address, chainId: ChainId): Promise<Holding[]> {
-    const chain = this.chain(chainId);
+    const chain = this.requireChain(chainId);
     const meta = cosmosMetaOf(chain);
     if (!isValidCosmosAddress(addr, meta.prefix))
       throw new TypeError(`invalid address ${addr} for ${chainId}`);
-    const res = await this.get(
-      chainId,
+    const balancesFor = this.rest(
       `/cosmos/bank/v1beta1/balances/${encodeURIComponent(addr)}?pagination.limit=1000`,
       Balances,
+      NOT_FOUND,
     );
-    if (res === null) throw new Error(`bank balances endpoint rejected ${addr} on ${chainId}`);
+    const native = chain.nativeAsset.ref;
+    const { value, provenance, other } = preferIndexedSide(
+      await withCrossCheck(
+        this.rpc,
+        chainId,
+        async (base) => {
+          const res = await balancesFor(base);
+          if (res === null) return null;
+          const map: BalanceMap = new Map();
+          for (const b of res.balances) {
+            map.set(assetRefForDenom(chainId, meta.baseDenom, b.denom), b.amount);
+          }
+          return map;
+        },
+        {
+          equal: (a, b) => (a === null || b === null ? a === b : sameBalances(a, b)),
+          describe: (v) => v?.get(native) ?? '0',
+        },
+      ),
+    );
+    if (value === null) throw new Error(`bank balances endpoint rejected ${addr} on ${chainId}`);
     const now = Date.now();
-    const holdings: Holding[] = res.balances.map((b) => ({
-      assetRef: assetRefForDenom(chainId, meta.baseDenom, b.denom),
-      amount: b.amount,
+    const theirs = other ?? undefined;
+    const holdings: Holding[] = [...value].map(([assetRef, amount]) => ({
+      assetRef,
+      amount,
       updatedAtMs: now,
+      provenance: provenanceFor(provenance, assetRef, amount, theirs),
     }));
-    if (!holdings.some((h) => h.assetRef === chain.nativeAsset.ref)) {
-      holdings.unshift({ assetRef: chain.nativeAsset.ref, amount: '0', updatedAtMs: now });
+    // The native asset leads the list even when the account holds none of it.
+    const nativeAt = holdings.findIndex((h) => h.assetRef === native);
+    if (nativeAt < 0) {
+      holdings.unshift({
+        assetRef: native,
+        amount: '0',
+        updatedAtMs: now,
+        provenance: provenanceFor(provenance, native, '0', theirs),
+      });
+    } else if (nativeAt > 0) {
+      holdings.unshift(...holdings.splice(nativeAt, 1));
     }
     return holdings;
   }
 
   async status(hash: TxHash, chainId: ChainId): Promise<TxStatus> {
-    this.chain(chainId);
+    this.requireChain(chainId);
     if (!/^[0-9a-fA-F]{64}$/.test(hash)) return { state: 'unknown' };
     const res = await this.get(chainId, `/cosmos/tx/v1beta1/txs/${hash.toUpperCase()}`, TxResponse);
     if (res === null) return { state: 'unknown' };
@@ -216,30 +224,6 @@ export class CosmosAdapter implements ChainAdapter {
       blockNumber: Number(height),
       ...(Number.isFinite(ts) ? { timestampMs: ts } : {}),
     };
-  }
-
-  getHistory(_addr: Address, _chainId: ChainId, _cursor?: string): Promise<Page<TxRecord>> {
-    return Promise.reject(new NotImplementedError('chains-cosmos.getHistory', 'phase 4'));
-  }
-
-  build(_intent: TxIntent, _chainId: ChainId): Promise<UnsignedTx> {
-    return Promise.reject(new NotImplementedError('chains-cosmos.build', 'phase 4'));
-  }
-
-  simulate(_tx: UnsignedTx): Promise<Simulation> {
-    return Promise.reject(new NotImplementedError('chains-cosmos.simulate', 'phase 4'));
-  }
-
-  sighashes(_tx: UnsignedTx): SignRequest[] {
-    throw new NotImplementedError('chains-cosmos.sighashes', 'phase 4');
-  }
-
-  attach(_tx: UnsignedTx, _sigs: Signature[]): SignedTx {
-    throw new NotImplementedError('chains-cosmos.attach', 'phase 4');
-  }
-
-  broadcast(_tx: SignedTx): Promise<TxHash> {
-    return Promise.reject(new NotImplementedError('chains-cosmos.broadcast', 'phase 4'));
   }
 }
 

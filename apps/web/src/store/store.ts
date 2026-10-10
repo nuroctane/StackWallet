@@ -66,6 +66,26 @@ export class DirectoryStore {
     return this.apply(r.deleteWallet(this.state, walletId));
   }
 
+  setWalletTags(walletId: string, tags: readonly string[]): ActionResult {
+    return this.apply(r.setWalletTags(this.state, walletId, tags, this.ctx));
+  }
+
+  addTag(walletId: string, tag: string): ActionResult {
+    const wallet = this.state.wallets.find((w) => w.id === walletId);
+    if (!wallet) return { ok: false, error: 'Wallet not found' };
+    return this.setWalletTags(walletId, [...wallet.tags, tag]);
+  }
+
+  removeTag(walletId: string, tag: string): ActionResult {
+    const wallet = this.state.wallets.find((w) => w.id === walletId);
+    if (!wallet) return { ok: false, error: 'Wallet not found' };
+    const target = tag.trim().toLowerCase();
+    return this.setWalletTags(
+      walletId,
+      wallet.tags.filter((t) => t !== target),
+    );
+  }
+
   toggleFolder(id: string): void {
     this.commit(r.toggleFolder(this.state, id));
   }

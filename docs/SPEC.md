@@ -202,8 +202,10 @@ prefix of the on-chain denom is folded into the kind). Chain ids follow CAIP-2.
 ### 4.2 Storage
 
 Interim: until the encrypted store ships, the web app keeps the directory (folders, wallets,
-watch-only accounts, no secrets) as a Zod-validated JSON blob in `localStorage`. Nothing
-sensitive is ever written there; the vault below replaces it.
+watch-only accounts, no secrets) as a Zod-validated JSON blob in `localStorage`
+(`stackwallet.directory.v1`). The per-chain RPC endpoint lists edited in the Network view are
+kept the same way under `stackwallet.rpc.v1`. Nothing sensitive is ever written there; the
+vault below replaces it.
 
 SQLite everywhere (rusqlite natively, SQLite-WASM over OPFS in the browser). The whole database
 is encrypted at rest with XChaCha20-Poly1305 using a data encryption key (DEK). The DEK is

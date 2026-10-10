@@ -47,6 +47,14 @@ export function DirectoryTree() {
     );
   };
 
+  // Selecting from the drawer is the end of the interaction on a narrow
+  // screen, so the drawer closes and the main pane shows the selection.
+  const selectRow = (id: string) => {
+    directory.select(id);
+    shell.navigate({ kind: 'directory' });
+    shell.closeTree();
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (renamingId) return;
     const row = rows.find((r) => r.id === activeId);
@@ -74,7 +82,7 @@ export function DirectoryTree() {
           if (!row.expanded) directory.setFolderExpanded(row.id, true);
           else move(1);
         } else {
-          directory.select(row.id);
+          selectRow(row.id);
         }
         break;
       case 'ArrowLeft': {
@@ -91,12 +99,18 @@ export function DirectoryTree() {
       case ' ':
         if (!row) break;
         e.preventDefault();
-        directory.select(row.id);
+        selectRow(row.id);
         break;
       case 'F2':
         if (!row) break;
         e.preventDefault();
         setRenamingId(row.id);
+        break;
+      case 'm':
+      case 'M':
+        if (!row || row.kind !== 'wallet' || e.ctrlKey || e.metaKey || e.altKey) break;
+        e.preventDefault();
+        shell.openDialog({ kind: 'move', walletId: row.id });
         break;
       case 'Delete':
       case 'Backspace':
@@ -132,7 +146,7 @@ export function DirectoryTree() {
           </Button>
         </div>
       }
-      className="sw-enter"
+      className="sw-enter min-w-0"
     >
       <div className="flex h-full flex-col">
         {!onlyRoot && (
@@ -189,7 +203,7 @@ export function DirectoryTree() {
                 filtering={filtering}
                 onActivate={() => {
                   setFocusedId(row.id);
-                  directory.select(row.id);
+                  selectRow(row.id);
                 }}
                 onToggle={() => directory.toggleFolder(row.id)}
                 onRename={(name) => commitRename(row.id, name)}

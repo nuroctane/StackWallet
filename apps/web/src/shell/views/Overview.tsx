@@ -7,6 +7,7 @@ import { useRegistry } from '../../store/RegistryContext.js';
 import type { DirectoryState } from '../../store/schema.js';
 import { chainIdsInUse, countByKind } from '../../store/selectors.js';
 import { useShell } from '../ShellContext.js';
+import { TotalsStrip } from './TotalsStrip.js';
 
 const KIND_ORDER: WalletKind[] = ['watch', 'tss', 'single', 'hardware'];
 const KIND_TITLE: Record<WalletKind, string> = {
@@ -26,6 +27,7 @@ export function Overview({ state }: { state: DirectoryState }) {
 
   return (
     <div className="flex flex-col gap-5 p-5">
+      {total > 0 && <TotalsStrip accounts={state.accounts} label="All holdings" />}
       <section className="grid grid-cols-2 gap-3 min-[900px]:grid-cols-4">
         {KIND_ORDER.map((kind) => (
           <div key={kind} className="sw-elevated flex flex-col gap-1 px-4 py-3">

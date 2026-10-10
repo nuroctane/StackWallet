@@ -157,7 +157,39 @@ describe('BitcoinAdapter reads', () => {
       }),
     });
     const [h] = await btc.getBalances(P2WPKH_MAIN, BTC);
-    expect(h).toMatchObject({ assetRef: `${BTC}:native`, amount: '101000' });
+    expect(h).toMatchObject({
+      assetRef: `${BTC}:native`,
+      amount: '101000',
+      provenance: { kind: 'agreed' },
+    });
+  });
+
+  it('keeps the indexed answer as single when the other endpoint has not seen the address', async () => {
+    const pool = new MemoryRpcPool(chainsForFamily('bitcoin'));
+    pool.setEndpoints(BTC, ['https://indexed.example', 'https://behind.example']);
+    const btc = createBitcoinAdapter({
+      rpc: pool,
+      fetch: async (input) => {
+        if (new URL(String(input)).hostname === 'behind.example') {
+          return new Response('Address not found', { status: 404 });
+        }
+        return new Response(
+          JSON.stringify({
+            chain_stats: { funded_txo_sum: 9, spent_txo_sum: 0 },
+            mempool_stats: { funded_txo_sum: 0, spent_txo_sum: 0 },
+          }),
+        );
+      },
+    });
+    const [h] = await btc.getBalances(P2WPKH_MAIN, BTC);
+    expect(h).toMatchObject({
+      amount: '9',
+      provenance: { kind: 'single', endpoint: 'https://indexed.example' },
+    });
+    expect(pool.endpoints(BTC).every((e) => e.healthy)).toBe(true);
+
+    const nowhere = createBitcoinAdapter({ rpc: pool, fetch: restFetch({}) });
+    await expect(nowhere.getBalances(P2WPKH_MAIN, BTC)).rejects.toThrow(/404/);
   });
 
   it('refuses invalid addresses before touching the network', async () => {

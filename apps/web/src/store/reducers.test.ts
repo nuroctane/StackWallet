@@ -173,6 +173,37 @@ describe('deleteWallet', () => {
   });
 });
 
+describe('setWalletTags', () => {
+  it('trims, lowercases, de-duplicates and bumps updatedAtMs', () => {
+    const { s, ctx, w } = seeded();
+    const out = expectOk(r.setWalletTags(s, w, [' Cold ', 'cold', 'DeFi', '', 'ops-2'], ctx));
+    const wallet = out.state.wallets.find((x) => x.id === w)!;
+    expect(wallet.tags).toEqual(['cold', 'defi', 'ops-2']);
+    expect(wallet.updatedAtMs).toBeGreaterThan(wallet.createdAtMs);
+  });
+
+  it('returns the same state when nothing changes', () => {
+    const { s, ctx, w } = seeded();
+    const a = expectOk(r.setWalletTags(s, w, ['a', 'b'], ctx));
+    expect(expectOk(r.setWalletTags(a.state, w, ['A', ' b'], ctx)).state).toBe(a.state);
+    expect(expectOk(r.setWalletTags(s, w, [], ctx)).state).toBe(s);
+  });
+
+  it('enforces count, length and charset', () => {
+    const { s, ctx, w } = seeded();
+    const nine = Array.from({ length: 9 }, (_, i) => `t${i}`);
+    expect(expectFail(r.setWalletTags(s, w, nine, ctx))).toMatch(/At most 8/);
+    expect(
+      expectOk(r.setWalletTags(s, w, nine.slice(0, 8), ctx)).state.wallets[0]?.tags,
+    ).toHaveLength(8);
+    expect(expectFail(r.setWalletTags(s, w, ['x'.repeat(25)], ctx))).toMatch(/too long/);
+    expect(expectOk(r.setWalletTags(s, w, ['x'.repeat(24)], ctx)).ok).toBe(true);
+    expect(expectFail(r.setWalletTags(s, w, ['has space'], ctx))).toMatch(/letters, digits/);
+    expect(expectFail(r.setWalletTags(s, w, ['under_score'], ctx))).toMatch(/letters, digits/);
+    expect(expectFail(r.setWalletTags(s, 'ghost', ['a'], ctx))).toMatch(/not found/);
+  });
+});
+
 describe('ui reducers', () => {
   it('toggles expansion only for real folders', () => {
     const seed = seeded();

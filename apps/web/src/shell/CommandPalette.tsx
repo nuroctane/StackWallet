@@ -63,7 +63,27 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
         hint: 'Ctrl .',
         run: () => shell.toggleRail(),
       },
+      {
+        id: 'action:network',
+        group: 'actions',
+        label: 'Network: RPC endpoints',
+        run: () => shell.navigate({ kind: 'network' }),
+      },
     ];
+    const selectedWallet = state.wallets.find((w) => w.id === state.ui.selectedId);
+    if (selectedWallet) {
+      actions.splice(2, 0, {
+        id: 'action:move',
+        group: 'actions',
+        label: 'Move wallet to…',
+        hint: selectedWallet.name,
+        run: () => shell.openDialog({ kind: 'move', walletId: selectedWallet.id }),
+      });
+    }
+    const reveal = (id: string) => {
+      shell.navigate({ kind: 'directory' });
+      directory.reveal(id);
+    };
     const folders: Item[] = state.folders
       .filter((f) => f.parentId !== null)
       .map((f) => ({
@@ -74,7 +94,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
           .slice(0, -1)
           .map((p) => p.name)
           .join(' / '),
-        run: () => directory.reveal(f.id),
+        run: () => reveal(f.id),
       }));
     const wallets: Item[] = state.wallets.map((w) => ({
       id: w.id,
@@ -84,7 +104,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
         .map((p) => p.name)
         .join(' / '),
       badge: kindLabel(w),
-      run: () => directory.reveal(w.id),
+      run: () => reveal(w.id),
     }));
     return [...actions, ...folders, ...wallets];
   }, [state, shell]);

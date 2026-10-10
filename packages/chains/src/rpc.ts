@@ -1,13 +1,15 @@
 import type { ChainId } from '@stackwallet/core-client';
 import { z } from 'zod';
 
-import { CHAIN_CATALOG } from './catalog.js';
-import type { ChainInfo, RpcEndpoint, RpcPool } from './types.js';
+import { CHAIN_CATALOG, catalogChain } from './catalog.js';
+import type { ChainInfo, HoldingProvenance, RpcEndpoint, RpcPool } from './types.js';
 
 export interface HealthTrackingRpcPool extends RpcPool {
   pick(chainId: ChainId, exclude?: Iterable<string>): RpcEndpoint | undefined;
   markHealthy(url: string, latencyMs: number): void;
   markFailed(url: string): void;
+  /** Records the chain head an endpoint reported; optional because older pools predate it. */
+  markBlock?(url: string, block: number): void;
 }
 
 export function hasHealthTracking(pool: RpcPool): pool is HealthTrackingRpcPool {
@@ -20,46 +22,75 @@ export function hasHealthTracking(pool: RpcPool): pool is HealthTrackingRpcPool 
 }
 
 /**
- * In-memory endpoint pool. Selection prefers healthy endpoints with the lowest
- * measured latency and round-robins among ties so unmeasured endpoints share
- * load until latency data separates them. When every endpoint has failed the
- * pool still returns the least recently failed one: a chain with flaky
- * endpoints must stay reachable rather than go silent.
+ * In-memory endpoint pool. Selection prefers healthy endpoints, then the
+ * lowest rolling error rate, then the lowest measured latency, and
+ * round-robins among ties so unmeasured endpoints share load until data
+ * separates them. When every endpoint has failed the pool still returns the
+ * least recently failed one: a chain with flaky endpoints must stay reachable
+ * rather than go silent.
  */
 export class MemoryRpcPool implements HealthTrackingRpcPool {
   static readonly RETRY_AFTER_MS = 60_000;
+  /** Attempts remembered per endpoint for the rolling error rate. */
+  static readonly HISTORY = 10;
 
   private readonly byChain = new Map<ChainId, RpcEndpoint[]>();
   private readonly cursor = new Map<ChainId, number>();
+  /** Catalog (or seed) defaults per chain; anything else a user sets is `custom`. */
+  private readonly defaults = new Map<ChainId, readonly string[]>();
+  private readonly history = new WeakMap<RpcEndpoint, boolean[]>();
 
   constructor(
     seed: readonly ChainInfo[] = [],
     private readonly now: () => number = () => Date.now(),
   ) {
-    for (const chain of seed) this.setEndpoints(chain.chainId, chain.defaultRpcs);
+    for (const chain of seed) {
+      this.defaults.set(chain.chainId, [...chain.defaultRpcs]);
+      this.setEndpoints(chain.chainId, chain.defaultRpcs);
+    }
   }
 
   static fromCatalog(): MemoryRpcPool {
     return new MemoryRpcPool(CHAIN_CATALOG);
   }
 
+  allChainIds(): ChainId[] {
+    return [...this.byChain.keys()];
+  }
+
   endpoints(chainId: ChainId): RpcEndpoint[] {
     return (this.byChain.get(chainId) ?? []).map((e) => ({ ...e }));
   }
 
+  /**
+   * Replaces the list for a chain. Endpoints that survive the edit keep their
+   * health history so adding one url does not reset what is known about the rest.
+   */
   setEndpoints(chainId: ChainId, urls: string[]): void {
-    const unique = [...new Set(urls)];
-    this.byChain.set(
-      chainId,
-      unique.map((url) => ({ url, healthy: true })),
-    );
+    const previous = new Map((this.byChain.get(chainId) ?? []).map((e) => [e.url, e]));
+    const defaults = new Set(this.defaultsFor(chainId));
+    const next: RpcEndpoint[] = [];
+    for (const url of new Set(urls)) {
+      const kept = previous.get(url);
+      const e: RpcEndpoint = kept ?? { url, healthy: true };
+      if (defaults.has(url)) delete e.custom;
+      else e.custom = true;
+      next.push(e);
+    }
+    this.byChain.set(chainId, next);
     this.cursor.set(chainId, 0);
+  }
+
+  /** Restores the catalog (or seed) defaults for a chain, discarding user edits. */
+  resetEndpoints(chainId: ChainId): void {
+    this.setEndpoints(chainId, [...this.defaultsFor(chainId)]);
   }
 
   markHealthy(url: string, latencyMs: number): void {
     for (const e of this.find(url)) {
       e.healthy = true;
       e.latencyMs = latencyMs;
+      this.record(e, true);
     }
   }
 
@@ -68,7 +99,13 @@ export class MemoryRpcPool implements HealthTrackingRpcPool {
     for (const e of this.find(url)) {
       e.healthy = false;
       e.lastErrorAtMs = at;
+      this.record(e, false);
     }
+  }
+
+  markBlock(url: string, block: number): void {
+    if (!Number.isSafeInteger(block) || block < 0) return;
+    for (const e of this.find(url)) e.lastBlock = block;
   }
 
   pick(chainId: ChainId, exclude: Iterable<string> = []): RpcEndpoint | undefined {
@@ -87,11 +124,40 @@ export class MemoryRpcPool implements HealthTrackingRpcPool {
       return { ...sorted[0]! };
     }
 
-    const best = Math.min(...healthy.map((e) => e.latencyMs ?? Number.POSITIVE_INFINITY));
-    const ties = healthy.filter((e) => (e.latencyMs ?? Number.POSITIVE_INFINITY) === best);
+    // Unmeasured endpoints rank as error-free and infinitely slow: they lose to
+    // anything measured but still get picked (round-robin) when nothing is.
+    const rank = (e: RpcEndpoint): [number, number] => [
+      e.errorRate ?? 0,
+      e.latencyMs ?? Number.POSITIVE_INFINITY,
+    ];
+    let ties: RpcEndpoint[] = [];
+    let best: [number, number] | undefined;
+    for (const e of healthy) {
+      const r = rank(e);
+      const cmp =
+        best === undefined ? -1 : compareNumbers(r[0], best[0]) || compareNumbers(r[1], best[1]);
+      if (cmp < 0) {
+        best = r;
+        ties = [e];
+      } else if (cmp === 0) {
+        ties.push(e);
+      }
+    }
     const i = this.cursor.get(chainId) ?? 0;
     this.cursor.set(chainId, i + 1);
     return { ...ties[i % ties.length]! };
+  }
+
+  private defaultsFor(chainId: ChainId): readonly string[] {
+    return this.defaults.get(chainId) ?? catalogChain(chainId)?.defaultRpcs ?? [];
+  }
+
+  private record(e: RpcEndpoint, ok: boolean): void {
+    const ring = this.history.get(e) ?? [];
+    ring.push(ok);
+    if (ring.length > MemoryRpcPool.HISTORY) ring.splice(0, ring.length - MemoryRpcPool.HISTORY);
+    this.history.set(e, ring);
+    e.errorRate = ring.filter((x) => !x).length / ring.length;
   }
 
   private *find(url: string): Iterable<RpcEndpoint> {
@@ -99,6 +165,11 @@ export class MemoryRpcPool implements HealthTrackingRpcPool {
       for (const e of list) if (e.url === url) yield e;
     }
   }
+}
+
+/** Total order that treats equal infinities as ties, unlike subtraction. */
+function compareNumbers(a: number, b: number): number {
+  return a === b ? 0 : a < b ? -1 : 1;
 }
 
 export class NoRpcEndpointsError extends Error {
@@ -134,6 +205,58 @@ export interface FailoverOptions {
   signal?: AbortSignal;
 }
 
+interface Attempt<T> {
+  url: string;
+  value: T;
+  latencyMs: number;
+}
+
+/** One request against one endpoint with the pool bookkeeping failover does. */
+async function attempt<T>(
+  tracking: HealthTrackingRpcPool | undefined,
+  url: string,
+  fn: (url: string) => Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<Attempt<T>> {
+  const started = Date.now();
+  try {
+    const value = await fn(url);
+    const latencyMs = Date.now() - started;
+    tracking?.markHealthy(url, latencyMs);
+    return { url, value, latencyMs };
+  } catch (error) {
+    if (!signal?.aborted) tracking?.markFailed(url);
+    throw error;
+  }
+}
+
+async function failover<T>(
+  pool: RpcPool,
+  chainId: ChainId,
+  fn: (url: string) => Promise<T>,
+  opts: FailoverOptions,
+  tried: Set<string>,
+  causes: { url: string; error: unknown }[],
+): Promise<Attempt<T>> {
+  const tracking = hasHealthTracking(pool) ? pool : undefined;
+  const ordered = pool.endpoints(chainId).map((e) => e.url);
+  if (ordered.length === 0) throw new NoRpcEndpointsError(chainId);
+
+  const limit = Math.min(opts.maxAttempts ?? ordered.length, ordered.length);
+  while (tried.size < limit) {
+    const url = tracking ? tracking.pick(chainId, tried)?.url : ordered.find((u) => !tried.has(u));
+    if (url === undefined) break;
+    tried.add(url);
+    try {
+      return await attempt(tracking, url, fn, opts.signal);
+    } catch (error) {
+      if (opts.signal?.aborted) throw error;
+      causes.push({ url, error });
+    }
+  }
+  throw new RpcFailoverError(chainId, causes);
+}
+
 /**
  * Runs `fn` against endpoints for `chainId` until one succeeds. Only thrown
  * errors count against an endpoint: `fn` must turn semantic responses such as
@@ -145,31 +268,125 @@ export async function withFailover<T>(
   fn: (url: string) => Promise<T>,
   opts: FailoverOptions = {},
 ): Promise<T> {
-  const tracking = hasHealthTracking(pool) ? pool : undefined;
-  const ordered = pool.endpoints(chainId).map((e) => e.url);
-  if (ordered.length === 0) throw new NoRpcEndpointsError(chainId);
+  return (await failover(pool, chainId, fn, opts, new Set(), [])).value;
+}
 
-  const limit = Math.min(opts.maxAttempts ?? ordered.length, ordered.length);
-  const tried = new Set<string>();
-  const causes: { url: string; error: unknown }[] = [];
+export interface CrossCheckOptions<T> {
+  /** Semantic equality of two answers; `===` on decimal strings is usually right. */
+  equal: (a: T, b: T) => boolean;
+  /** Turns a disagreeing answer into the `other` value recorded on the provenance. */
+  describe?: (other: T) => string;
+  signal?: AbortSignal;
+}
 
-  while (tried.size < limit) {
-    const url = tracking ? tracking.pick(chainId, tried)?.url : ordered.find((u) => !tried.has(u));
-    if (url === undefined) break;
-    tried.add(url);
+export interface CrossChecked<T> {
+  value: T;
+  provenance: HoldingProvenance;
+  /** The losing answer when the endpoints disagreed, for callers that need more than a string. */
+  other?: T;
+}
 
-    const started = Date.now();
-    try {
-      const value = await fn(url);
-      tracking?.markHealthy(url, Date.now() - started);
-      return value;
-    } catch (error) {
-      if (opts.signal?.aborted) throw error;
-      tracking?.markFailed(url);
-      causes.push({ url, error });
-    }
+/**
+ * Registrable domain (last two labels) rather than the full hostname: two
+ * sub-hosts of one operator share an upstream and an incentive, so they do
+ * not count as independent witnesses. Public-suffix lists are not consulted;
+ * `co.uk`-style suffixes merely make the check stricter, never looser.
+ */
+export function operatorOf(url: string): string {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return url;
   }
-  throw new RpcFailoverError(chainId, causes);
+  const labels = host.split('.');
+  return labels.length <= 2 ? host : labels.slice(-2).join('.');
+}
+
+/**
+ * Asks two endpoints run by different operators the same question so a single
+ * lying or lagging node cannot pass off a wrong answer as the truth. Both
+ * requests run in parallel with the same health bookkeeping as `withFailover`.
+ * When only one endpoint is usable, or the second one fails, the answer is
+ * reported as `single`. When both answer but differ, a catalog default beats
+ * a user-added endpoint (a hostile custom url must not win just by being
+ * fast); between two of the same kind the faster answer wins. The other value
+ * is recorded, and neither endpoint is marked failed because a head one block
+ * behind is normal, not malicious.
+ */
+export async function withCrossCheck<T>(
+  pool: RpcPool,
+  chainId: ChainId,
+  fn: (url: string) => Promise<T>,
+  opts: CrossCheckOptions<T>,
+): Promise<CrossChecked<T>> {
+  const tracking = hasHealthTracking(pool) ? pool : undefined;
+  const all = pool.endpoints(chainId);
+  if (all.length === 0) throw new NoRpcEndpointsError(chainId);
+  const failoverOpts: FailoverOptions = opts.signal ? { signal: opts.signal } : {};
+
+  const single = async (tried: Set<string>, causes: { url: string; error: unknown }[]) => {
+    const a = await failover(pool, chainId, fn, failoverOpts, tried, causes);
+    return { value: a.value, provenance: { kind: 'single', endpoint: a.url } as const };
+  };
+  if (all.length < 2) return single(new Set(), []);
+
+  const first = tracking ? tracking.pick(chainId) : all[0];
+  if (!first) return single(new Set(), []);
+  const sameOperator = all
+    .filter((e) => operatorOf(e.url) === operatorOf(first.url))
+    .map((e) => e.url);
+  const second = tracking
+    ? tracking.pick(chainId, sameOperator)
+    : all.find((e) => !sameOperator.includes(e.url));
+  if (!second) return single(new Set(), []);
+  const isCustom = new Map(all.map((e) => [e.url, e.custom === true]));
+
+  const [a, b] = await Promise.allSettled([
+    attempt(tracking, first.url, fn, opts.signal),
+    attempt(tracking, second.url, fn, opts.signal),
+  ]);
+  if (opts.signal?.aborted) {
+    throw a.status === 'rejected'
+      ? a.reason
+      : b.status === 'rejected'
+        ? b.reason
+        : opts.signal.reason;
+  }
+
+  if (a.status === 'fulfilled' && b.status === 'fulfilled') {
+    const aCustom = isCustom.get(a.value.url) ?? false;
+    const bCustom = isCustom.get(b.value.url) ?? false;
+    const preferA =
+      aCustom === bCustom ? a.value.latencyMs <= b.value.latencyMs : bCustom && !aCustom;
+    const [keep, other] = preferA ? [a.value, b.value] : [b.value, a.value];
+    if (opts.equal(a.value.value, b.value.value)) {
+      return {
+        value: keep.value,
+        provenance: { kind: 'agreed', endpoints: [keep.url, other.url] },
+      };
+    }
+    const describe = opts.describe ?? ((v: T) => String(v));
+    return {
+      value: keep.value,
+      other: other.value,
+      provenance: {
+        kind: 'disagreed',
+        endpoints: [keep.url, other.url],
+        other: describe(other.value),
+      },
+    };
+  }
+  if (a.status === 'fulfilled') {
+    return { value: a.value.value, provenance: { kind: 'single', endpoint: a.value.url } };
+  }
+  if (b.status === 'fulfilled') {
+    return { value: b.value.value, provenance: { kind: 'single', endpoint: b.value.url } };
+  }
+  return single(new Set([first.url, second.url]), [
+    { url: first.url, error: a.reason },
+    { url: second.url, error: b.reason },
+  ]);
 }
 
 export interface FetchOptions {

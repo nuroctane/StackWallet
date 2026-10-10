@@ -5,35 +5,20 @@
  */
 import { base58 } from '@scure/base';
 import {
-  MemoryRpcPool,
-  NotImplementedError,
-  UnknownChainError,
+  BaseAdapter,
   UnsupportedKeyError,
-  chainsForFamily,
-  fetchJsonRpc,
+  nativeHolding,
   publicKeyBytes,
   requireCurve,
+  withCrossCheck,
   withFailover,
   type Address,
-  type ChainAdapter,
-  type ChainInfo,
+  type BaseAdapterOptions,
   type Holding,
-  type Page,
-  type RpcPool,
-  type SignedTx,
-  type Simulation,
   type TxHash,
-  type TxRecord,
   type TxStatus,
-  type UnsignedTx,
 } from '@stackwallet/chains';
-import type {
-  ChainId,
-  PublicKey,
-  Signature,
-  SignRequest,
-  TxIntent,
-} from '@stackwallet/core-client';
+import type { ChainId, PublicKey } from '@stackwallet/core-client';
 import { z } from 'zod';
 
 export function isValidSolanaAddress(addr: string): boolean {
@@ -65,36 +50,15 @@ const SignatureStatuses = z.object({
   ),
 });
 
-export interface SolanaAdapterOptions {
-  rpc?: RpcPool;
-  fetch?: typeof fetch;
-  timeoutMs?: number;
-}
+export type SolanaAdapterOptions = BaseAdapterOptions;
 
-export class SolanaAdapter implements ChainAdapter {
-  readonly family = 'solana' as const;
-  readonly rpc: RpcPool;
-  private readonly fetchImpl: typeof fetch | undefined;
-  private readonly timeoutMs: number | undefined;
-
+export class SolanaAdapter extends BaseAdapter<'solana'> {
   constructor(opts: SolanaAdapterOptions = {}) {
-    this.rpc = opts.rpc ?? new MemoryRpcPool(chainsForFamily('solana'));
-    this.fetchImpl = opts.fetch;
-    this.timeoutMs = opts.timeoutMs;
-  }
-
-  chains(): ChainInfo[] {
-    return chainsForFamily('solana');
-  }
-
-  private chain(chainId: ChainId): ChainInfo {
-    const c = this.chains().find((x) => x.chainId === chainId);
-    if (!c) throw new UnknownChainError(chainId);
-    return c;
+    super('solana', opts);
   }
 
   deriveAddress(pub: PublicKey, chainId: ChainId): Address {
-    this.chain(chainId);
+    this.requireChain(chainId);
     requireCurve(pub, 'ed25519');
     const bytes = publicKeyBytes(pub);
     if (bytes.length !== 32) throw new UnsupportedKeyError('ed25519 public key must be 32 bytes');
@@ -102,46 +66,43 @@ export class SolanaAdapter implements ChainAdapter {
   }
 
   validateAddress(addr: string, chainId: ChainId): boolean {
-    this.chain(chainId);
+    this.requireChain(chainId);
     return isValidSolanaAddress(addr);
   }
 
-  /** Schema validation runs inside failover so a node returning garbage is skipped like a dead one. */
   private call<T>(
     chainId: ChainId,
     method: string,
     params: unknown[],
     schema: z.ZodType<T>,
   ): Promise<T> {
-    const opts = {
-      ...(this.fetchImpl ? { fetch: this.fetchImpl } : {}),
-      ...(this.timeoutMs !== undefined ? { timeoutMs: this.timeoutMs } : {}),
-    };
-    return withFailover(this.rpc, chainId, async (url) =>
-      schema.parse(await fetchJsonRpc(url, method, params, opts)),
-    );
+    return withFailover(this.rpc, chainId, this.jsonRpc(method, params, schema));
   }
 
   async getBalances(addr: Address, chainId: ChainId): Promise<Holding[]> {
-    const chain = this.chain(chainId);
+    const chain = this.requireChain(chainId);
     if (!isValidSolanaAddress(addr)) throw new TypeError(`invalid solana address ${addr}`);
-    const res = await this.call(
-      chainId,
+    const getBalance = this.jsonRpc(
       'getBalance',
       [addr, { commitment: 'confirmed' }],
       BalanceResult,
     );
-    return [
-      {
-        assetRef: chain.nativeAsset.ref,
-        amount: BigInt(res.value).toString(),
-        updatedAtMs: Date.now(),
+    const { value, provenance } = await withCrossCheck(
+      this.rpc,
+      chainId,
+      async (url) => {
+        const res = await getBalance(url);
+        // getBalance carries the slot it was evaluated at, so the head comes for free.
+        this.noteBlock(url, res.context.slot);
+        return BigInt(res.value).toString();
       },
-    ];
+      { equal: (a, b) => a === b },
+    );
+    return [nativeHolding(chain, value, provenance)];
   }
 
   async status(hash: TxHash, chainId: ChainId): Promise<TxStatus> {
-    this.chain(chainId);
+    this.requireChain(chainId);
     const res = await this.call(
       chainId,
       'getSignatureStatuses',
@@ -157,30 +118,6 @@ export class SolanaAdapter implements ChainAdapter {
       entry.confirmationStatus ?? (entry.confirmations === null ? 'finalized' : 'confirmed');
     if (level === 'processed') return { state: 'pending' };
     return { state: 'confirmed', blockNumber: entry.slot };
-  }
-
-  getHistory(_addr: Address, _chainId: ChainId, _cursor?: string): Promise<Page<TxRecord>> {
-    return Promise.reject(new NotImplementedError('chains-solana.getHistory', 'phase 4'));
-  }
-
-  build(_intent: TxIntent, _chainId: ChainId): Promise<UnsignedTx> {
-    return Promise.reject(new NotImplementedError('chains-solana.build', 'phase 4'));
-  }
-
-  simulate(_tx: UnsignedTx): Promise<Simulation> {
-    return Promise.reject(new NotImplementedError('chains-solana.simulate', 'phase 4'));
-  }
-
-  sighashes(_tx: UnsignedTx): SignRequest[] {
-    throw new NotImplementedError('chains-solana.sighashes', 'phase 4');
-  }
-
-  attach(_tx: UnsignedTx, _sigs: Signature[]): SignedTx {
-    throw new NotImplementedError('chains-solana.attach', 'phase 4');
-  }
-
-  broadcast(_tx: SignedTx): Promise<TxHash> {
-    return Promise.reject(new NotImplementedError('chains-solana.broadcast', 'phase 4'));
   }
 }
 
