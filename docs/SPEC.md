@@ -37,7 +37,7 @@ same Rust core (UniFFI).
 | D4  | BYOK cloud model providers (Anthropic, OpenAI, Google, OpenRouter) via the Vercel AI SDK. Keys live in the vault. Local models are a later provider.                                                        |
 | D5  | V1 chain families: EVM (any chain via registry), Bitcoin family (BTC, LTC, DOGE), Solana, Cosmos SDK (+IBC).                                                                                                |
 | D6  | The agent cannot move funds alone: at most one TSS party, and every agent-inclusive threshold requires a non-agent share. Enforced by the core at wallet creation and re-checked by policy at signing time. |
-| D7  | Night glass design family (see `DESIGN.md`).                                                                                                                                                                |
+| D7  | Night glass design family by default; user themes (NurCLI presets, per-token edits, per layout) are opt-in (see `DESIGN.md`).                                                                               |
 | D8  | No telemetry, analytics or remote fonts. Reproducible builds.                                                                                                                                               |
 | D9  | No time estimates anywhere. Phases only.                                                                                                                                                                    |
 

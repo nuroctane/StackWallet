@@ -22,8 +22,11 @@ the chain adapter contract is `docs/CHAINS.md`.
   threshold that includes an agent share must also require a non-agent share. The core validates
   this at wallet creation; policy double-checks it at signing time.
 - **D7** Design is the night glass family (see `docs/DESIGN.md`): near-black paper, white/gray
-  ink, hairline edges, JetBrains Mono, ease-out motion under 300ms. Red only for destructive or
-  signing-danger state. No blue/indigo/purple chrome.
+  ink, hairline edges, JetBrains Mono, ease-out motion under 300ms. Night glass is the default
+  theme and the house chrome never adds blue/indigo/purple on its own. Users may switch to any
+  NurCLI preset or edit every colour token, globally or per layout (theme engine in
+  `packages/ui/src/theme`); the `danger` role keeps its meaning (destructive, exposed keys,
+  signing danger) whatever colour it is given.
 - **D8** No telemetry, no analytics, no remote fonts. Builds must be reproducible.
 - **D9** No time estimates anywhere in docs, specs, issues or commit messages. Work is organized
   in phases only.

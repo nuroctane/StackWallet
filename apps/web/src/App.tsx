@@ -17,12 +17,15 @@ import {
   type UiRoute,
 } from './shell/ShellContext.js';
 import { StatusBar } from './shell/StatusBar.js';
+import { ThemeStudio } from './shell/ThemeStudio.js';
 import { VaultDialog } from './shell/VaultDialog.js';
 import { balanceCache } from './store/balances.js';
 import { devicesQuarantinedKey } from './store/devices.js';
 import { directoryQuarantinedKey, useDirectory } from './store/persist.js';
 import { RegistryContext, useRegistry } from './store/RegistryContext.js';
 import { applyRpcSettings, rpcSettings, rpcSettingsQuarantinedKey } from './store/rpcSettings.js';
+import { themeQuarantinedKey } from './store/theme.js';
+import { ThemeApplier } from './store/ThemeApplier.js';
 import { Canvas } from './workspace/Canvas.js';
 import { ElementCatalogue } from './workspace/ElementCatalogue.js';
 import { registry as elementRegistry } from './workspace/elements/registry.js';
@@ -102,6 +105,7 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       [rpcSettingsQuarantinedKey, 'Saved RPC endpoints'],
       [devicesQuarantinedKey, 'Saved device table'],
       [workspaceQuarantinedKey, 'Saved workspace'],
+      [themeQuarantinedKey, 'Saved theme'],
     ];
     for (const [key, what] of quarantined) {
       if (key) toasts.push(`${what} could not be read; kept under ${key}`, 'danger');
@@ -150,6 +154,7 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       openCatalogue: (anchor) => setCatalogue(anchor),
       openSettings: (paneId, anchor) => setSettings({ paneId, anchor }),
       openVault: () => setDialog({ kind: 'vault' }),
+      openTheme: () => setDialog({ kind: 'theme' }),
       coreLabel,
       coreState:
         core.backend === 'unavailable'
@@ -179,6 +184,9 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       if (e.key === '/') {
         e.preventDefault();
         setSearchOpen(true);
+      } else if (e.key === 't' || e.key === 'T') {
+        if (document.querySelector('dialog[open]')) return;
+        setDialog({ kind: 'theme' });
       } else if (e.key === 'l' || e.key === 'L') {
         if (document.querySelector('dialog[open]')) return;
         workspace.toggleLock();
@@ -198,6 +206,7 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
 
   return (
     <ShellContext value={shell}>
+      <ThemeApplier />
       <WorkspaceContext.Provider value={api}>
         <div className="flex h-full flex-col overflow-hidden bg-paper text-ink">
           <TopBar trayOpen={trayOpen} onToggleTray={() => setTrayOpen((v) => !v)} />
@@ -253,6 +262,7 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
         onClose={closeDialog}
       />
       <VaultDialog open={dialog?.kind === 'vault'} onClose={closeDialog} />
+      <ThemeStudio open={dialog?.kind === 'theme'} onClose={closeDialog} />
     </ShellContext>
   );
 }

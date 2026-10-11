@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, type PointerEvent } from 'react';
 
+import { useThemeEpoch } from './theme/apply.js';
+
 export interface Point {
   t: number;
   v: number;
@@ -165,13 +167,19 @@ function readPalette(canvas: HTMLCanvasElement): Palette {
   };
 }
 
+/** The theme's series ramp, falling back to the night glass grays outside a themed DOM. */
+function rampColor(index: number, cs: CSSStyleDeclaration): string {
+  const slot = index % SERIES_RAMP.length;
+  return cs.getPropertyValue(`--sw-chart-${slot + 1}`).trim() || (SERIES_RAMP[slot] as string);
+}
+
 function resolveColor(color: string | undefined, index: number, cs: CSSStyleDeclaration): string {
-  if (!color) return SERIES_RAMP[index % SERIES_RAMP.length] as string;
+  if (!color) return rampColor(index, cs);
   if (color.startsWith('var(')) {
     const name = color.slice(4, -1).split(',')[0]?.trim() ?? '';
     const resolved = cs.getPropertyValue(name).trim();
     if (resolved) return resolved;
-    return SERIES_RAMP[index % SERIES_RAMP.length] as string;
+    return rampColor(index, cs);
   }
   return color;
 }
@@ -256,6 +264,7 @@ export function CanvasChart({
   onHover,
 }: CanvasChartProps) {
   const dataRef = useRef<HTMLCanvasElement>(null);
+  const themeEpoch = useThemeEpoch();
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const layout = useRef<Layout | null>(null);
   const palette = useRef<Palette | null>(null);
@@ -519,6 +528,7 @@ export function CanvasChart({
     // (the common case for live feeds re-slicing a buffer) must not trigger a redraw.
   }, [
     signature,
+    themeEpoch,
     width,
     height,
     padTop,

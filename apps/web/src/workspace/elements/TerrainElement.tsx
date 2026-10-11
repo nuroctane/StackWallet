@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { useThemeEpoch } from '@stackwallet/ui';
+
 import { useActivity, activityLog, type ActivityDay } from '../activity.js';
 import type { ElementBodyProps } from './types.js';
 
 /** Night-glass ramp: five grays from the panel colour up to the neutral success ink. */
 const LEVEL_GRAYS = ['#1b1b1b', '#3a3a3a', '#5e5e5e', '#8a8a8a', '#d8d8d8'];
+const LEVEL_TOKENS = [
+  '--sw-terrain-0',
+  '--sw-terrain-1',
+  '--sw-terrain-2',
+  '--sw-terrain-3',
+  '--sw-terrain-4',
+];
 const LABEL_TOP = 22;
 const MARGIN = 8;
 
@@ -110,7 +119,14 @@ export function drawTerrain(
   g: Geometry,
   cssW: number,
   cssH: number,
-  colors: { paper: string; faint: string; warm: string; ink: string; font: string },
+  colors: {
+    paper: string;
+    faint: string;
+    warm: string;
+    ink: string;
+    font: string;
+    levels?: readonly string[];
+  },
   hovered: TerrainCell | null,
   todayKey: string,
 ) {
@@ -121,7 +137,8 @@ export function drawTerrain(
     const { x, y } = project(c.week, c.day, 0, g);
     const top = project(c.week, c.day, h, g);
     const isHot = hovered === c || c.dayKey === todayKey;
-    const col = isHot ? colors.warm : (LEVEL_GRAYS[levelFor(c.n, g.maxCount)] as string);
+    const levels = colors.levels ?? LEVEL_GRAYS;
+    const col = isHot ? colors.warm : (levels[levelFor(c.n, g.maxCount)] as string);
     const half = g.cell * 0.5;
     const wide = g.cell * 0.9;
 
@@ -190,7 +207,8 @@ export function hitTest(
 }
 
 function shade(hex: string, delta: number): string {
-  const n = parseInt(hex.slice(1), 16);
+  // Themes may carry an alpha pair; the extrusion faces are always drawn opaque.
+  const n = parseInt(hex.slice(1, 7), 16);
   const r = Math.max(0, Math.min(255, ((n >> 16) & 255) + delta));
   const gch = Math.max(0, Math.min(255, ((n >> 8) & 255) + delta));
   const b = Math.max(0, Math.min(255, (n & 255) + delta));
@@ -198,6 +216,7 @@ function shade(hex: string, delta: number): string {
 }
 
 export function TerrainElement({ pane, width, height }: ElementBodyProps) {
+  const themeEpoch = useThemeEpoch();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const activity = useActivity();
   const weeks = clampWeeks(Number(pane.props['weeks'] ?? 26));
@@ -227,10 +246,13 @@ export function TerrainElement({ pane, width, height }: ElementBodyProps) {
       warm: cs.getPropertyValue('--sw-warm').trim() || '#e2c27b',
       ink: cs.getPropertyValue('--sw-ink').trim(),
       font: cs.fontFamily,
+      levels: LEVEL_TOKENS.map(
+        (t, i) => cs.getPropertyValue(t).trim() || (LEVEL_GRAYS[i] as string),
+      ),
     };
     const todayKey = cells.length > 0 ? (cells[cells.length - 1] as TerrainCell).dayKey : '';
     drawTerrain(ctx, cells, geometry, width, height, colors, hovered, todayKey);
-  }, [cells, geometry, width, height, hovered]);
+  }, [cells, geometry, width, height, hovered, themeEpoch]);
 
   return (
     <canvas

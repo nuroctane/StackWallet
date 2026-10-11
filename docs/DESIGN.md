@@ -37,6 +37,27 @@ instrument-grade. Money UI should feel like a cockpit at night: legible, calm, n
 | `--sw-ease-morph`  | `cubic-bezier(0.77, 0, 0.175, 1)` | On-screen morph                                                     |
 | `--sw-ease-drawer` | `cubic-bezier(0.32, 0.72, 0, 1)`  | Sheets and drawers                                                  |
 
+## Themes
+
+Night glass is the default and the reference for every rule in this document. The theme engine
+(`packages/ui/src/theme`) lets the user replace it:
+
+- **Presets**: night glass plus the 41 NurCLI palettes (evaluated from `nur-cli/src/theme.rs`,
+  so chromatic and paper studies match the CLI). Nur roles map onto ours: `bg → paper`,
+  `surface → surface`, `surface_2 → elevated`, `fg/muted/faint → ink/muted/faint`,
+  `nur_gold → warm` (the accent), `md_h2/md_h3 → accent-2/accent-3`, `success → ok`,
+  `error → danger`. Translucent roles (edge, hover, sheen, grid) are derived from the ink at
+  night glass strengths; chart and terrain ramps run from the panel colour toward the ink.
+- **Tokens**: every colour role in the table above plus `grid`, `accent-2`, `accent-3`,
+  `chart-1..4` and `terrain-0..4` is editable with a full-spectrum picker (HSV field, hue and
+  opacity rails, hex, platform eyedropper). Stored as canonical `#rrggbb[aa]`.
+- **Scope**: one global theme; any layout may carry its own (preset + overrides) or follow the
+  global one. The active layout's theme is painted on the document root as both
+  `--color-*` and `--sw-*`, and canvases repaint on `useThemeEpoch()`.
+- **Guards**: the studio shows live contrast for text (4.5:1) and labels/signals (3:1) and warns
+  below the floor. `danger` keeps its meaning whatever hue it is given. Themes export and
+  import as `{ stackwalletTheme: 1, name, tokens }` JSON.
+
 ## Typography
 
 - Interface: `'JetBrains Mono', ui-monospace, monospace`, 13px / 1.5 base. Bundled locally; no

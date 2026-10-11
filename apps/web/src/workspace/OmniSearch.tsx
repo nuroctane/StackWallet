@@ -3,6 +3,7 @@ import { Chip, Dialog, Input, Kbd } from '@stackwallet/ui';
 
 import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
+import { presetsFor, themeStore, useThemeState } from '../store/theme.js';
 import { fuzzyMatch } from '../lib/format.js';
 import { listChains } from '../lib/chains.js';
 import { activeDevices, useDevices } from '../store/devices.js';
@@ -89,6 +90,7 @@ function SearchBody({
   const registryCtx = useRegistry();
   const shell = useShell();
   const vaultView = useVaultView(vault);
+  const theme = useThemeState();
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
@@ -166,6 +168,13 @@ function SearchBody({
         },
       },
       {
+        id: 'a:theme',
+        type: 'action',
+        label: 'theme studio',
+        dim: 'presets and colours',
+        run: () => shell.openDialog({ kind: 'theme' }),
+      },
+      {
         id: 'a:newlayout',
         type: 'action',
         label: 'new layout',
@@ -182,6 +191,20 @@ function SearchBody({
         },
       },
     );
+    // Quick switch: a layout with its own theme takes the preset, otherwise the global theme does.
+    const themeScope =
+      ws.activeId in theme.layouts
+        ? { kind: 'layout' as const, id: ws.activeId }
+        : { kind: 'global' as const };
+    for (const p of presetsFor(theme)) {
+      out.push({
+        id: `t:${p.id}`,
+        type: 'action',
+        label: `theme: ${p.name.toLowerCase()}`,
+        dim: p.description,
+        run: () => themeStore.setPreset(themeScope, p.id),
+      });
+    }
     for (const kind of ELEMENT_KINDS) {
       const d = registry[kind];
       out.push({
@@ -252,7 +275,7 @@ function SearchBody({
     }
     return out;
     // `shell` is stable per layout; the lists rebuild when state changes.
-  }, [state, ws, devices, registryCtx, shell, vaultView]);
+  }, [state, ws, devices, registryCtx, shell, vaultView, theme]);
 
   const visible = useMemo(() => {
     const ranked = rank(query, all);

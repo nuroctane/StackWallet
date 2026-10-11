@@ -13,6 +13,7 @@ export interface WorkspaceApi {
   openCatalogue(anchor: HTMLElement): void;
   openSettings(paneId: string, anchor: HTMLElement): void;
   openVault(): void;
+  openTheme(): void;
   coreLabel: string;
   coreState: CoreState;
 }

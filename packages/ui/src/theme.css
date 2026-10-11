@@ -1,5 +1,6 @@
-/* StackWallet night glass tokens. Source of truth: docs/DESIGN.md.
-   Tailwind v4 reads @theme; plain CSS reads the --sw-* variables. */
+/* StackWallet tokens. Night glass is the default and the source of truth is docs/DESIGN.md.
+   Tailwind v4 reads @theme; plain CSS reads the --sw-* variables. The theme engine
+   (src/theme) overrides both on the document root at runtime. */
 @import 'tailwindcss';
 
 @theme {
@@ -16,7 +17,19 @@
   --color-danger: #ff453a;
   --color-danger-soft: rgb(255 69 58 / 22%);
   --color-warm: #e2c27b;
+  --color-accent-2: #d8d8d8;
+  --color-accent-3: #a0a0a0;
   --color-ok: #d8d8d8;
+  --color-grid: rgb(255 255 255 / 3%);
+  --color-chart-1: #d8d8d8;
+  --color-chart-2: #a0a0a0;
+  --color-chart-3: #777777;
+  --color-chart-4: #555555;
+  --color-terrain-0: #1b1b1b;
+  --color-terrain-1: #3a3a3a;
+  --color-terrain-2: #5e5e5e;
+  --color-terrain-3: #8a8a8a;
+  --color-terrain-4: #d8d8d8;
 
   --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', 'SF Mono', Menlo, monospace;
 
@@ -42,7 +55,19 @@
   --sw-danger: var(--color-danger);
   --sw-danger-soft: var(--color-danger-soft);
   --sw-warm: var(--color-warm);
+  --sw-accent-2: var(--color-accent-2);
+  --sw-accent-3: var(--color-accent-3);
   --sw-ok: var(--color-ok);
+  --sw-grid: var(--color-grid);
+  --sw-chart-1: var(--color-chart-1);
+  --sw-chart-2: var(--color-chart-2);
+  --sw-chart-3: var(--color-chart-3);
+  --sw-chart-4: var(--color-chart-4);
+  --sw-terrain-0: var(--color-terrain-0);
+  --sw-terrain-1: var(--color-terrain-1);
+  --sw-terrain-2: var(--color-terrain-2);
+  --sw-terrain-3: var(--color-terrain-3);
+  --sw-terrain-4: var(--color-terrain-4);
   --sw-radius: var(--radius-sw);
   --sw-radius-sm: var(--radius-sw-sm);
   --sw-ease: var(--ease-sw);
@@ -228,6 +253,10 @@ dialog.sw-sheet[open][data-closing] {
 dialog.sw-sheet::backdrop {
   background: rgb(0 0 0 / 55%);
 }
+/* Sheets that edit what is behind them (the theme studio) keep it undimmed. */
+dialog.sw-sheet.sw-sheet-clear::backdrop {
+  background: transparent;
+}
 dialog.sw-sheet[open]::backdrop {
   animation: sw-enter-fade 280ms var(--sw-ease-drawer) both;
 }
@@ -291,4 +320,11 @@ dialog.sw-sheet[data-side='right'] {
 
 ::selection {
   background: rgb(255 255 255 / 18%);
+}
+
+/* Swatch over a checkerboard so translucent colours read as translucent. */
+.sw-checker {
+  background:
+    linear-gradient(var(--swatch, transparent), var(--swatch, transparent)),
+    repeating-conic-gradient(#8a8a8a 0 25%, #d0d0d0 0 50%) 0 0 / 8px 8px;
 }

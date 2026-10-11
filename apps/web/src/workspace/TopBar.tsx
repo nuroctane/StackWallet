@@ -68,6 +68,17 @@ export function TopBar({ trayOpen, onToggleTray }: TopBarProps) {
         </span>
       </button>
 
+      <button
+        type="button"
+        className={ghost}
+        aria-haspopup="dialog"
+        title="theme studio (t)"
+        onClick={() => api.openTheme()}
+      >
+        <PaletteIcon />
+        theme
+      </button>
+
       <VaultChip onOpen={() => api.openVault()} />
 
       <span className="inline-flex items-center gap-1.5 px-1 text-[11px] text-faint">
@@ -153,6 +164,17 @@ function PadlockIcon({ locked }: { locked: boolean }) {
     <svg {...ICON}>
       <rect x="2.5" y="5.5" width="7" height="5" rx="1" />
       <path d={locked ? 'M4 5.5V4a2 2 0 0 1 4 0v1.5' : 'M4 5.5V4a2 2 0 0 1 4 0'} />
+    </svg>
+  );
+}
+
+function PaletteIcon() {
+  return (
+    <svg {...ICON}>
+      <path d="M6 1.5a4.5 4.5 0 1 0 0 9c.8 0 1-.6.7-1.2-.4-.7 0-1.5.8-1.5h1.3A1.7 1.7 0 0 0 10.5 6 4.5 4.5 0 0 0 6 1.5z" />
+      <circle cx="3.8" cy="5.2" r=".5" />
+      <circle cx="5.8" cy="3.6" r=".5" />
+      <circle cx="8" cy="4.4" r=".5" />
     </svg>
   );
 }
