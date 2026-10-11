@@ -79,13 +79,14 @@ export class EvmAdapter extends BaseAdapter<'evm'> {
     return isValidEvmAddress(addr);
   }
 
-  private call<T>(
-    chainId: ChainId,
-    method: string,
-    params: unknown[],
-    schema: z.ZodType<T>,
-  ): Promise<T> {
+  /** One JSON-RPC call with endpoint failover; the result is validated by `schema`. */
+  call<T>(chainId: ChainId, method: string, params: unknown[], schema: z.ZodType<T>): Promise<T> {
     return withFailover(this.rpc, chainId, this.jsonRpc(method, params, schema));
+  }
+
+  /** One JSON-RPC call against a specific endpoint, for callers that run their own failover. */
+  rawCall<T>(url: string, method: string, params: unknown[], schema: z.ZodType<T>): Promise<T> {
+    return this.jsonRpc(method, params, schema)(url);
   }
 
   async getBalances(addr: Address, chainId: ChainId): Promise<Holding[]> {

@@ -53,3 +53,17 @@ export function relativeTime(thenMs: number, nowMs: number): string {
   if (hours < 48) return `${hours}h`;
   return `${Math.floor(hours / 24)}d`;
 }
+
+/**
+ * Decimal text to base units, exactly (no floating point). Returns null for
+ * anything that is not a plain non-negative decimal with at most `decimals`
+ * fraction digits.
+ */
+export function parseUnits(text: string, decimals: number): string | null {
+  const t = text.trim();
+  if (!/^\d+(\.\d+)?$/.test(t) && !/^\.\d+$/.test(t)) return null;
+  const [whole = '', frac = ''] = t.split('.');
+  if (frac.length > decimals) return null;
+  const units = BigInt((whole || '0') + frac.padEnd(decimals, '0'));
+  return units.toString();
+}

@@ -11,7 +11,8 @@ export type ShellDialog =
   | { kind: 'newWallet'; folderId?: string }
   | { kind: 'reveal'; walletId: string }
   | { kind: 'transferSet'; folderId: string }
-  | { kind: 'importSet' };
+  | { kind: 'importSet' }
+  | { kind: 'send'; accountId?: string };
 
 export type UiRoute = { kind: 'directory' } | { kind: 'network' } | { kind: 'devices' };
 

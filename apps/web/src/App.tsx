@@ -18,6 +18,7 @@ import {
 } from './shell/ShellContext.js';
 import { NewWalletDialog } from './shell/NewWalletDialog.js';
 import { RevealDialog } from './shell/RevealDialog.js';
+import { SendDialog } from './shell/SendDialog.js';
 import { ImportSetDialog, TransferSetDialog } from './shell/SetTransferDialogs.js';
 import { StatusBar } from './shell/StatusBar.js';
 import { ThemeStudio } from './shell/ThemeStudio.js';
@@ -288,6 +289,11 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
         onClose={closeDialog}
       />
       <ImportSetDialog open={dialog?.kind === 'importSet'} onClose={closeDialog} />
+      <SendDialog
+        open={dialog?.kind === 'send'}
+        accountId={dialog?.kind === 'send' ? dialog.accountId : undefined}
+        onClose={closeDialog}
+      />
     </ShellContext>
   );
 }

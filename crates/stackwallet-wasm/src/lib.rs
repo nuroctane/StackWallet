@@ -5,12 +5,15 @@
 mod transport;
 
 use stackwallet_core::identity::{DeviceIdentity, SignedCeremonyMessage};
+use stackwallet_core::intent::TxIntent;
+use stackwallet_core::lifecycle::TxState;
 use stackwallet_core::model::Curve;
+use stackwallet_core::policy::Policy;
 use stackwallet_core::store::devices::{load_device_table, save_device_table};
 use stackwallet_core::store::Device;
 use stackwallet_core::tss::CeremonyMessage;
 use stackwallet_core::vault::{EncryptedVault, KdfParams, Secret, SecretHandle, Vault};
-use stackwallet_core::{provenance, transfer};
+use stackwallet_core::{ledger, provenance, transfer};
 use wasm_bindgen::prelude::*;
 
 pub use transport::{
@@ -320,6 +323,116 @@ impl WasmVault {
         )
         .map_err(core_err)?;
         Ok(serde_json::to_string(&got)?)
+    }
+
+    /// The sealed ledger (`Ledger` JSON): transactions, policies, audit log.
+    pub fn ledger_json(&self) -> Result<String, JsError> {
+        Ok(serde_json::to_string(
+            &ledger::load_ledger(&self.inner).map_err(core_err)?,
+        )?)
+    }
+
+    pub fn tx_propose(
+        &mut self,
+        intent_json: &str,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let intent: TxIntent = serde_json::from_str(intent_json)?;
+        let rec =
+            ledger::propose(&mut self.inner, intent, device_id, now_ms as i64).map_err(core_err)?;
+        Ok(serde_json::to_string(&rec)?)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn tx_attach(
+        &mut self,
+        tx_id: &str,
+        signer_json: &str,
+        unsigned_json: &str,
+        simulation_json: &str,
+        simulation_ok: bool,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let rec = ledger::attach(
+            &mut self.inner,
+            tx_id,
+            serde_json::from_str(signer_json)?,
+            serde_json::from_str(unsigned_json)?,
+            serde_json::from_str(simulation_json)?,
+            simulation_ok,
+            device_id,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(serde_json::to_string(&rec)?)
+    }
+
+    pub fn tx_evaluate(
+        &mut self,
+        tx_id: &str,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let rec =
+            ledger::evaluate(&mut self.inner, tx_id, device_id, now_ms as i64).map_err(core_err)?;
+        Ok(serde_json::to_string(&rec)?)
+    }
+
+    /// Step-up approval: the core re-checks policy, signs and returns the record.
+    pub fn tx_approve(
+        &mut self,
+        tx_id: &str,
+        passphrase: String,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let rec = ledger::approve(
+            &mut self.inner,
+            tx_id,
+            &secret_from_string(passphrase),
+            device_id,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(serde_json::to_string(&rec)?)
+    }
+
+    pub fn tx_reject(
+        &mut self,
+        tx_id: &str,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let rec =
+            ledger::reject(&mut self.inner, tx_id, device_id, now_ms as i64).map_err(core_err)?;
+        Ok(serde_json::to_string(&rec)?)
+    }
+
+    /// Record a network outcome (`"broadcast"`, `"pending"`, `"confirmed"`, …).
+    pub fn tx_report(
+        &mut self,
+        tx_id: &str,
+        state: &str,
+        note: Option<String>,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let to: TxState = serde_json::from_value(serde_json::Value::String(state.into()))?;
+        let rec = ledger::report(&mut self.inner, tx_id, to, note, device_id, now_ms as i64)
+            .map_err(core_err)?;
+        Ok(serde_json::to_string(&rec)?)
+    }
+
+    pub fn set_policies_json(
+        &mut self,
+        policies_json: &str,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<(), JsError> {
+        let policies: Vec<Policy> = serde_json::from_str(policies_json)?;
+        ledger::set_policies(&mut self.inner, policies, device_id, now_ms as i64).map_err(core_err)
     }
 
     fn with_identity<T>(

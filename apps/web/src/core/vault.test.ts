@@ -165,6 +165,29 @@ class FakeVault implements VaultHandle {
   async importSet(): Promise<never> {
     throw new Error('not used');
   }
+  async ledger() {
+    if (!this.unlocked) throw new Error('locked');
+    return { txs: [], audit: [], policies: [] };
+  }
+  async txPropose(): Promise<never> {
+    throw new Error('not used');
+  }
+  async txAttach(): Promise<never> {
+    throw new Error('not used');
+  }
+  async txEvaluate(): Promise<never> {
+    throw new Error('not used');
+  }
+  async txApprove(): Promise<never> {
+    throw new Error('not used');
+  }
+  async txReject(): Promise<never> {
+    throw new Error('not used');
+  }
+  async txReport(): Promise<never> {
+    throw new Error('not used');
+  }
+  async setPolicies() {}
   free() {}
 }
 

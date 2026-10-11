@@ -72,3 +72,12 @@ export function explorerAddressUrl(info: ChainInfo, address: string): string | u
   }
   return url.toString();
 }
+
+/** The chain's explorer page for a transaction hash, https only. */
+export function explorerTxUrl(info: ChainInfo, hash: string): string | undefined {
+  if (!info.explorerTxUrl || !/^(0x)?[0-9a-fA-F]{64}$|^[1-9A-HJ-NP-Za-km-z]{43,90}$/.test(hash)) {
+    return undefined;
+  }
+  const url = info.explorerTxUrl.replace('{hash}', encodeURIComponent(hash));
+  return url.startsWith('https://') ? url : undefined;
+}

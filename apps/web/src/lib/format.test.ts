@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatUnits, fuzzyMatch, groupThousands, relativeTime } from './format.js';
+import { formatUnits, fuzzyMatch, groupThousands, parseUnits, relativeTime } from './format.js';
 
 describe('formatUnits', () => {
   it('formats whole and fractional parts', () => {
@@ -73,5 +73,17 @@ describe('relativeTime', () => {
   });
   it('clamps future stamps to now', () => {
     expect(relativeTime(now + 60_000, now)).toBe('now');
+  });
+});
+describe('parseUnits', () => {
+  it('converts exactly and refuses what an asset cannot hold', () => {
+    expect(parseUnits('1', 18)).toBe('1000000000000000000');
+    expect(parseUnits('0.001', 18)).toBe('1000000000000000');
+    expect(parseUnits('.5', 6)).toBe('500000');
+    expect(parseUnits('123456789.123456', 6)).toBe('123456789123456');
+    expect(parseUnits('0.0000001', 6)).toBeNull();
+    expect(parseUnits('-1', 18)).toBeNull();
+    expect(parseUnits('1e3', 18)).toBeNull();
+    expect(parseUnits('', 18)).toBeNull();
   });
 });

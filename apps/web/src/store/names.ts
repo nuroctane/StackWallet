@@ -110,6 +110,21 @@ export class NamesStore {
     this.pump();
   }
 
+  /** Look up names for an address that is not one of the user's accounts (a recipient). */
+  ensureAddress(family: Account['family'], chainId: string, address: string): void {
+    this.ensure([
+      {
+        id: '',
+        walletId: '',
+        family,
+        chainId,
+        address,
+        publicKeyHex: '',
+        hidden: false,
+      } as Account,
+    ]);
+  }
+
   private pump(): void {
     while (this.running < CONCURRENCY && this.queue.length > 0) {
       const a = this.queue.shift()!;

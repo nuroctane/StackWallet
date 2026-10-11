@@ -151,6 +151,87 @@ describe.skipIf(!built)('wasm bridge against the built core', () => {
     v.free();
   });
 
+  it('runs a transaction through the core ledger and refuses a swapped recipient', async () => {
+    const c = await load();
+    const v = await c.createVault(PASS);
+    await v.importPhrase('w', 'test test test test test test test test test test test junk', 1);
+    const to = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
+    const base = {
+      walletId: 'w',
+      accountId: 'a',
+      chainId: 'eip155:11155111',
+      proposer: { kind: 'human' as const, deviceId: 'd' },
+      usdMicros: null,
+      untrustedDestinations: [],
+      createdAtMs: 1,
+    };
+    const intent = {
+      ...base,
+      id: 'tx1',
+      kind: 'transfer' as const,
+      to,
+      asset: 'eip155:11155111:native',
+      amount: '1000',
+    };
+    const unsigned = {
+      chainId: 11155111,
+      nonce: 0,
+      maxPriorityFeePerGas: '1000000000',
+      maxFeePerGas: '20000000000',
+      gasLimit: 21000,
+      to,
+      value: '1000',
+      dataHex: '',
+    };
+    const signer = {
+      walletId: 'w',
+      path: "m/44'/60'/0'/0/0",
+      address: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+    };
+    expect((await v.txPropose(intent, 'd', 2)).state).toBe('draft');
+    await expect(
+      v.txAttach({
+        txId: 'tx1',
+        signer,
+        unsigned: { ...unsigned, to: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC' },
+        simulation: {},
+        simulationOk: true,
+        deviceId: 'd',
+        nowMs: 3,
+      }),
+    ).rejects.toThrow(/destination/);
+    const attached = await v.txAttach({
+      txId: 'tx1',
+      signer,
+      unsigned,
+      simulation: { ok: true },
+      simulationOk: true,
+      deviceId: 'd',
+      nowMs: 3,
+    });
+    expect(attached.state).toBe('simulated');
+    expect((await v.txEvaluate('tx1', 'd', 4)).state).toBe('awaiting');
+    const signed = await v.txApprove('tx1', PASS, 'd', 5);
+    expect(signed.state).toBe('signed');
+    expect(signed.rawSignedHex).toMatch(/^0x02f8/);
+    expect(signed.hash).toMatch(/^0x[0-9a-f]{64}$/);
+    await v.txReport('tx1', 'broadcast', null, 'd', 6);
+    await v.txReport('tx1', 'pending', null, 'd', 7);
+    const ledger = await v.ledger();
+    expect(ledger.txs[0]?.state).toBe('pending');
+    expect(ledger.audit.map((e) => e.to ?? e.event)).toEqual([
+      'txProposed',
+      'simulated',
+      'evaluated',
+      'awaiting',
+      'signing',
+      'signed',
+      'broadcast',
+      'pending',
+    ]);
+    v.free();
+  });
+
   it('pairs two identities through the sans-IO session end to end', async () => {
     const c = await load();
     const vaultA = await c.createVault(PASS);

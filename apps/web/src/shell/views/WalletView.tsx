@@ -18,6 +18,7 @@ import { nameTitle, useWalletLabel } from '../WalletName.js';
 import { KeysSection } from './KeysSection.js';
 import { CollectiblesGrid } from './CollectiblesGrid.js';
 import { NamesSection } from './NamesSection.js';
+import { TransactionsSection } from './TransactionsSection.js';
 
 const CLOCK_TICK_MS = 10_000;
 
@@ -169,6 +170,8 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
       </section>
 
       {wallet.kind === 'single' && <KeysSection wallet={wallet} />}
+
+      <TransactionsSection wallet={wallet} />
 
       <NamesSection accounts={accounts} />
 

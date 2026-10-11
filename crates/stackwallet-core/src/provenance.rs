@@ -417,6 +417,18 @@ pub fn reveal(
     })
 }
 
+/// A signing key at `path`, for the ledger's approval step. Never leaves the core.
+pub(crate) fn signing_key(
+    vault: &EncryptedVault,
+    wallet_id: &str,
+    curve: Curve,
+    path: &str,
+) -> Result<hd::DerivedKey> {
+    with_mnemonic(vault, wallet_id, |m| {
+        hd::derive(m.to_seed("").as_ref(), curve, path)
+    })
+}
+
 /// Raw phrase for an authenticated transfer; callers record the transfer.
 pub(crate) fn phrase_for_transfer(vault: &EncryptedVault, wallet_id: &str) -> Result<String> {
     with_mnemonic(vault, wallet_id, |m| Ok(m.phrase().to_string()))

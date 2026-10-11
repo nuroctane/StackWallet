@@ -3,6 +3,9 @@ import { useEffect, useMemo } from 'react';
 import { findChain } from '../lib/chains.js';
 import { useBalances } from '../store/balances.js';
 import { namesStore } from '../store/names.js';
+import { vault } from '../core/bridge.js';
+import { useVaultView } from '../core/vault.js';
+import { pollPending } from '../store/txs.js';
 import { devices } from '../store/devices.js';
 import { directory, useDirectory } from '../store/persist.js';
 import { useRegistry } from '../store/RegistryContext.js';
@@ -16,6 +19,8 @@ import { workspace } from './persist.js';
  * Renders nothing. Structural directory changes (not selection or expansion)
  * count as activity; layout edits and device changes count too.
  */
+const TX_POLL_MS = 12_000;
+
 export function Recorders() {
   const state = useDirectory();
   const registry = useRegistry();
@@ -54,6 +59,18 @@ export function Recorders() {
       unsubWs();
     };
   }, []);
+
+  // Pending transactions are asked about until the chain gives a final answer.
+  const { ledger } = useVaultView(vault);
+  const pending = ledger?.txs.filter((t) => t.state === 'pending') ?? [];
+  const pendingKey = pending.map((t) => t.id).join('|');
+  useEffect(() => {
+    if (pendingKey === '') return;
+    const tick = () => void pollPending(registry, vault.getSnapshot().ledger?.txs ?? []);
+    tick();
+    const id = setInterval(tick, TX_POLL_MS);
+    return () => clearInterval(id);
+  }, [pendingKey, registry]);
 
   // Names follow the wallets: every account added or watched gets its names looked up.
   useEffect(() => {

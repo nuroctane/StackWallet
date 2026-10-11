@@ -15,11 +15,13 @@ import {
   Decision,
   Device,
   DeviceId,
+  EvmTx,
   ExposureChannel,
   Frame,
   ImportedSet,
   Hex32,
   KeyGroup,
+  Ledger,
   PairingOffer,
   Policy,
   PolicyContext,
@@ -29,7 +31,9 @@ import {
   SessionEvent,
   SessionStateName,
   SignedCeremonyMessage,
+  Signer,
   TxIntent,
+  TxRecord,
   TxState,
 } from './types.js';
 
@@ -122,6 +126,30 @@ export interface VaultHandle {
     bundle: string,
     nowMs: number,
   ): Promise<ImportedSet>;
+  /** Transactions, policies and the hash-chained audit log, as the core sealed them. */
+  ledger(): Promise<Ledger>;
+  txPropose(intent: TxIntent, deviceId: string, nowMs: number): Promise<TxRecord>;
+  txAttach(req: {
+    txId: string;
+    signer: Signer;
+    unsigned: EvmTx;
+    simulation: unknown;
+    simulationOk: boolean;
+    deviceId: string;
+    nowMs: number;
+  }): Promise<TxRecord>;
+  txEvaluate(txId: string, deviceId: string, nowMs: number): Promise<TxRecord>;
+  /** Step-up approval; the core re-checks policy and signs. */
+  txApprove(txId: string, passphrase: string, deviceId: string, nowMs: number): Promise<TxRecord>;
+  txReject(txId: string, deviceId: string, nowMs: number): Promise<TxRecord>;
+  txReport(
+    txId: string,
+    state: TxState,
+    note: string | null,
+    deviceId: string,
+    nowMs: number,
+  ): Promise<TxRecord>;
+  setPolicies(policies: Policy[], deviceId: string, nowMs: number): Promise<void>;
   free(): void;
 }
 
@@ -237,6 +265,28 @@ export interface WasmVaultObject {
     nowMs: number,
   ): string;
   import_set(identityLabel: string, passphrase: string, bundle: string, nowMs: number): string;
+  ledger_json(): string;
+  tx_propose(intentJson: string, deviceId: string, nowMs: number): string;
+  tx_attach(
+    txId: string,
+    signerJson: string,
+    unsignedJson: string,
+    simulationJson: string,
+    simulationOk: boolean,
+    deviceId: string,
+    nowMs: number,
+  ): string;
+  tx_evaluate(txId: string, deviceId: string, nowMs: number): string;
+  tx_approve(txId: string, passphrase: string, deviceId: string, nowMs: number): string;
+  tx_reject(txId: string, deviceId: string, nowMs: number): string;
+  tx_report(
+    txId: string,
+    state: string,
+    note: string | undefined,
+    deviceId: string,
+    nowMs: number,
+  ): string;
+  set_policies_json(policiesJson: string, deviceId: string, nowMs: number): void;
   free(): void;
 }
 
@@ -413,6 +463,55 @@ class WasmVaultHandle implements VaultHandle {
       JSON.stringify(req.directory),
       req.nowMs,
     );
+  }
+  async ledger() {
+    return Ledger.parse(JSON.parse(this.raw.ledger_json()));
+  }
+  async txPropose(intent: TxIntent, deviceId: string, nowMs: number) {
+    const out = this.raw.tx_propose(JSON.stringify(TxIntent.parse(intent)), deviceId, nowMs);
+    return TxRecord.parse(JSON.parse(out));
+  }
+  async txAttach(req: {
+    txId: string;
+    signer: Signer;
+    unsigned: EvmTx;
+    simulation: unknown;
+    simulationOk: boolean;
+    deviceId: string;
+    nowMs: number;
+  }) {
+    const out = this.raw.tx_attach(
+      req.txId,
+      JSON.stringify(Signer.parse(req.signer)),
+      JSON.stringify(EvmTx.parse(req.unsigned)),
+      JSON.stringify(req.simulation ?? null),
+      req.simulationOk,
+      req.deviceId,
+      req.nowMs,
+    );
+    return TxRecord.parse(JSON.parse(out));
+  }
+  async txEvaluate(txId: string, deviceId: string, nowMs: number) {
+    return TxRecord.parse(JSON.parse(this.raw.tx_evaluate(txId, deviceId, nowMs)));
+  }
+  async txApprove(txId: string, passphrase: string, deviceId: string, nowMs: number) {
+    return TxRecord.parse(JSON.parse(this.raw.tx_approve(txId, passphrase, deviceId, nowMs)));
+  }
+  async txReject(txId: string, deviceId: string, nowMs: number) {
+    return TxRecord.parse(JSON.parse(this.raw.tx_reject(txId, deviceId, nowMs)));
+  }
+  async txReport(
+    txId: string,
+    state: TxState,
+    note: string | null,
+    deviceId: string,
+    nowMs: number,
+  ) {
+    const out = this.raw.tx_report(txId, TxState.parse(state), note ?? undefined, deviceId, nowMs);
+    return TxRecord.parse(JSON.parse(out));
+  }
+  async setPolicies(policies: Policy[], deviceId: string, nowMs: number) {
+    this.raw.set_policies_json(JSON.stringify(Policy.array().parse(policies)), deviceId, nowMs);
   }
   async importSet(identityLabel: string, passphrase: string, bundle: string, nowMs: number) {
     return ImportedSet.parse(

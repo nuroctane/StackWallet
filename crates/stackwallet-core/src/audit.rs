@@ -35,6 +35,12 @@ pub enum Actor {
     rename_all_fields = "camelCase"
 )]
 pub enum AuditEvent {
+    /// A transaction entered the ledger as a draft; transitions follow.
+    TxProposed {
+        tx_id: String,
+        wallet_id: String,
+        chain_id: String,
+    },
     TxTransition {
         tx_id: String,
         from: TxState,

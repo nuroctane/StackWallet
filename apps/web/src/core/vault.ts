@@ -15,9 +15,16 @@ import {
   type ExposureChannel,
   type IdentityHandle,
   type IdentityInfo,
+  type EvmTx,
   type ImportedSet,
+  type Ledger,
+  type Policy,
   type Revealed,
   type RevealedSecret,
+  type Signer,
+  type TxIntent,
+  type TxRecord,
+  type TxState,
   type VaultHandle,
   type VaultLabel,
 } from '@stackwallet/core-client';
@@ -48,6 +55,10 @@ export interface VaultView {
    * for a decision).
    */
   provenance: ProvenanceTable;
+  /** Transactions, policies and audit log; `null` while locked (they live sealed in the vault). */
+  ledger: Ledger | null;
+  /** Set when the sealed ledger failed to load: a broken audit chain is a red banner, not silence. */
+  ledgerError: string | null;
 }
 
 export type VaultResult = { ok: true } | { ok: false; error: string };
@@ -114,6 +125,8 @@ export class VaultStore {
     status: { kind: 'loading' },
     busy: false,
     provenance: { wallets: [], sets: [] },
+    ledger: null,
+    ledgerError: null,
   };
   private client: CoreClient | null = null;
   private vault: VaultHandle | null = null;
@@ -213,6 +226,76 @@ export class VaultStore {
     this.deps.onDevices?.(await this.vault.devices(), this.writeDevices);
     this.set({ status: { kind: 'unlocked', labels, identity } });
     await this.refreshProvenance();
+    await this.refreshLedger();
+  }
+
+  private async refreshLedger(): Promise<void> {
+    if (!this.vault || this.view.status.kind !== 'unlocked') return;
+    try {
+      this.set({ ledger: await this.vault.ledger(), ledgerError: null });
+    } catch (err) {
+      this.set({ ledger: null, ledgerError: message(err) });
+    }
+  }
+
+  /** Id the audit log records as the actor; the browser's own device identity. */
+  private deviceId(): string {
+    const s = this.view.status;
+    return s.kind === 'unlocked' && s.identity ? s.identity.deviceId : 'local';
+  }
+
+  /** Run one ledger operation, persist the vault and refresh the view. */
+  private async ledgerOp(op: (v: VaultHandle, device: string, now: number) => Promise<TxRecord>) {
+    return this.guardedValue(async () => {
+      const out = await op(this.unlockedVault(), this.deviceId(), this.now());
+      await this.persist();
+      await this.refreshLedger();
+      return out;
+    });
+  }
+
+  txPropose(intent: Omit<TxIntent, 'proposer' | 'createdAtMs'>) {
+    return this.ledgerOp((v, device, now) =>
+      v.txPropose(
+        { ...intent, proposer: { kind: 'human', deviceId: device }, createdAtMs: now } as TxIntent,
+        device,
+        now,
+      ),
+    );
+  }
+
+  txAttach(req: {
+    txId: string;
+    signer: Signer;
+    unsigned: EvmTx;
+    simulation: unknown;
+    simulationOk: boolean;
+  }) {
+    return this.ledgerOp((v, deviceId, nowMs) => v.txAttach({ ...req, deviceId, nowMs }));
+  }
+
+  txEvaluate(txId: string) {
+    return this.ledgerOp((v, device, now) => v.txEvaluate(txId, device, now));
+  }
+
+  txApprove(txId: string, passphrase: string) {
+    return this.ledgerOp((v, device, now) => v.txApprove(txId, passphrase, device, now));
+  }
+
+  txReject(txId: string) {
+    return this.ledgerOp((v, device, now) => v.txReject(txId, device, now));
+  }
+
+  txReport(txId: string, state: TxState, note: string | null) {
+    return this.ledgerOp((v, device, now) => v.txReport(txId, state, note, device, now));
+  }
+
+  setPolicies(policies: Policy[]): Promise<VaultResult> {
+    return this.guarded(async () => {
+      await this.unlockedVault().setPolicies(policies, this.deviceId(), this.now());
+      await this.persist();
+      await this.refreshLedger();
+    });
   }
 
   /** Seal a whole device table and persist the vault; the core validates before writing. */
@@ -267,6 +350,7 @@ export class VaultStore {
       if (!this.vault) throw new Error('No vault to lock');
       await this.vault.lock();
       this.deps.onDevices?.(null, null);
+      this.set({ ledger: null, ledgerError: null });
       this.set({ status: { kind: 'locked', labels: await this.vault.labels() } });
     });
   }

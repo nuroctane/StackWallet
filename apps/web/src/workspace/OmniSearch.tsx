@@ -141,6 +141,13 @@ function SearchBody({
         run: () => shell.openDialog({ kind: 'newWallet' }),
       },
       {
+        id: 'a:send',
+        type: 'action',
+        label: 'send',
+        dim: 'propose a transfer for approval',
+        run: () => shell.openDialog({ kind: 'send' }),
+      },
+      {
         id: 'a:importset',
         type: 'action',
         label: 'import set',

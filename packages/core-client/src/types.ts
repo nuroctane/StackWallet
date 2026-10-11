@@ -608,3 +608,75 @@ export const ImportedSet = z.object({
   walletsWithKeys: z.array(z.string()),
 });
 export type ImportedSet = z.infer<typeof ImportedSet>;
+
+// ---------------------------------------------------------------------------
+// Transaction ledger (core `evm`, `ledger`, `audit`)
+// ---------------------------------------------------------------------------
+
+/** Unsigned EIP-1559 transaction the adapter proposes; amounts in wei as decimals. */
+export const EvmTx = z.object({
+  chainId: z.number().int().positive(),
+  nonce: z.number().int().nonnegative(),
+  maxPriorityFeePerGas: Amount,
+  maxFeePerGas: Amount,
+  gasLimit: z.number().int().positive(),
+  to: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+  value: Amount,
+  dataHex: z
+    .string()
+    .regex(/^(0x)?[0-9a-fA-F]*$/)
+    .default(''),
+});
+export type EvmTx = z.infer<typeof EvmTx>;
+
+export const Signer = z.object({ walletId: z.string(), path: z.string(), address: z.string() });
+export type Signer = z.infer<typeof Signer>;
+
+export const TxRecord = z.object({
+  id: z.string(),
+  intent: TxIntent,
+  state: TxState,
+  signer: Signer.nullable(),
+  unsigned: EvmTx.nullable(),
+  simulation: z.unknown().nullable(),
+  simulationOk: z.boolean().nullable(),
+  decision: Decision.nullable(),
+  rawSignedHex: z.string().nullable(),
+  hash: z.string().nullable(),
+  error: z.string().nullable(),
+  createdAtMs: z.number().int(),
+  updatedAtMs: z.number().int(),
+});
+export type TxRecord = z.infer<typeof TxRecord>;
+
+export const AuditActor = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('device'), deviceId: z.string() }),
+  z.object({ kind: z.literal('agentSession'), sessionId: z.string() }),
+  z.object({ kind: z.literal('automation'), automationId: z.string(), runId: z.string() }),
+  z.object({ kind: z.literal('system') }),
+]);
+export type AuditActor = z.infer<typeof AuditActor>;
+
+/** One hash-chained row; the event's own fields sit beside `event`. */
+export const AuditEntry = z
+  .object({
+    index: z.number().int().nonnegative(),
+    atMs: z.number().int(),
+    actor: AuditActor,
+    event: z.string(),
+    txId: z.string().optional(),
+    from: TxState.optional(),
+    to: TxState.optional(),
+    note: z.string().nullable().optional(),
+    prevHashHex: z.string(),
+    hashHex: z.string(),
+  })
+  .passthrough();
+export type AuditEntry = z.infer<typeof AuditEntry>;
+
+export const Ledger = z.object({
+  txs: z.array(TxRecord).default([]),
+  audit: z.array(AuditEntry).default([]),
+  policies: z.array(Policy).default([]),
+});
+export type Ledger = z.infer<typeof Ledger>;

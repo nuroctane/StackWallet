@@ -604,6 +604,16 @@ an approval screen reads as names, not hex:
    every load and save; the browser's localStorage copy is a read-only cache while locked.
    Address labels and decoded calls (§12.3) land here too, because the Approval Queue and the
    transaction history are built on them.
+   Implemented for single-key EVM accounts: the core (`evm`, `ledger`) records intents, takes the
+   adapter's unsigned EIP-1559 transaction only if its destination, value and calldata match the
+   intent and the signer re-derives to the shown address, evaluates policies, and after a step-up
+   approval re-evaluates them, signs with low-S ECDSA from its own serialization and returns the
+   raw bytes. Every state change appends to a hash-chained audit log sealed in the vault with
+   the transaction record (`tx-ledger`); a record whose state disagrees with its log, or a save
+   that rewrites a row, is refused. The client prepares (nonce, EIP-1559 fees, gas estimate,
+   simulation), broadcasts, and reports network outcomes, which the lifecycle graph gates.
+   Remaining for the phase: a policy editor in the UI, ERC-20 balances and token decimals in
+   history headlines, and threshold (`tss`) EVM signing once CGGMP lands (1b).
 4. **Chains**: Bitcoin (PSBT, Taproot via FROST secp256k1-tr), Solana, Cosmos; swaps per family.
 5. **Agent runtime**: providers, tools, run loop, grants, agent party.
 6. **Automations + scheduler**: triggers / actions, headless CLI as automation device.
