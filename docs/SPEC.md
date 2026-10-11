@@ -463,6 +463,31 @@ account change / UTXO arrival)`, `manual`, `agent`.
   per-wallet, per-folder and global views; allocation and PnL breakdowns.
 - **Alerts** reuse the automation condition evaluator.
 
+### 11.1 Market elements
+
+The workspace's element set grows toward a trading command center (the reference is Parsec's
+Command Center; its query surface is mapped in
+`github.com/api-evangelist/parsec-finance`). Each element names its keyless source first; an
+element without one ships empty with the reason shown, never with a hidden paid dependency.
+
+| Element        | Shows                                                        | Keyless source first                                  |
+| -------------- | ------------------------------------------------------------ | ----------------------------------------------------- |
+| `trades`       | live DEX trade feed: pair, side, size, maker/taker, venue    | DEX Screener, chain logs via the RPC pool             |
+| `candles`      | OHLCV for a pair or asset (the existing canvas chart)        | CoinGecko OHLC, DEX Screener, Pyth history            |
+| `positions`    | a wallet's LP and concentrated-liquidity positions, in range | on-chain position managers via the RPC pool           |
+| `lending`      | supply/borrow rates and history per protocol and asset       | DefiLlama yields                                      |
+| `nft floors`   | floor, holders, 1d/7d/30d floor change for held collections  | Blockscout collection data; marketplace APIs are BYOK |
+| `holders`      | top holders of a token and the largest balance changes       | Blockscout token holders                              |
+| `transfers`    | transfers with USD value, NFT flag and token icon            | Blockscout / explorer APIs, RPC logs                  |
+| `transactions` | decoded transactions (function and arguments, §12.3)         | RPC receipts + local decoder                          |
+| `trending`     | contracts with rising senders, gas and tx counts             | explorer stats where keyless                          |
+| `metrics`      | binned volume, trade count and unique takers                 | derived from `trades`                                 |
+
+Paid analytics APIs (Parsec, Nansen and similar) may be added as opt-in providers with the key
+in the vault (as D4 does for model keys). They never become the default: they see every address
+queried, and the ones without CORS cannot be called from the web build without a server (D3),
+so they are desktop-only, called from the Rust side.
+
 ## 12. UI surfaces
 
 1. **Directory**: tree sidebar (folders / subfolders / wallets), bulk tag and move, folder-level
@@ -531,6 +556,26 @@ Implementation (core `hd`, `provenance`, `transfer`):
   `packages/collectibles` (Blockscout for EVM, Metaplex accounts for Solana); see `CHAINS.md`
   for coverage and `SECURITY.md` §5 for the media privacy setting.
 
+### 12.3 Address labels and decoded calls
+
+Every address the UI renders carries a label and the label's source, so a table of transfers or
+an approval screen reads as names, not hex:
+
+- **Sources, in priority order**: the user's own wallets (their resolved name or tag), the
+  user's contacts and allowlists, verified name-service names (§12.2), a bundled registry of
+  well-known contracts (routers, bridges, lending pools, token contracts from the asset
+  registry), then nothing. The source is always shown with the label; an address with no label
+  shows as `unknown` plus first-seen time, and denylisted ones in `--sw-danger`.
+- **Labels never override the address on a signing screen**: the full address stays visible
+  under the label, and a label that came from untrusted input (token names, name services)
+  carries the same look-alike marking as §12.2.
+- **Decoded calls**: every transaction the app shows or asks to sign carries
+  `{ function, args }` decoded locally (4-byte selector plus ABI from the bundled registry or the
+  verified-source explorer, Solana instruction decoders per program, Cosmos message types). An
+  undecodable call is shown as such, never guessed. The agent reads the same decoded form
+  (sanitized, §9) and its read tools follow the element surface: resolve address, list
+  transfers, list decoded transactions, token holders.
+
 ## 13. Phases
 
 0. **Scaffold**: repo, workspaces, AGENTS.md, SPEC/SECURITY/DESIGN/CHAINS, CI, design tokens,
@@ -557,10 +602,14 @@ Implementation (core `hd`, `provenance`, `transfer`):
    runs the handshake over the data channel; both sides pin the peer the core vouched for.
    The pinned table itself is sealed in the vault (`device-table`) and validated by the core on
    every load and save; the browser's localStorage copy is a read-only cache while locked.
+   Address labels and decoded calls (§12.3) land here too, because the Approval Queue and the
+   transaction history are built on them.
 4. **Chains**: Bitcoin (PSBT, Taproot via FROST secp256k1-tr), Solana, Cosmos; swaps per family.
 5. **Agent runtime**: providers, tools, run loop, grants, agent party.
 6. **Automations + scheduler**: triggers / actions, headless CLI as automation device.
-7. **Markets**: aggregation, registry, charts, portfolio analytics, alerts.
+7. **Markets**: aggregation, registry, charts, portfolio analytics, alerts, and the market
+   elements of §11.1 (trades, candles, positions, lending, NFT floors, holders, transfers,
+   transactions, trending, metrics).
 8. **Desktop polish + packaging**: Tauri bundles, background scheduler, OS keychain unlock,
    hardware wallet signer.
 9. **Mobile**: UniFFI bindings, phone as a first-class share-holder and approver.
