@@ -18,6 +18,7 @@ import {
 } from '../../store/selectors.js';
 import { Breadcrumb } from '../Breadcrumb.js';
 import { useShell } from '../ShellContext.js';
+import { WalletName } from '../WalletName.js';
 import { TotalsStrip } from './TotalsStrip.js';
 
 export function FolderView({ state, folder }: { state: DirectoryState; folder: Folder }) {
@@ -188,7 +189,9 @@ function WalletRow({
         if (e.key === 'Enter') directory.reveal(wallet.id);
       }}
     >
-      <td className="truncate px-4 text-ink">{wallet.name}</td>
+      <td className="truncate px-4 text-ink">
+        <WalletName wallet={wallet} className="max-w-full" />
+      </td>
       <td className="px-3">
         <Badge>{kindLabel(wallet)}</Badge>
       </td>

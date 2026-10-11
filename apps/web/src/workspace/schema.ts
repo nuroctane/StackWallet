@@ -16,6 +16,7 @@ export const ElementKind = z.enum([
   'approvals',
   'devices',
   'network',
+  'collectibles',
 ]);
 export type ElementKind = z.infer<typeof ElementKind>;
 

@@ -6,6 +6,7 @@ import { directory, useDirectory } from '../store/persist.js';
 import type { DirectoryState } from '../store/schema.js';
 import { flattenTree, kindLabel, walletFamilies, type TreeRow } from '../store/selectors.js';
 import { useShell } from './ShellContext.js';
+import { WalletName } from './WalletName.js';
 
 export function DirectoryTree() {
   const state = useDirectory();
@@ -313,7 +314,7 @@ function Row({
         <RenameInput initial={row.name} onCommit={onRename} onCancel={onCancelRename} />
       ) : (
         <span className={`flex-1 truncate ${row.kind === 'folder' ? 'text-ink' : 'text-muted'}`}>
-          {row.name}
+          {wallet ? <WalletName wallet={wallet} className="max-w-full" /> : row.name}
         </span>
       )}
 

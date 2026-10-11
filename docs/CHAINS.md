@@ -144,6 +144,24 @@ field arithmetic in `packages/chains/src/keys.ts`, so no curve library is needed
   are treated as a later extension.
 - IBC transfers track the acknowledgement on the destination chain before `Confirmed`.
 
+## Names and collectibles
+
+Both live outside the adapters (`packages/names`, `packages/collectibles`) and reuse the
+registry's RPC pools, so a user's custom endpoints apply to them too.
+
+| Service / source | Covers                        | How it is read                                                                                    |
+| ---------------- | ----------------------------- | ------------------------------------------------------------------------------------------------- |
+| ENS              | every EVM account             | Universal Resolver `reverse(bytes,uint256)` on Ethereum mainnet; forward-verified by the resolver |
+| SNS              | Solana                        | favourite-domain, name and reverse accounts via `getMultipleAccounts`; owner and hash checked     |
+| ICNS             | every bech32 Cosmos account   | `primary_name` on the Osmosis resolver, then `address{name, bech32_prefix}` must match            |
+| THORName         | any address THORChain aliases | Midgard `rlookup`, then `lookup` must list the address                                            |
+| Blockscout       | 13 EVM chains                 | `/api/v2/addresses/{addr}/nft`; `reputation` flags spam                                           |
+| Metaplex         | Solana                        | token accounts (needs an RPC that allows `getTokenAccountsByOwner`) and metadata PDAs             |
+
+L2 primary names (Basenames and other ENSIP-19 chains) need CCIP-Read and are not resolved yet.
+Bitcoin ordinals need an indexer API key and Cosmos NFTs have no keyless indexer, so both show a
+reason instead of an empty grid.
+
 ## Adding a family
 
 1. Create `packages/chains-<family>` implementing `ChainAdapter`.

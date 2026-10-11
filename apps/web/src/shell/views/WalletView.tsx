@@ -13,6 +13,9 @@ import type { DirectoryState } from '../../store/schema.js';
 import { accountsOf, kindLabel, pathTo } from '../../store/selectors.js';
 import { Breadcrumb } from '../Breadcrumb.js';
 import { isTypingTarget, useShell } from '../ShellContext.js';
+import { nameTitle, useWalletLabel } from '../WalletName.js';
+import { CollectiblesGrid } from './CollectiblesGrid.js';
+import { NamesSection } from './NamesSection.js';
 
 const CLOCK_TICK_MS = 10_000;
 
@@ -25,6 +28,7 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
   const balances = useBalances(accounts);
   const [renaming, setRenaming] = useState(false);
   const now = useNow(CLOCK_TICK_MS);
+  const label = useWalletLabel(wallet);
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -61,7 +65,7 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
   return (
     <div className="flex flex-col gap-5 p-5">
       <div className="flex flex-col gap-2">
-        <Breadcrumb path={path} leaf={wallet.name} />
+        <Breadcrumb path={path} leaf={label.text} />
         <div className="flex flex-wrap items-center gap-3">
           {renaming ? (
             <NameInput
@@ -73,10 +77,10 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
             <button
               type="button"
               onClick={() => setRenaming(true)}
-              title="Rename (F2)"
-              className="sw-pressable -mx-1 min-w-0 truncate rounded-sw-sm px-1 text-left text-[22px] font-semibold tracking-[-0.01em] text-ink"
+              title={label.record ? `${nameTitle(label)} · F2 renames your tag` : 'Rename (F2)'}
+              className={`sw-pressable -mx-1 min-w-0 truncate rounded-sw-sm px-1 text-left text-[22px] font-semibold tracking-[-0.01em] ${label.record ? 'text-accent-2' : 'text-ink'}`}
             >
-              {wallet.name}
+              {label.text}
             </button>
           )}
           <Badge>{kindLabel(wallet)}</Badge>
@@ -90,6 +94,16 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
             Move…
           </Button>
         </div>
+        {label.record && (
+          <p className="text-[12px] text-faint">
+            your tag <span className="text-muted">{wallet.name}</span>
+            {label.record.nonAscii && (
+              <span className="ml-2 text-danger">
+                this name uses non-ASCII characters; check it is the one you expect
+              </span>
+            )}
+          </p>
+        )}
         <TagEditor wallet={wallet} />
         {wallet.kind === 'watch' && (
           <p className="text-[12px] text-faint">
@@ -149,6 +163,17 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
             </table>
           </div>
         )}
+      </section>
+
+      <NamesSection accounts={accounts} />
+
+      <section className="sw-elevated flex min-w-0 flex-col overflow-hidden">
+        <header className="border-b border-edge px-4 py-2.5">
+          <h3 className="text-[11px] font-semibold tracking-[0.12em] text-muted uppercase">
+            Collectibles
+          </h3>
+        </header>
+        <CollectiblesGrid accounts={accounts} />
       </section>
 
       <section className="flex flex-col gap-3 rounded-sw border border-edge p-4">

@@ -459,6 +459,19 @@ const COSMOS: ChainInfo[] = [
     rests: ['https://cosmos-rest.publicnode.com', 'https://rest.cosmos.directory/cosmoshub'],
   }),
   cosmos({
+    id: 'thorchain-1',
+    name: 'THORChain',
+    symbol: 'RUNE',
+    denom: 'rune',
+    decimals: 8,
+    prefix: 'thor',
+    // THORChain charges a fixed native fee rather than a gas price.
+    gasPrice: '0rune',
+    explorerTxUrl: 'https://runescan.io/tx/{hash}',
+    rests: ['https://gateway.liquify.com/chain/thorchain_api'],
+    coinType: 931,
+  }),
+  cosmos({
     id: 'osmosis-1',
     name: 'Osmosis',
     symbol: 'OSMO',

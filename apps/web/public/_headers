@@ -1,11 +1,13 @@
 # Served by Cloudflare static assets for every path.
 # COOP/COEP make the page cross-origin isolated so SQLite-WASM over OPFS can use
-# SharedArrayBuffer in its worker. Every asset is same-origin (D8), so
-# require-corp costs nothing today; anything remote later needs a CORP header.
+# SharedArrayBuffer in its worker. COEP is `credentialless` rather than
+# `require-corp` so collectible images from hosts without CORP can still load
+# (sent without cookies); script and fonts stay same-origin (D8). Safari does
+# not implement credentialless yet, so the OPFS store must not assume isolation.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https: wss:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self' https: wss:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'
   Cross-Origin-Opener-Policy: same-origin
-  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Embedder-Policy: credentialless
   Cross-Origin-Resource-Policy: same-origin
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer

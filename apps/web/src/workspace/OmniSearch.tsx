@@ -3,6 +3,7 @@ import { Chip, Dialog, Input, Kbd } from '@stackwallet/ui';
 
 import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
+import { useNames, walletLabel } from '../store/names.js';
 import { presetsFor, themeStore, useThemeState } from '../store/theme.js';
 import { fuzzyMatch } from '../lib/format.js';
 import { listChains } from '../lib/chains.js';
@@ -91,6 +92,7 @@ function SearchBody({
   const shell = useShell();
   const vaultView = useVaultView(vault);
   const theme = useThemeState();
+  const names = useNames();
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
@@ -228,8 +230,9 @@ function SearchBody({
       out.push({
         id: `w:${w.id}`,
         type: 'wallet',
-        label: w.name,
-        dim: `${pathTo(state, w.id)
+        // Search matches the resolved name and the user's own tag alike.
+        label: walletLabel(names, w, state.accounts).text,
+        dim: `${w.name} · ${pathTo(state, w.id)
           .slice(1)
           .map((p) => p.name)
           .join(' / ')} · ${kindLabel(w)}`,
@@ -275,7 +278,7 @@ function SearchBody({
     }
     return out;
     // `shell` is stable per layout; the lists rebuild when state changes.
-  }, [state, ws, devices, registryCtx, shell, vaultView, theme]);
+  }, [state, ws, devices, registryCtx, shell, vaultView, theme, names]);
 
   const visible = useMemo(() => {
     const ranked = rank(query, all);

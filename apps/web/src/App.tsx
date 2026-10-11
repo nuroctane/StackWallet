@@ -24,6 +24,8 @@ import { devicesQuarantinedKey } from './store/devices.js';
 import { directoryQuarantinedKey, useDirectory } from './store/persist.js';
 import { RegistryContext, useRegistry } from './store/RegistryContext.js';
 import { applyRpcSettings, rpcSettings, rpcSettingsQuarantinedKey } from './store/rpcSettings.js';
+import { collectiblesStore } from './store/collectibles.js';
+import { namesStore } from './store/names.js';
 import { themeQuarantinedKey } from './store/theme.js';
 import { ThemeApplier } from './store/ThemeApplier.js';
 import { Canvas } from './workspace/Canvas.js';
@@ -49,6 +51,8 @@ function buildRegistry(): { registry: ChainRegistry; error?: string } {
   try {
     const registry = createDefaultRegistry();
     applyRpcSettings(registry, rpcSettings.getSnapshot());
+    namesStore.configure(registry);
+    collectiblesStore.configure(registry);
     return { registry };
   } catch (err) {
     return {

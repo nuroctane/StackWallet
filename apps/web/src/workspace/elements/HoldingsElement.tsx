@@ -5,6 +5,7 @@ import { VirtualTable, type Column } from '@stackwallet/ui';
 import { findChain } from '../../lib/chains.js';
 import { formatUnits, relativeTime } from '../../lib/format.js';
 import { useBalances, type BalanceEntry } from '../../store/balances.js';
+import { useNames, walletLabel } from '../../store/names.js';
 import { directory, useDirectory } from '../../store/persist.js';
 import { useRegistry } from '../../store/RegistryContext.js';
 import type { ElementBodyProps } from './types.js';
@@ -68,20 +69,23 @@ export function HoldingsElement({ pane, height }: ElementBodyProps) {
   const state = useDirectory();
   const registry = useRegistry();
   const balances = useBalances(state.accounts);
+  const names = useNames();
   const hideZero = pane.props['hideZero'] === true;
   const chainFilter = typeof pane.props['chainId'] === 'string' ? pane.props['chainId'] : '';
   const now = useNow(CLOCK_TICK_MS);
 
   const rows = useMemo(() => {
-    const names = new Map(state.wallets.map((w) => [w.id, w.name]));
+    const labels = new Map(
+      state.wallets.map((w) => [w.id, walletLabel(names, w, state.accounts).text]),
+    );
     const all = buildHoldingRows(
       state.accounts,
-      (id) => names.get(id) ?? '?',
+      (id) => labels.get(id) ?? '?',
       (id) => balances.byAccount.get(id),
       (id) => findChain(registry, id),
     );
     return all.filter((r) => (!hideZero || !r.zero) && (!chainFilter || r.chainId === chainFilter));
-  }, [state.accounts, state.wallets, balances.byAccount, registry, hideZero, chainFilter]);
+  }, [state.accounts, state.wallets, balances.byAccount, registry, hideZero, chainFilter, names]);
 
   const columns = useMemo<Column<HoldingRow>[]>(
     () => [

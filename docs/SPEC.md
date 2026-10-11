@@ -505,7 +505,11 @@ Every wallet and every directory set carries a provenance the UI never hides:
   to its addresses on every chain that has a name service (ENS, SNS, THORName, ICNS, and
   others as adapters add them) and shows the resolved name as the wallet's display name in
   place of the user tag or raw address. Reverse records are verified by forward resolution
-  before they are displayed; the raw address stays one click away.
+  before they are displayed; the raw address stays one click away. Implemented in
+  `packages/names` (ENS, SNS, ICNS, THORName) with a per-address cache; the user's tag is kept
+  and shown next to the resolved name. Collectibles are implemented in
+  `packages/collectibles` (Blockscout for EVM, Metaplex accounts for Solana); see `CHAINS.md`
+  for coverage and `SECURITY.md` §5 for the media privacy setting.
 
 ## 13. Phases
 

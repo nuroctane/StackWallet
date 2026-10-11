@@ -2,6 +2,7 @@ import { Select } from '@stackwallet/ui';
 
 import { ApprovalRailBody } from '../../shell/ApprovalRail.js';
 import { DirectoryTree } from '../../shell/DirectoryTree.js';
+import { CollectiblesGrid } from '../../shell/views/CollectiblesGrid.js';
 import { DevicesView } from '../../shell/views/DevicesView.js';
 import { FolderView } from '../../shell/views/FolderView.js';
 import { NetworkView } from '../../shell/views/NetworkView.js';
@@ -42,6 +43,20 @@ export function NetworkElement() {
   return (
     <div className="sw-embed-scroll">
       <NetworkView state={state} />
+    </div>
+  );
+}
+
+/** Collectibles for one wallet, or for every wallet when none is chosen. */
+export function CollectiblesElement({ pane }: ElementBodyProps) {
+  const state = useDirectory();
+  const walletId = typeof pane.props['walletId'] === 'string' ? pane.props['walletId'] : '';
+  const accounts = walletId
+    ? state.accounts.filter((a) => a.walletId === walletId)
+    : state.accounts;
+  return (
+    <div className="sw-embed-scroll">
+      <CollectiblesGrid accounts={accounts} dense />
     </div>
   );
 }

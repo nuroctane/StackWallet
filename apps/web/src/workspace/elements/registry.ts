@@ -9,6 +9,7 @@ import { TerrainElement } from './TerrainElement.js';
 import type { ElementDefinition, ElementRegistry } from './types.js';
 import {
   ApprovalsElement,
+  CollectiblesElement,
   DevicesElement,
   DirectoryElement,
   FolderElement,
@@ -164,6 +165,30 @@ export const registry: ElementRegistry = {
     hint: 'pairing and trust',
     defaultSize: elementDefaults.devices,
     body: DevicesElement,
+  }),
+  collectibles: def({
+    kind: 'collectibles',
+    title: 'collectibles',
+    hint: 'nfts on every chain with a keyless indexer',
+    defaultSize: elementDefaults.collectibles,
+    minSize: { w: 280, h: 200 },
+    defaultProps: { walletId: '' },
+    titleFor: (p) => {
+      const name = walletName(p);
+      return name ? `collectibles · ${name}` : 'collectibles';
+    },
+    settings: [
+      {
+        key: 'walletId',
+        label: 'wallet',
+        kind: 'select',
+        options: () => [
+          { value: '', label: 'all wallets' },
+          ...directory.getSnapshot().wallets.map((w) => ({ value: w.id, label: w.name })),
+        ],
+      },
+    ],
+    body: CollectiblesElement,
   }),
   network: def({
     kind: 'network',
