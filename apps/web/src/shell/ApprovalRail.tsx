@@ -11,6 +11,7 @@ import { decodeCalldata, isUnlimitedApproval, type DecodedCall } from '../lib/de
 import { formatUnits, relativeTime } from '../lib/format.js';
 import { useRegistry } from '../store/RegistryContext.js';
 import { approveAndSend } from '../store/txs.js';
+import { tokenStore, useTokens } from '../store/tokens.js';
 import { AddressLabel, useLabeler } from './AddressLabel.js';
 import { useShell } from './ShellContext.js';
 
@@ -33,6 +34,7 @@ const STATE_TONE: Partial<Record<TxState, string>> = {
   broadcast: 'text-warm',
   signed: 'text-warm',
   awaiting: 'text-warm',
+  expired: 'text-faint',
 };
 
 export function StateChip({ state }: { state: TxState }) {
@@ -47,6 +49,7 @@ export function StateChip({ state }: { state: TxState }) {
 
 /** One-line description of what a transaction does, in assets rather than bytes. */
 export function useHeadline(): (tx: TxRecord) => string {
+  useTokens();
   const registry = useRegistry();
   const labeler = useLabeler();
   return (tx: TxRecord) => {
@@ -56,9 +59,13 @@ export function useHeadline(): (tx: TxRecord) => string {
       const token = erc20Of(i.asset, i.chainId);
       if (!token) {
         const sym = chain?.nativeAsset.symbol ?? '';
-        return `Send ${formatUnits(i.amount, chain?.nativeAsset.decimals ?? 18, 8)} ${sym}`;
+        const decimals = chain?.nativeAsset.decimals ?? 18;
+        return `Send ${formatUnits(i.amount, decimals, decimals)} ${sym}`;
       }
       const name = labeler(token, i.chainId).label ?? `token ${token.slice(0, 6)}…`;
+      const metadata = tokenStore.find(i.asset);
+      if (metadata)
+        return `Send ${formatUnits(i.amount, metadata.decimals, metadata.decimals)} ${metadata.symbol} · ${token.slice(0, 6)}…`;
       return `Send ${i.amount} base units of ${name}`;
     }
     if (i.kind === 'contractCall') {
@@ -124,9 +131,12 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
   const sim = (tx.simulation ?? null) as Simulation | null;
   const recipient = i.kind === 'transfer' || i.kind === 'contractCall' ? i.to : null;
   const unknownRecipient = recipient ? labeler(recipient, i.chainId).source === 'none' : false;
-  const call = decodeCalldata(tx.unsigned?.dataHex ?? '');
+  const evm = tx.unsigned && 'dataHex' in tx.unsigned ? tx.unsigned : null;
+  const solana = tx.unsigned && 'recentBlockhash' in tx.unsigned ? tx.unsigned : null;
+  const cosmos = tx.unsigned && 'timeoutHeight' in tx.unsigned ? tx.unsigned : null;
+  const call = decodeCalldata(evm?.dataHex ?? '');
   const native = chain?.nativeAsset;
-  const maxFee = tx.unsigned && BigInt(tx.unsigned.maxFeePerGas) * BigInt(tx.unsigned.gasLimit);
+  const maxFee = evm ? BigInt(evm.maxFeePerGas) * BigInt(evm.gasLimit) : undefined;
 
   const approve = async () => {
     setWorking(true);
@@ -163,14 +173,43 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
         </Row>
       )}
       <DecodedLine call={call} chainId={i.chainId} />
+      {cosmos && (
+        <p className="text-[11px] text-muted">
+          One native bank transfer · expires after block {cosmos.timeoutHeight}. If the sequence
+          changes, propose again.
+        </p>
+      )}
+      {cosmos && native && (
+        <Row label="fee">
+          <span className="font-mono text-[11px] text-muted">
+            {formatUnits(cosmos.feeAmount, native.decimals, native.decimals)} {native.symbol}
+          </span>
+        </Row>
+      )}
+      {solana && (
+        <p className="text-[11px] text-muted">
+          One System Program transfer · valid through block height {solana.lastValidBlockHeight}. If
+          expired, propose again.
+        </p>
+      )}
+      {solana && sim && native && (
+        <Row label="fee">
+          <span className="font-mono text-[11px] text-muted">
+            {formatUnits(sim.fee.amount, native.decimals, native.decimals)} {native.symbol}{' '}
+            estimated
+          </span>
+        </Row>
+      )}
       {sim && (
         <Row label="changes">
           <ul className="flex flex-col font-mono text-[11px]">
             {sim.assetDeltas.map((d, n) => (
               <li key={n} className={d.amount.startsWith('-') ? 'text-ink' : 'text-ok'}>
                 {d.assetRef === `${i.chainId}:native` && native
-                  ? `${d.amount.startsWith('-') ? '−' : '+'}${formatUnits(d.amount.replace('-', ''), native.decimals, 8)} ${native.symbol}`
-                  : `${d.amount} · ${d.assetRef.split(':').slice(-1)[0]}`}
+                  ? `${d.amount.startsWith('-') ? '−' : '+'}${formatUnits(d.amount.replace('-', ''), native.decimals, native.decimals)} ${native.symbol}`
+                  : tokenStore.find(d.assetRef)
+                    ? `${formatUnits(d.amount, tokenStore.find(d.assetRef)!.decimals, tokenStore.find(d.assetRef)!.decimals)} ${tokenStore.find(d.assetRef)!.symbol}`
+                    : `${d.amount} · ${d.assetRef.split(':').slice(-1)[0]}`}
               </li>
             ))}
           </ul>
@@ -311,8 +350,11 @@ export function ApprovalRailBody() {
         <p className="text-[11px] text-faint">
           {policies === 0
             ? 'No policies yet: the core still checks every transaction against its intent and needs your passphrase to sign.'
-            : `${policies} polic${policies === 1 ? 'y' : 'ies'} enforced by the core at proposal and again at signing.`}
+            : `${policies} polic${policies === 1 ? 'y' : 'ies'} evaluated by the core at proposal and again at signing.`}
         </p>
+        <Button size="sm" variant="ghost" onClick={() => shell.openDialog({ kind: 'policies' })}>
+          Edit policies…
+        </Button>
       </div>
     </div>
   );

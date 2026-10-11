@@ -133,6 +133,9 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
             >
               {balances.loading ? 'refreshing…' : 'refresh'}
             </Button>
+            <Button size="sm" variant="ghost" onClick={() => shell.openDialog({ kind: 'tokens' })}>
+              Tokens…
+            </Button>
           </div>
         </header>
         {accounts.length === 0 ? (
@@ -293,11 +296,13 @@ function HoldingRow({
 
   let balance: string;
   let balanceClass = 'text-ink';
-  let asset = info?.nativeAsset.symbol ?? '—';
+  const asset = row.native
+    ? (info?.nativeAsset.symbol ?? '—')
+    : (holding?.metadata?.symbol ?? holding?.assetRef ?? '—');
   if (!info) {
     balance = 'no adapter';
     balanceClass = 'text-faint';
-  } else if (entry?.error) {
+  } else if (entry?.error || holding?.error) {
     balance = 'unavailable';
     balanceClass = 'text-faint';
   } else if (loading || !holding) {
@@ -306,8 +311,9 @@ function HoldingRow({
   } else if (row.native) {
     balance = formatUnits(holding.amount, info.nativeAsset.decimals);
   } else {
-    balance = holding.amount;
-    asset = holding.assetRef;
+    balance = holding.metadata
+      ? formatUnits(holding.amount, holding.metadata.decimals)
+      : holding.amount;
   }
 
   return (
@@ -343,13 +349,18 @@ function HoldingRow({
       </td>
       <td
         className={`max-w-[18ch] truncate px-2 ${row.native ? 'text-muted' : 'font-mono text-[11px] text-faint'}`}
-        title={asset}
+        title={holding?.assetRef ?? asset}
       >
         {asset}
       </td>
-      <td className={`px-2 text-right font-mono tabular-nums ${balanceClass}`} title={entry?.error}>
+      <td
+        className={`px-2 text-right font-mono tabular-nums ${balanceClass}`}
+        title={holding?.error ?? entry?.error}
+      >
         {balance}
-        {!row.native && <span className="ml-1 text-[10px] text-faint">base</span>}
+        {!row.native && !holding?.metadata && (
+          <span className="ml-1 text-[10px] text-faint">base</span>
+        )}
       </td>
       <td className="px-2 whitespace-nowrap">
         <Verified holding={holding} info={info} native={row.native} />
@@ -386,9 +397,9 @@ function Verified({
       </span>
     );
   }
-  // Only the native asset has known decimals; other denoms stay in base units.
-  const other =
-    native && info
+  const other = holding.metadata
+    ? `${formatUnits(p.other, holding.metadata.decimals)} ${holding.metadata.symbol}`
+    : native && info
       ? `${formatUnits(p.other, info.nativeAsset.decimals)} ${info.nativeAsset.symbol}`
       : `${p.other} base`;
   return (

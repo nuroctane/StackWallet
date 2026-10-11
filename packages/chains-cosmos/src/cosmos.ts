@@ -1,8 +1,7 @@
 /**
  * Cosmos SDK adapter. Addresses are derived offline from the catalog's bech32
- * prefix and address algorithm; reads go to LCD (REST) endpoints. Message
- * encoding, SIGN_MODE_DIRECT sign docs and IBC channel discovery arrive with
- * cosmjs and chain-registry in a later phase.
+ * prefix and address algorithm; reads go to LCD (REST) endpoints. Native Osmosis
+ * Testnet sends use public DIRECT codecs while the vault signs in Rust.
  */
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -17,6 +16,8 @@ import {
   secp256k1Uncompressed,
   withCrossCheck,
   withFailover,
+  fetchJson,
+  HttpError,
   type Address,
   type BaseAdapterOptions,
   type ChainInfo,
@@ -108,6 +109,7 @@ export function assetRefForDenom(chainId: ChainId, baseDenom: string, denom: str
 }
 
 export type CosmosAdapterOptions = BaseAdapterOptions;
+export type LcdQuery = <T>(path: string, schema: z.ZodType<T>, body?: unknown) => Promise<T | null>;
 
 /** LCDs answer "not found" with 400 or 404 depending on SDK version. */
 const NOT_FOUND: readonly number[] = [404, 400];
@@ -155,6 +157,45 @@ export class CosmosAdapter extends BaseAdapter<'cosmos'> {
 
   private get<T>(chainId: ChainId, path: string, schema: z.ZodType<T>): Promise<T | null> {
     return withFailover(this.rpc, chainId, this.rest(path, schema, NOT_FOUND));
+  }
+
+  /** Dependent signing-flow reads stay on one chain-verified endpoint. */
+  withChain<T>(chainId: ChainId, query: (lcd: LcdQuery) => Promise<T>): Promise<T> {
+    this.requireChain(chainId);
+    return withFailover(this.rpc, chainId, async (url) => {
+      const lcd: LcdQuery = async (path, schema, body) => {
+        const opts = this.fetchOptions();
+        const fetchImpl = this.fetchImpl ?? fetch;
+        try {
+          const raw = await fetchJson(`${url.replace(/\/$/, '')}${path}`, {
+            ...opts,
+            fetch: async (input, init) => {
+              const response = await fetchImpl(input, {
+                ...init,
+                ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+              });
+              return response;
+            },
+          });
+          return schema.parse(raw);
+        } catch (err) {
+          if (body === undefined && err instanceof HttpError && err.status === 404) return null;
+          throw err;
+        }
+      };
+      const info = await lcd(
+        '/cosmos/base/tendermint/v1beta1/node_info',
+        z.object({
+          default_node_info: z.object({ network: z.string().max(64) }),
+        }),
+      );
+      if (!info || `cosmos:${info.default_node_info.network}` !== chainId)
+        throw new Error('LCD network does not match the requested Cosmos chain');
+      return query(lcd);
+    });
   }
 
   async getBalances(addr: Address, chainId: ChainId): Promise<Holding[]> {

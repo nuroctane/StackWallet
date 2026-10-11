@@ -19,6 +19,9 @@ import {
 import { NewWalletDialog } from './shell/NewWalletDialog.js';
 import { RevealDialog } from './shell/RevealDialog.js';
 import { SendDialog } from './shell/SendDialog.js';
+import { PoliciesDialog } from './shell/PoliciesDialog.js';
+import { TokensDialog } from './shell/TokensDialog.js';
+import { tokenStore } from './store/tokens.js';
 import { ImportSetDialog, TransferSetDialog } from './shell/SetTransferDialogs.js';
 import { StatusBar } from './shell/StatusBar.js';
 import { ThemeStudio } from './shell/ThemeStudio.js';
@@ -69,6 +72,15 @@ function buildRegistry(): { registry: ChainRegistry; error?: string } {
 
 export function App() {
   const { registry, error: registryError } = useMemo(buildRegistry, []);
+  useEffect(() => {
+    if (registryError) return;
+    const unconfigure = tokenStore.configure(registry);
+    const unsubscribe = tokenStore.subscribe(() => balanceCache.invalidate());
+    return () => {
+      unconfigure();
+      unsubscribe();
+    };
+  }, [registry, registryError]);
   return (
     <RegistryContext value={registry}>
       <ToastProvider>
@@ -115,6 +127,7 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       [devicesQuarantinedKey, 'Saved device table'],
       [workspaceQuarantinedKey, 'Saved workspace'],
       [themeQuarantinedKey, 'Saved theme'],
+      [tokenStore.quarantinedKey, 'Tracked tokens'],
     ];
     for (const [key, what] of quarantined) {
       if (key) toasts.push(`${what} could not be read; kept under ${key}`, 'danger');
@@ -273,6 +286,8 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       />
       <VaultDialog open={dialog?.kind === 'vault'} onClose={closeDialog} />
       <ThemeStudio open={dialog?.kind === 'theme'} onClose={closeDialog} />
+      <PoliciesDialog open={dialog?.kind === 'policies'} onClose={closeDialog} />
+      <TokensDialog open={dialog?.kind === 'tokens'} onClose={closeDialog} />
       <NewWalletDialog
         open={dialog?.kind === 'newWallet'}
         folderId={dialog?.kind === 'newWallet' ? dialog.folderId : undefined}

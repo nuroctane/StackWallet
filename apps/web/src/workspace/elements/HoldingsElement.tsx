@@ -61,6 +61,18 @@ export function buildHoldingRows(
     };
     if (e?.error) row.error = e.error;
     rows.push(row);
+    for (const holding of e?.holdings ?? []) {
+      if (holding.assetRef === info?.nativeAsset.ref) continue;
+      rows.push({
+        ...row,
+        key: `${a.id}|${holding.assetRef}`,
+        amount: holding.amount,
+        symbol: holding.metadata?.symbol ?? holding.assetRef,
+        decimals: holding.metadata?.decimals ?? 0,
+        zero: !holding.error && /^0*$/.test(holding.amount),
+        ...(holding.error ? { error: holding.error } : {}),
+      });
+    }
   }
   return rows.sort((x, y) => x.wallet.localeCompare(y.wallet) || x.chain.localeCompare(y.chain));
 }

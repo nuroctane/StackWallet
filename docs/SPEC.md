@@ -612,9 +612,43 @@ an approval screen reads as names, not hex:
    the transaction record (`tx-ledger`); a record whose state disagrees with its log, or a save
    that rewrites a row, is refused. The client prepares (nonce, EIP-1559 fees, gas estimate,
    simulation), broadcasts, and reports network outcomes, which the lifecycle graph gates.
-   Remaining for the phase: a policy editor in the UI, ERC-20 balances and token decimals in
-   history headlines, and threshold (`tss`) EVM signing once CGGMP lands (1b).
+   The policy editor (Approvals → Edit policies, or search → policies) saves all rule types to
+   the sealed ledger and records changes in its audit chain. Policies currently apply vault-wide;
+   folder/wallet inheritance is not yet wired. Enforce mode gates proposal and signing; audit-only
+   approver requirements do not gate signing. Spend caps fail closed for transfers without a USD
+   valuation, which sends do not yet supply. Requirements involving another device fail closed
+   until distributed approval collection lands.
+   Tracked ERC-20 contracts (Wallet → Tokens, or search → tracked tokens) are read with
+   `balanceOf` through the same RPC cross-check as native balances. Token failures remain visible
+   on their own rows. Contract symbols and decimals are bounded, untrusted display metadata,
+   persisted locally with chain and contract identity; send lookup also tracks the token.
+   Holdings, approval deltas and history headlines display decimal amounts when metadata is
+   available and fall back to explicit base units otherwise. This is explicit tracking, not
+   automatic token discovery. Remaining: threshold (`tss`) EVM signing once CGGMP lands (1b),
+   policy inheritance and distributed approvals, USD valuation, and a funded testnet confirmation.
 4. **Chains**: Bitcoin (PSBT, Taproot via FROST secp256k1-tr), Solana, Cosmos; swaps per family.
+   First increment: single-key native SOL transfers on Devnet use the same core ledger, policy
+   evaluation, passphrase approval and audited history as EVM. The Rust core builds one legacy
+   System Program transfer from checked sender, recipient and integer lamports; no adapter-supplied
+   instructions or extra signers are accepted. Ed25519 keys stay in the vault. The client verifies
+   RPC cluster genesis, fetches a blockhash and fee, simulates the exact message, and checks expiry
+   before approval. An expired message requires a new proposal and approval. Broadcast uncertainty
+   stays pending under the core's signature; polling waits for finality or finalized block-height
+   expiry, including after restart. Policies compare Solana destinations with case preserved.
+   Mainnet SOL signing remains disabled. SDK wire decoding, independent signature verification,
+   ledger persistence and failure/expiry fixtures are covered; the funded Devnet check is opt-in
+   (`STACKWALLET_DEVNET_SMOKE=1`).
+   Second increment: single-key native OSMO bank transfers on Osmosis Testnet (`osmo-test-5`).
+   The Rust core encodes one `MsgSend`, a DIRECT signer, a bounded fee and a timeout height;
+   it derives and checks the sender and signs the exact protobuf `SignDoc` inside the vault.
+   The client verifies the LCD chain, simulates the final message and fee, and rechecks account
+   number, sequence and timeout before approval. Broadcast uncertainty keeps the core's hash
+   pending. An unindexed transaction expires only after timeout when an account query pinned
+   to the observed block height proves its sequence unchanged; otherwise it remains pending.
+   Independent CosmJS decoding and signature verification cover the core wire format. Funded
+   Cosmos confirmation remains unverified, and mainnet signing is disabled in the core.
+   Remaining in this phase: Bitcoin signing, Solana FROST and Cosmos threshold ceremonies,
+   SPL/Token-2022 and versioned transactions, IBC and other Cosmos messages, and swaps per family.
 5. **Agent runtime**: providers, tools, run loop, grants, agent party.
 6. **Automations + scheduler**: triggers / actions, headless CLI as automation device.
 7. **Markets**: aggregation, registry, charts, portfolio analytics, alerts, and the market

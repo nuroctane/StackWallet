@@ -1,7 +1,6 @@
 /**
- * EVM adapter. Offline address work and read-only JSON-RPC queries are done
- * here directly; transaction building, decoding and simulation arrive with
- * viem in a later phase and slot into the `NotImplementedError` methods.
+ * EVM address work and read-only RPC queries. The checked send path lives in
+ * `send.ts` and the Rust core; generic adapter signing methods remain disabled.
  */
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
@@ -62,6 +61,24 @@ export function isValidEvmAddress(addr: string): boolean {
 export type EvmAdapterOptions = BaseAdapterOptions;
 
 export class EvmAdapter extends BaseAdapter<'evm'> {
+  private trackedTokens: { chainId: string; address: string; symbol: string; decimals: number }[] =
+    [];
+
+  setTrackedTokens(
+    tokens: { chainId: string; address: string; symbol: string; decimals: number }[],
+  ): void {
+    this.trackedTokens = z
+      .array(
+        z.object({
+          chainId: z.string().regex(/^eip155:\d+$/),
+          address: z.string().refine(isValidEvmAddress),
+          symbol: z.string().regex(/^[\x20-\x7e]{1,12}$/),
+          decimals: z.number().int().min(0).max(36),
+        }),
+      )
+      .max(100)
+      .parse(tokens);
+  }
   constructor(opts: EvmAdapterOptions = {}) {
     super('evm', opts);
   }
@@ -98,7 +115,49 @@ export class EvmAdapter extends BaseAdapter<'evm'> {
       this.jsonRpc('eth_getBalance', [addr, 'latest'], Wei),
       { equal: (a, b) => a === b, describe: (v) => v.toString() },
     );
-    return [nativeHolding(chain, value.toString(), provenance)];
+    const tokens: Holding[] = [];
+    // Bound RPC concurrency: tracking many contracts must not flood public endpoints.
+    for (const token of this.trackedTokens.filter((t) => t.chainId === chainId)) {
+      const assetRef = `${chainId}:erc20:${token.address.toLowerCase()}`;
+      const metadata = { symbol: token.symbol, decimals: token.decimals };
+      try {
+        const balance = await withCrossCheck(
+          this.rpc,
+          chainId,
+          this.jsonRpc(
+            'eth_call',
+            [
+              {
+                to: token.address,
+                data: `0x70a08231${addr.slice(2).toLowerCase().padStart(64, '0')}`,
+              },
+              'latest',
+            ],
+            z
+              .string()
+              .regex(/^0x[0-9a-fA-F]{64}$/)
+              .transform((h) => BigInt(h)),
+          ),
+          { equal: (a, b) => a === b, describe: (v) => v.toString() },
+        );
+        tokens.push({
+          assetRef,
+          amount: balance.value.toString(),
+          provenance: balance.provenance,
+          updatedAtMs: Date.now(),
+          metadata,
+        });
+      } catch (err) {
+        tokens.push({
+          assetRef,
+          amount: '0',
+          updatedAtMs: Date.now(),
+          metadata,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return [nativeHolding(chain, value.toString(), provenance), ...tokens];
   }
 
   async status(hash: TxHash, chainId: ChainId): Promise<TxStatus> {

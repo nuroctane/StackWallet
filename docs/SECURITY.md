@@ -105,6 +105,13 @@ other paired devices (their own core)
 - Market data requests reveal which assets you look at to the data provider; the UI says so in
   Settings and lets you choose providers per family or disable them.
 - RPC requests reveal your addresses to the RPC provider; users can supply their own endpoints.
+- Tracking an ERC-20 sends its contract address and account addresses to those same RPC pools.
+  Tracked contracts and their untrusted display metadata are stored locally as public metadata;
+  they never decide signing authorization. Unavailable token reads are not presented as zero.
+- The policy editor writes through the core's sealed, audited ledger. Rules apply vault-wide
+  today, including at the approval of already queued transactions. Audit-only approver rules
+  do not impose signing requirements. USD spend caps refuse unvalued sends and other-device
+  approver requirements refuse single-device signing rather than silently bypassing the rule.
 - Name lookups send each address to the ENS/Solana/Osmosis RPC pools and to a THORChain Midgard
   gateway; collectible lists send it to the chain's Blockscout instance or Solana RPC.
 - Every remote collectible image tells its host this device's IP address. The collectibles
@@ -131,6 +138,29 @@ Nothing below moves to mainnet funds until its gate passes.
 6. **Agent**: red-team prompt set (injection via token names, calldata, memos, tool results)
    must produce zero unflagged proposals outside policy.
 7. **Recovery**: device-loss drill documented and executed; share backup restore verified.
+
+Phase-four native SOL sends are restricted to Devnet in the core, not only in the UI. The core
+re-derives the fee payer, verifies chain/asset/destination/lamports against the intent, and constructs
+exactly one System Program transfer. Solana allowlists and denylists preserve base58 case. The RPC
+cluster check prevents accidental cross-cluster endpoints; it does not make RPC observations trusted
+chain proofs. Simulation and network outcomes still rely on public RPC, and malformed or imprecise
+responses fail closed. An unavailable expiry check refuses signing; an expired proposal cannot be
+approved again. Broadcast uncertainty reserves the spend until finality or observed expiry.
+The single-key Devnet increment does not satisfy the TSS testnet support gate above. Mainnet, SPL,
+arbitrary instructions and threshold SOL sends are not enabled by this increment.
+
+Native Cosmos signing is restricted to Osmosis Testnet in the core. The sender is derived from
+the vault key and checked against the intent; only one native bank transfer with bounded gas,
+fee and timeout is encoded. The core signs its own DIRECT `SignDoc`, never adapter-supplied
+protobuf bytes. Case and bech32 checksum rules are checked before signing. The pre-signing
+account number and sequence check requires matching height and account key in an ABCI response. These are
+LCD observations, not cryptographic chain proofs. Simulation failures remain visible to policy.
+Broadcast uncertainty reserves the spend. A missing transaction index cannot release it unless
+the timeout passed and a height-pinned account query still reports the original sequence; a
+changed sequence remains ambiguous. Unsupported account types and unproven reads fail closed.
+The single-key Cosmos increment has independent wire/signature tests but no verified funded
+confirmation and does not satisfy the TSS testnet support gate. Mainnet, IBC, staking, arbitrary
+messages and threshold Cosmos sends are not enabled.
 
 ## 7. Reporting
 

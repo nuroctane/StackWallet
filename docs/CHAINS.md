@@ -91,6 +91,14 @@ field arithmetic in `packages/chains/src/keys.ts`, so no curve library is needed
 
 ### EVM (`chains-evm`, viem)
 
+- Implemented sends use `prepareEvm` / `broadcastEvm` with the Rust core's checked EIP-1559
+  serialization and signing; the generic adapter signing stubs are still unsupported.
+- Balances include native assets and explicitly tracked ERC-20 contracts. `balanceOf(address)`
+  returns must be exactly one ABI word; both reads use RPC cross-checks and expose disagreement.
+  A token read failure produces an unavailable token row without hiding native balances.
+  No indexer or automatic token discovery is used. Symbols and decimals are read from the
+  contract, bounded (12 printable ASCII characters, 0–36 decimals), and treated as untrusted
+  display data. Chain and full contract address remain the token's identity.
 - Registry: chainlist-derived JSON bundled at build time plus user-added chains.
 - Addresses: keccak256 of the uncompressed key, EIP-55 checksum on output; validation accepts
   all-lower or all-upper hex and rejects mixed case with a bad checksum.
@@ -119,14 +127,55 @@ field arithmetic in `packages/chains/src/keys.ts`, so no curve library is needed
 
 ### Solana (`chains-solana`, @solana/kit)
 
+Current send coverage is single-key native SOL on Devnet only. `prepareSolana` produces a bounded
+legacy transfer and simulation for the core ledger; the core independently constructs the wire
+message and signs after policy re-evaluation and passphrase approval. The adapter does not receive
+key bytes. Every signing-flow RPC verifies `getGenesisHash` against the requested CAIP-2 cluster.
+RPC integer amounts outside JavaScript's exact range are refused. Simulation errors and transfers
+to executable or non-System-owned accounts appear in approval. The native message has no priority
+fee instruction; its fee preview comes from `getFeeForMessage`.
+
+Before approval, a stale blockhash expires the proposal. A broadcast timeout retains the core's
+signature as pending; finality polling decides confirmed/failed, and finalized height beyond the
+last valid height plus a missing signature in a history response at least as recent as the
+finalized slot decides expired. These dependent observations share one verified RPC endpoint.
+Restarted signed/broadcast records
+resume signature tracking without an automatic resend. `@solana/kit` is a pinned test dependency
+for independent wire decoding; runtime assembly is checked separately in Rust and TypeScript.
+Mainnet sends, TSS ceremonies, SPL, versioned messages and swaps remain disabled/unimplemented.
+The remaining bullets describe target coverage:
+
 - Versioned transactions, address lookup tables, compute budget and priority fee instructions.
 - SPL and Token-2022 (transfer fees, hooks surfaced as warnings). Associated token account
   creation folded into the intent's fee preview.
 - Simulation: `simulateTransaction` with account diffs for asset deltas.
 - Sighash: the serialized message bytes; Ed25519 via FROST.
-- Blockhash expiry handled by rebuilding the message before a stale ceremony resumes.
+- Blockhash expiry requires rebuilding, fresh policy evaluation and fresh approval before a
+  ceremony resumes; an old approval never authorizes a replacement message.
 
 ### Cosmos SDK (`chains-cosmos`, cosmjs, chain-registry)
+
+Current send coverage is single-key native `uosmo` bank transfers on Osmosis Testnet only.
+`prepareCosmos` checks the LCD's `node_info.network`, reads a funded BaseAccount, estimates gas
+and simulates the final bounded fee/message. The core independently encodes exactly one
+`MsgSend`, one secp256k1 DIRECT signer, one `uosmo` fee and a timeout height, then signs after
+policy re-evaluation and passphrase approval. Account numbers, sequences and amounts remain
+canonical uint64 strings; gas and timeout heights are bounded exact integers. Addresses must be
+canonical lowercase `osmo` bech32. Fees and gas are capped, and arbitrary messages, memos,
+fee grants and additional signers are not accepted. `cosmjs-types` supplies pinned public codecs;
+CosmJS cryptography is a test dependency for independent verification of the core signature.
+
+Before signing, a height-pinned account read must still match the prepared account number and
+sequence and the timeout must remain valid. The LCD's ABCI account-store query must return the
+requested height and account key in its JSON response; unavailable or mismatched observations
+refuse signing. This avoids relying on metadata headers that LCD CORS hides from browsers. Broadcast uses
+`BROADCAST_MODE_SYNC`. Uncertain responses keep the core transaction hash pending and restart
+resumes tracking without an automatic resend. An indexed positive-height result decides success
+or failure. A missing index entry alone never proves expiry: after timeout, an account observation
+pinned to the latest height must show the original sequence unchanged. An advanced sequence or
+an unavailable historical read leaves the spend reserved. These dependent reads share one
+verified LCD endpoint. Funded testnet confirmation is not yet verified. Mainnet and threshold
+sends remain disabled. The remaining bullets describe target coverage:
 
 - Chain metadata, denoms, gas prices and bech32 prefixes from chain-registry, bundled and
   user-extendable. Until then the catalog carries `bech32Prefix`, `baseDenom`, `gasPrice` and

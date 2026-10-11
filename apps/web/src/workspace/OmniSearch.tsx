@@ -148,6 +148,20 @@ function SearchBody({
         run: () => shell.openDialog({ kind: 'send' }),
       },
       {
+        id: 'a:policies',
+        type: 'action',
+        label: 'policies',
+        dim: 'edit vault-wide rules',
+        run: () => shell.openDialog({ kind: 'policies' }),
+      },
+      {
+        id: 'a:tokens',
+        type: 'action',
+        label: 'tracked tokens',
+        dim: 'ERC-20 balances and metadata',
+        run: () => shell.openDialog({ kind: 'tokens' }),
+      },
+      {
         id: 'a:importset',
         type: 'action',
         label: 'import set',

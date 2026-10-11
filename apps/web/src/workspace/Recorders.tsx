@@ -62,7 +62,13 @@ export function Recorders() {
 
   // Pending transactions are asked about until the chain gives a final answer.
   const { ledger } = useVaultView(vault);
-  const pending = ledger?.txs.filter((t) => t.state === 'pending') ?? [];
+  const pending =
+    ledger?.txs.filter(
+      (t) =>
+        t.state === 'pending' ||
+        ((t.intent.chainId.startsWith('solana:') || t.intent.chainId.startsWith('cosmos:')) &&
+          ['signed', 'broadcast'].includes(t.state)),
+    ) ?? [];
   const pendingKey = pending.map((t) => t.id).join('|');
   useEffect(() => {
     if (pendingKey === '') return;

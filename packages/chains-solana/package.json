@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@stackwallet/chains-solana",
   "version": "0.0.1",
   "private": true,
@@ -19,6 +19,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@solana/kit": "8.4.0",
     "typescript": "7.0.2",
     "vitest": "3.2.6"
   }

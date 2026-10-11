@@ -15,7 +15,7 @@ import {
   type ExposureChannel,
   type IdentityHandle,
   type IdentityInfo,
-  type EvmTx,
+  type LedgerUnsignedTx,
   type ImportedSet,
   type Ledger,
   type Policy,
@@ -267,7 +267,7 @@ export class VaultStore {
   txAttach(req: {
     txId: string;
     signer: Signer;
-    unsigned: EvmTx;
+    unsigned: LedgerUnsignedTx;
     simulation: unknown;
     simulationOk: boolean;
   }) {

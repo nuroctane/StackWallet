@@ -67,6 +67,34 @@ describe('EvmAdapter addresses', () => {
 });
 
 describe('EvmAdapter reads', () => {
+  it('reads tracked ERC-20 balances with cross-checks and isolates contract failures', async () => {
+    const contract = '0x' + 'ab'.repeat(20);
+    const bad = '0x' + 'cd'.repeat(20);
+    const evm = createEvmAdapter({
+      fetch: rpcFetch((method, params) => {
+        if (method === 'eth_getBalance') return '0x1';
+        const call = params[0] as { to: string; data: string };
+        expect(call.data).toBe(
+          `0x70a08231${EXPECTED_FOR_G.slice(2).toLowerCase().padStart(64, '0')}`,
+        );
+        return call.to === bad ? '0x' : '0x' + 1234567n.toString(16).padStart(64, '0');
+      }),
+    });
+    evm.setTrackedTokens([
+      { chainId: 'eip155:1', address: contract, symbol: 'TEST', decimals: 6 },
+      { chainId: 'eip155:1', address: bad, symbol: 'BAD', decimals: 18 },
+      { chainId: 'eip155:11155111', address: contract, symbol: 'OTHER', decimals: 6 },
+    ]);
+    const holdings = await evm.getBalances(EXPECTED_FOR_G, 'eip155:1');
+    expect(holdings).toHaveLength(3);
+    expect(holdings[0]?.amount).toBe('1');
+    expect(holdings[1]).toMatchObject({
+      amount: '1234567',
+      metadata: { symbol: 'TEST', decimals: 6 },
+      provenance: { kind: 'agreed' },
+    });
+    expect(holdings[2]?.error).toBeTruthy();
+  });
   it('reads the native balance via eth_getBalance', async () => {
     const seen: unknown[] = [];
     const evm = createEvmAdapter({

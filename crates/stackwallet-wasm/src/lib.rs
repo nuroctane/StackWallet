@@ -359,7 +359,7 @@ impl WasmVault {
             &mut self.inner,
             tx_id,
             serde_json::from_str(signer_json)?,
-            serde_json::from_str(unsigned_json)?,
+            serde_json::from_str::<ledger::UnsignedTx>(unsigned_json)?,
             serde_json::from_str(simulation_json)?,
             simulation_ok,
             device_id,

@@ -22,6 +22,26 @@ function source(impl: (addr: string, chainId: string) => Promise<Holding[]>): Ba
 const acct = { chainId: 'eip155:1', address: '0xabc' };
 
 describe('BalanceCache', () => {
+  it('discards an old token-list read and refreshes after invalidation', async () => {
+    const cache = new BalanceCache({ now: () => 1 });
+    let resolve!: (h: Holding[]) => void;
+    const src = source(
+      () =>
+        new Promise<Holding[]>((r) => {
+          resolve = r;
+        }),
+    );
+    const first = cache.ensure(src, acct);
+    await new Promise((r) => setTimeout(r, 0));
+    cache.invalidate();
+    resolve([{ assetRef: 'old', amount: '1', updatedAtMs: 1 }]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(cache.get(acct.chainId, acct.address)?.holdings).toEqual([]);
+    resolve([{ assetRef: 'new', amount: '2', updatedAtMs: 1 }]);
+    await first;
+    expect(src.calls).toBe(2);
+    expect(cache.get(acct.chainId, acct.address)?.holdings[0]?.assetRef).toBe('new');
+  });
   it('fetches once, dedupes concurrent callers and marks loading', async () => {
     let clock = 1_000;
     const cache = new BalanceCache({ now: () => clock, staleMs: 60_000 });

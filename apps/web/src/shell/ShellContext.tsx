@@ -8,6 +8,8 @@ export type ShellDialog =
   | { kind: 'move'; walletId: string }
   | { kind: 'vault' }
   | { kind: 'theme' }
+  | { kind: 'policies' }
+  | { kind: 'tokens' }
   | { kind: 'newWallet'; folderId?: string }
   | { kind: 'reveal'; walletId: string }
   | { kind: 'transferSet'; folderId: string }

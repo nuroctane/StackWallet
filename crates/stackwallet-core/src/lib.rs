@@ -17,6 +17,7 @@
 //! - [`store`]     SQLite persistence
 
 pub mod audit;
+pub mod cosmos;
 pub mod evm;
 pub mod hd;
 pub mod identity;
@@ -26,6 +27,7 @@ pub mod lifecycle;
 pub mod model;
 pub mod policy;
 pub mod provenance;
+pub mod solana;
 pub mod store;
 pub mod transfer;
 pub mod transport;

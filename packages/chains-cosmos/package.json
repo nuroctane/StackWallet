@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@stackwallet/chains-cosmos",
   "version": "0.0.1",
   "private": true,
@@ -16,9 +16,11 @@
     "@scure/base": "2.4.0",
     "@stackwallet/chains": "workspace:*",
     "@stackwallet/core-client": "workspace:*",
+    "cosmjs-types": "0.11.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@cosmjs/crypto": "0.39.0",
     "typescript": "7.0.2",
     "vitest": "3.2.6"
   }

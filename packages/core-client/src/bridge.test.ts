@@ -45,6 +45,36 @@ function deviceFrom(
 }
 
 describe.skipIf(!built)('wasm bridge against the built core', () => {
+  it('seals policy edits with an audit row and preserves them across lock and reopen', async () => {
+    const core = await load();
+    const vault = await core.createVault(PASS);
+    const policies = [
+      {
+        id: 'simulation',
+        name: 'Simulation required',
+        mode: 'enforce' as const,
+        rules: [{ rule: 'requireSimulationPass' as const }],
+      },
+    ];
+    await vault.setPolicies(policies, 'device', 1);
+    const first = await vault.ledger();
+    expect(first.policies).toEqual(policies);
+    expect(first.audit).toHaveLength(1);
+    expect(first.audit[0]?.event).toBe('policyChanged');
+    const bytes = await vault.toBytes();
+    await vault.lock();
+    await expect(vault.setPolicies([], 'device', 2)).rejects.toThrow();
+    vault.free();
+    const reopened = await core.openVault(bytes);
+    await reopened.unlock(PASS);
+    expect((await reopened.ledger()).policies).toEqual(policies);
+    await reopened.setPolicies([{ ...policies[0]!, mode: 'audit' }], 'device', 3);
+    await reopened.setPolicies([], 'device', 4);
+    const final = await reopened.ledger();
+    expect(final.policies).toEqual([]);
+    expect(final.audit).toHaveLength(3);
+    reopened.free();
+  });
   it('answers the stateless calls', async () => {
     const c = await load();
     expect(await c.coreVersion()).toMatch(/^\d+\.\d+\.\d+/);

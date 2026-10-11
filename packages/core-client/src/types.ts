@@ -629,6 +629,31 @@ export const EvmTx = z.object({
 });
 export type EvmTx = z.infer<typeof EvmTx>;
 
+export const SolanaTx = z.strictObject({
+  chainId: z.literal('solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'),
+  from: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
+  to: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
+  lamports: Amount,
+  recentBlockhash: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
+  lastValidBlockHeight: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
+export type SolanaTx = z.infer<typeof SolanaTx>;
+export const CosmosTx = z.strictObject({
+  chainId: z.literal('cosmos:osmo-test-5'),
+  from: z.string().max(90),
+  to: z.string().max(90),
+  amount: Amount,
+  publicKeyHex: z.string().regex(/^(02|03)[0-9a-f]{64}$/),
+  accountNumber: Amount,
+  sequence: Amount,
+  gasLimit: z.number().int().positive().max(1_000_000),
+  feeAmount: Amount,
+  timeoutHeight: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
+export type CosmosTx = z.infer<typeof CosmosTx>;
+export const LedgerUnsignedTx = z.union([EvmTx, SolanaTx, CosmosTx]);
+export type LedgerUnsignedTx = z.infer<typeof LedgerUnsignedTx>;
+
 export const Signer = z.object({ walletId: z.string(), path: z.string(), address: z.string() });
 export type Signer = z.infer<typeof Signer>;
 
@@ -637,7 +662,7 @@ export const TxRecord = z.object({
   intent: TxIntent,
   state: TxState,
   signer: Signer.nullable(),
-  unsigned: EvmTx.nullable(),
+  unsigned: LedgerUnsignedTx.nullable(),
   simulation: z.unknown().nullable(),
   simulationOk: z.boolean().nullable(),
   decision: Decision.nullable(),

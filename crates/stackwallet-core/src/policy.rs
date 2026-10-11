@@ -132,13 +132,15 @@ impl Decision {
     }
 }
 
-fn norm(addr: &str) -> String {
-    addr.trim().to_ascii_lowercase()
-}
-
-fn contains_addr(list: &[String], addr: &str) -> bool {
-    let a = norm(addr);
-    list.iter().any(|x| norm(x) == a)
+fn contains_addr(list: &[String], addr: &str, chain: &str) -> bool {
+    // Only EVM hex addresses are case-insensitive. Base58 keys encode case as data.
+    list.iter().any(|x| {
+        if chain.starts_with("eip155:") {
+            x.trim().eq_ignore_ascii_case(addr.trim())
+        } else {
+            x.trim() == addr.trim()
+        }
+    })
 }
 
 fn check_rule(rule: &Rule, intent: &TxIntent, ctx: &PolicyContext) -> Result<(), String> {
@@ -162,7 +164,7 @@ fn check_rule(rule: &Rule, intent: &TxIntent, ctx: &PolicyContext) -> Result<(),
         }
         Rule::DestinationAllow { addresses } => {
             for d in intent.destinations() {
-                if !contains_addr(addresses, d) {
+                if !contains_addr(addresses, d, &intent.chain_id.0) {
                     return Err(format!("destination {d} is not on the allowlist"));
                 }
             }
@@ -170,7 +172,7 @@ fn check_rule(rule: &Rule, intent: &TxIntent, ctx: &PolicyContext) -> Result<(),
         }
         Rule::DestinationDeny { addresses } => {
             for d in intent.destinations() {
-                if contains_addr(addresses, d) {
+                if contains_addr(addresses, d, &intent.chain_id.0) {
                     return Err(format!("destination {d} is denylisted"));
                 }
             }
@@ -254,10 +256,12 @@ pub fn evaluate(policies: &[Policy], intent: &TxIntent, ctx: &PolicyContext) -> 
                 at_least,
             } = rule
             {
-                approvers.push(ApproverRequirement {
-                    device_ids: device_ids.clone(),
-                    at_least: *at_least,
-                });
+                if policy.mode == PolicyMode::Enforce {
+                    approvers.push(ApproverRequirement {
+                        device_ids: device_ids.clone(),
+                        at_least: *at_least,
+                    });
+                }
             }
             if let Err(reason) = check_rule(rule, intent, ctx) {
                 let tagged = format!("[{}] {reason}", policy.name);
@@ -323,6 +327,28 @@ mod tests {
     fn allow_with_no_policies() {
         let d = evaluate(&[], &intent("0xA", 1), &PolicyContext::default());
         assert!(d.is_allowed());
+    }
+
+    #[test]
+    fn solana_address_lists_preserve_base58_case() {
+        let mut i = intent("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", 1);
+        i.chain_id = ChainId(crate::solana::DEVNET.into());
+        let list = vec![policy(
+            "allow",
+            PolicyMode::Enforce,
+            vec![Rule::DestinationAllow {
+                addresses: vec!["tokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA".into()],
+            }],
+        )];
+        assert!(!evaluate(&list, &i, &PolicyContext::default()).is_allowed());
+        let list = vec![policy(
+            "allow",
+            PolicyMode::Enforce,
+            vec![Rule::DestinationAllow {
+                addresses: i.destinations().iter().map(|d| d.to_string()).collect(),
+            }],
+        )];
+        assert!(evaluate(&list, &i, &PolicyContext::default()).is_allowed());
     }
 
     #[test]
@@ -456,6 +482,24 @@ mod tests {
             Decision::Allow {
                 required_approvers, ..
             } => assert_eq!(required_approvers.len(), 2),
+            other => panic!("expected allow, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn audit_approvers_do_not_gate_signing() {
+        let policies = vec![policy(
+            "observe",
+            PolicyMode::Audit,
+            vec![Rule::RequireApprovers {
+                device_ids: vec!["other".into()],
+                at_least: 1,
+            }],
+        )];
+        match evaluate(&policies, &intent("0xA", 1), &PolicyContext::default()) {
+            Decision::Allow {
+                required_approvers, ..
+            } => assert!(required_approvers.is_empty()),
             other => panic!("expected allow, got {other:?}"),
         }
     }

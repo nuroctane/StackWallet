@@ -30,11 +30,10 @@ export function isValidSolanaAddress(addr: string): boolean {
   }
 }
 
-// Lamport balances come back as JSON numbers; values beyond 2^53 would lose
-// precision in JSON.parse itself, which is acceptable for a single account.
+// Unsafe JSON numbers cannot become trustworthy base-unit amounts after parsing.
 const BalanceResult = z.object({
   context: z.object({ slot: z.number().int() }),
-  value: z.number().int().nonnegative(),
+  value: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 });
 
 const SignatureStatuses = z.object({
@@ -51,6 +50,7 @@ const SignatureStatuses = z.object({
 });
 
 export type SolanaAdapterOptions = BaseAdapterOptions;
+type ClusterRpc = <T>(method: string, params: unknown[], schema: z.ZodType<T>) => Promise<T>;
 
 export class SolanaAdapter extends BaseAdapter<'solana'> {
   constructor(opts: SolanaAdapterOptions = {}) {
@@ -77,6 +77,27 @@ export class SolanaAdapter extends BaseAdapter<'solana'> {
     schema: z.ZodType<T>,
   ): Promise<T> {
     return withFailover(this.rpc, chainId, this.jsonRpc(method, params, schema));
+  }
+
+  /** Verify the endpoint's cluster before a signing-flow RPC touches it. */
+  clusterCall<T>(
+    chainId: ChainId,
+    method: string,
+    params: unknown[],
+    schema: z.ZodType<T>,
+  ): Promise<T> {
+    return this.withCluster(chainId, (rpc) => rpc(method, params, schema));
+  }
+
+  /** Keep dependent observations on one verified endpoint during failover. */
+  withCluster<T>(chainId: ChainId, query: (rpc: ClusterRpc) => Promise<T>): Promise<T> {
+    this.requireChain(chainId);
+    return withFailover(this.rpc, chainId, async (url) => {
+      const genesis = await this.jsonRpc('getGenesisHash', [], z.string().max(44))(url);
+      if (!isValidSolanaAddress(genesis) || `solana:${genesis.slice(0, 32)}` !== chainId)
+        throw new Error('RPC genesis hash does not match this Solana cluster');
+      return query((method, params, schema) => this.jsonRpc(method, params, schema)(url));
+    });
   }
 
   async getBalances(addr: Address, chainId: ChainId): Promise<Holding[]> {

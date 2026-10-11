@@ -15,7 +15,7 @@ import {
   Decision,
   Device,
   DeviceId,
-  EvmTx,
+  LedgerUnsignedTx,
   ExposureChannel,
   Frame,
   ImportedSet,
@@ -132,7 +132,7 @@ export interface VaultHandle {
   txAttach(req: {
     txId: string;
     signer: Signer;
-    unsigned: EvmTx;
+    unsigned: LedgerUnsignedTx;
     simulation: unknown;
     simulationOk: boolean;
     deviceId: string;
@@ -474,7 +474,7 @@ class WasmVaultHandle implements VaultHandle {
   async txAttach(req: {
     txId: string;
     signer: Signer;
-    unsigned: EvmTx;
+    unsigned: LedgerUnsignedTx;
     simulation: unknown;
     simulationOk: boolean;
     deviceId: string;
@@ -483,7 +483,7 @@ class WasmVaultHandle implements VaultHandle {
     const out = this.raw.tx_attach(
       req.txId,
       JSON.stringify(Signer.parse(req.signer)),
-      JSON.stringify(EvmTx.parse(req.unsigned)),
+      JSON.stringify(LedgerUnsignedTx.parse(req.unsigned)),
       JSON.stringify(req.simulation ?? null),
       req.simulationOk,
       req.deviceId,

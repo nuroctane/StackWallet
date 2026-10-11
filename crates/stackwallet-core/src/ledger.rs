@@ -14,12 +14,14 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::audit::{Actor, AuditChain, AuditEntry, AuditEvent};
+use crate::cosmos::{self, CosmosTx};
 use crate::evm::{self, EvmTx};
 use crate::intent::TxIntent;
 use crate::lifecycle::TxState;
 use crate::model::Curve;
 use crate::policy::{self, Decision, Policy, PolicyContext, Window};
 use crate::provenance;
+use crate::solana::{self, SolanaTx};
 use crate::vault::{EncryptedVault, Secret, Vault};
 use crate::{CoreError, Result};
 
@@ -45,6 +47,46 @@ pub struct Signer {
     pub address: String,
 }
 
+/// Untagged to keep previously sealed EVM ledgers readable without a migration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum UnsignedTx {
+    Evm(EvmTx),
+    Solana(SolanaTx),
+    Cosmos(CosmosTx),
+}
+
+impl From<EvmTx> for UnsignedTx {
+    fn from(tx: EvmTx) -> Self {
+        Self::Evm(tx)
+    }
+}
+impl From<SolanaTx> for UnsignedTx {
+    fn from(tx: SolanaTx) -> Self {
+        Self::Solana(tx)
+    }
+}
+impl From<CosmosTx> for UnsignedTx {
+    fn from(tx: CosmosTx) -> Self {
+        Self::Cosmos(tx)
+    }
+}
+impl UnsignedTx {
+    fn check_matches_intent(&self, intent: &TxIntent) -> Result<()> {
+        match self {
+            Self::Evm(tx) => evm::check_matches_intent(tx, intent),
+            Self::Solana(tx) => tx.check_matches_intent(intent),
+            Self::Cosmos(tx) => tx.check_matches_intent(intent),
+        }
+    }
+    fn curve(&self) -> Curve {
+        match self {
+            Self::Evm(_) | Self::Cosmos(_) => Curve::Secp256k1,
+            Self::Solana(_) => Curve::Ed25519,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TxRecord {
@@ -52,7 +94,7 @@ pub struct TxRecord {
     pub intent: TxIntent,
     pub state: TxState,
     pub signer: Option<Signer>,
-    pub unsigned: Option<EvmTx>,
+    pub unsigned: Option<UnsignedTx>,
     /// Adapter simulation, kept verbatim for the approval screen.
     pub simulation: Option<serde_json::Value>,
     pub simulation_ok: Option<bool>,
@@ -236,7 +278,13 @@ pub fn propose(
     if intent.id.is_empty() || intent.id.len() > 128 {
         return Err(invalid("bad transaction id"));
     }
-    evm::eip155_number(&intent.chain_id.0)?;
+    if intent.chain_id.0.starts_with("solana:") {
+        solana::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("cosmos:") {
+        cosmos::check_chain(&intent.chain_id.0)?;
+    } else {
+        evm::eip155_number(&intent.chain_id.0)?;
+    }
     let mut ledger = load_ledger(vault)?;
     if ledger.txs.iter().any(|t| t.id == intent.id) {
         return Err(invalid(format!("transaction {} exists", intent.id)));
@@ -272,11 +320,19 @@ pub fn propose(
     Ok(rec)
 }
 
-fn signer_address(vault: &EncryptedVault, signer: &Signer) -> Result<String> {
-    let key = provenance::signing_key(vault, &signer.wallet_id, Curve::Secp256k1, &signer.path)?;
-    Ok(evm::checksum_address(&evm::address_from_public(
-        &key.public,
-    )?))
+fn signer_address(
+    vault: &EncryptedVault,
+    signer: &Signer,
+    unsigned: &UnsignedTx,
+) -> Result<String> {
+    let key = provenance::signing_key(vault, &signer.wallet_id, unsigned.curve(), &signer.path)?;
+    match unsigned {
+        UnsignedTx::Solana(_) => Ok(bs58::encode(&key.public).into_string()),
+        UnsignedTx::Cosmos(_) => cosmos::address(&key.public),
+        UnsignedTx::Evm(_) => Ok(evm::checksum_address(&evm::address_from_public(
+            &key.public,
+        )?)),
+    }
 }
 
 /// Attach the adapter's unsigned transaction and simulation (Draft → Simulated).
@@ -287,20 +343,26 @@ pub fn attach(
     vault: &mut EncryptedVault,
     tx_id: &str,
     signer: Signer,
-    unsigned: EvmTx,
+    unsigned: impl Into<UnsignedTx>,
     simulation: serde_json::Value,
     simulation_ok: bool,
     device_id: &str,
     now_ms: i64,
 ) -> Result<TxRecord> {
+    let unsigned = unsigned.into();
     let mut ledger = load_ledger(vault)?;
     let i = ledger.index(tx_id)?;
     if signer.wallet_id != ledger.txs[i].intent.wallet_id {
         return Err(invalid("signer wallet differs from the intent"));
     }
-    evm::check_matches_intent(&unsigned, &ledger.txs[i].intent)?;
-    let derived = signer_address(vault, &signer)?;
-    if evm::parse_address(&derived)? != evm::parse_address(&signer.address)? {
+    unsigned.check_matches_intent(&ledger.txs[i].intent)?;
+    let derived = signer_address(vault, &signer, &unsigned)?;
+    let matches = match &unsigned {
+        UnsignedTx::Evm(_) => evm::parse_address(&derived)? == evm::parse_address(&signer.address)?,
+        UnsignedTx::Solana(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Cosmos(tx) => derived == signer.address && tx.from == derived,
+    };
+    if !matches {
         return Err(invalid(format!(
             "the key at {} is {derived}, not {}",
             signer.path, signer.address
@@ -402,19 +464,25 @@ pub fn approve(
             .as_ref()
             .ok_or_else(|| invalid("no unsigned transaction"))?;
         let signer = t.signer.as_ref().ok_or_else(|| invalid("no signer"))?;
-        evm::check_matches_intent(unsigned, &t.intent)?;
+        unsigned.check_matches_intent(&t.intent)?;
         let key =
-            provenance::signing_key(vault, &signer.wallet_id, Curve::Secp256k1, &signer.path)?;
-        let addr = evm::checksum_address(&evm::address_from_public(&key.public)?);
+            provenance::signing_key(vault, &signer.wallet_id, unsigned.curve(), &signer.path)?;
+        let addr = signer_address(vault, signer, unsigned)?;
         if addr != signer.address {
             return Err(invalid("signer key changed since the proposal"));
         }
-        let (v, r, s) = evm::sign_digest(key.secret(), &unsigned.sighash()?)?;
-        let raw = unsigned.encode_signed(v, &r, &s)?;
-        Ok((
-            format!("0x{}", hex::encode(&raw)),
-            format!("0x{}", hex::encode(evm::keccak256(&raw))),
-        ))
+        match unsigned {
+            UnsignedTx::Evm(tx) => {
+                let (v, r, s) = evm::sign_digest(key.secret(), &tx.sighash()?)?;
+                let raw = tx.encode_signed(v, &r, &s)?;
+                Ok((
+                    format!("0x{}", hex::encode(&raw)),
+                    format!("0x{}", hex::encode(evm::keccak256(&raw))),
+                ))
+            }
+            UnsignedTx::Solana(tx) => tx.sign(key.secret()),
+            UnsignedTx::Cosmos(tx) => tx.sign(key.secret()),
+        }
     })();
     match signed {
         Ok((raw, hash)) => {
@@ -471,16 +539,27 @@ pub fn report(
             | TxState::Failed
             | TxState::Dropped
             | TxState::Replaced
+            | TxState::Expired
     ) {
         return Err(invalid(format!("{to:?} is not a network outcome")));
     }
     let mut ledger = load_ledger(vault)?;
     let i = ledger.index(tx_id)?;
-    if ledger.txs[i].raw_signed_hex.is_none() {
+    if to == TxState::Expired
+        && !matches!(
+            ledger.txs[i].unsigned,
+            Some(UnsignedTx::Solana(_) | UnsignedTx::Cosmos(_))
+        )
+    {
+        return Err(invalid(
+            "network expiry requires a transaction with a bounded lifetime",
+        ));
+    }
+    if ledger.txs[i].raw_signed_hex.is_none() && to != TxState::Expired {
         return Err(invalid("nothing was signed for this transaction"));
     }
     ledger.step(i, to, note.clone(), &device_actor(device_id), now_ms)?;
-    if to == TxState::Failed {
+    if matches!(to, TxState::Failed | TxState::Expired) {
         ledger.txs[i].error = note;
     }
     let out = ledger.txs[i].clone();
@@ -605,6 +684,137 @@ mod tests {
         evaluate(v, id, "d", 3).unwrap()
     }
 
+    fn solana_awaiting(v: &mut EncryptedVault, id: &str) -> TxRecord {
+        let path = "m/44'/501'/0'/0'";
+        let key = provenance::signing_key(v, "w", Curve::Ed25519, path).unwrap();
+        let from = bs58::encode(hex::decode(key.public_hex()).unwrap()).into_string();
+        let to = bs58::encode([8; 32]).into_string();
+        let mut i = intent(id, &to, "1000");
+        i.chain_id = ChainId(solana::DEVNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", solana::DEVNET)),
+            amount: Amount("1000".into()),
+        };
+        propose(v, i, "d", 1).unwrap();
+        attach(
+            v,
+            id,
+            Signer {
+                wallet_id: "w".into(),
+                path: path.into(),
+                address: from.clone(),
+            },
+            SolanaTx {
+                chain_id: solana::DEVNET.into(),
+                from,
+                to,
+                lamports: "1000".into(),
+                recent_blockhash: bs58::encode([9; 32]).into_string(),
+                last_valid_block_height: 100,
+            },
+            serde_json::json!({"ok": true}),
+            true,
+            "d",
+            2,
+        )
+        .unwrap();
+        evaluate(v, id, "d", 3).unwrap()
+    }
+
+    #[test]
+    fn solana_lifecycle_expiry_and_failure_are_audited() {
+        let mut v = vault();
+        let t = solana_awaiting(&mut v, "sol");
+        assert_eq!(t.state, TxState::Awaiting);
+        assert!(approve(&mut v, "sol", &Secret::new(b"wrong".to_vec()), "d", 4).is_err());
+        let signed = approve(&mut v, "sol", &pw(), "d", 4).unwrap();
+        assert_eq!(signed.state, TxState::Signed);
+        let raw = hex::decode(signed.raw_signed_hex.unwrap().trim_start_matches("0x")).unwrap();
+        assert_eq!(raw.len(), 215);
+        let key =
+            ed25519_dalek::VerifyingKey::from_bytes(&raw[69..101].try_into().unwrap()).unwrap();
+        key.verify_strict(
+            &raw[65..],
+            &ed25519_dalek::Signature::from_slice(&raw[1..65]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            bs58::encode(&raw[1..65]).into_string(),
+            signed.hash.unwrap()
+        );
+        report(&mut v, "sol", TxState::Broadcast, None, "d", 5).unwrap();
+        report(&mut v, "sol", TxState::Pending, None, "d", 6).unwrap();
+        report(
+            &mut v,
+            "sol",
+            TxState::Failed,
+            Some("on-chain failure".into()),
+            "d",
+            7,
+        )
+        .unwrap();
+        solana_awaiting(&mut v, "expired");
+        let expired = report(
+            &mut v,
+            "expired",
+            TxState::Expired,
+            Some("blockhash expired".into()),
+            "d",
+            8,
+        )
+        .unwrap();
+        assert!(expired.raw_signed_hex.is_none());
+        assert!(approve(&mut v, "expired", &pw(), "d", 9).is_err());
+        let ledger = load_ledger(&v).unwrap();
+        ledger.validate().unwrap();
+        assert_eq!(
+            ledger.audit.last().unwrap().event,
+            AuditEvent::TxTransition {
+                tx_id: "expired".into(),
+                from: TxState::Awaiting,
+                to: TxState::Expired,
+                note: Some("blockhash expired".into()),
+            }
+        );
+        let bytes = v.to_bytes().unwrap();
+        let mut reopened = EncryptedVault::from_bytes(&bytes).unwrap();
+        reopened.unlock(&pw()).unwrap();
+        assert_eq!(load_ledger(&reopened).unwrap(), ledger);
+    }
+
+    #[test]
+    fn solana_policy_rechecks_and_legacy_evm_payloads_survive() {
+        let mut v = vault();
+        let sol = solana_awaiting(&mut v, "sol");
+        set_policies(
+            &mut v,
+            vec![Policy {
+                id: "deny-sol".into(),
+                name: "Deny Solana".into(),
+                mode: PolicyMode::Enforce,
+                rules: vec![Rule::ChainAllow {
+                    chain_ids: vec![ChainId("eip155:11155111".into())],
+                }],
+            }],
+            "d",
+            4,
+        )
+        .unwrap();
+        assert_eq!(
+            approve(&mut v, "sol", &pw(), "d", 5).unwrap().state,
+            TxState::Rejected
+        );
+        let legacy = unsigned(TO, "1000");
+        let json = serde_json::to_value(&legacy).unwrap();
+        let decoded: UnsignedTx = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), json);
+        assert_eq!(
+            serde_json::from_value::<TxRecord>(serde_json::to_value(&sol).unwrap()).unwrap(),
+            sol
+        );
+    }
+
     #[test]
     fn full_lifecycle_is_audited_and_signed_by_the_core() {
         let mut v = vault();
@@ -638,6 +848,76 @@ mod tests {
             states,
             vec![Simulated, Evaluated, Awaiting, Signing, Signed, Broadcast, Pending, Confirmed]
         );
+    }
+
+    #[test]
+    fn cosmos_expiry_is_audited_and_does_not_change_legacy_lifetimes() {
+        let mut v = vault();
+        to_awaiting(&mut v, "evm");
+        assert!(report(&mut v, "evm", TxState::Expired, None, "d", 4).is_err());
+        let path = "m/44'/118'/0'/0/0";
+        let key = provenance::signing_key(&v, "w", Curve::Secp256k1, path).unwrap();
+        let from = cosmos::address(&key.public).unwrap();
+        let other =
+            provenance::signing_key(&v, "w", Curve::Secp256k1, "m/44'/118'/0'/0/1").unwrap();
+        let to = cosmos::address(&other.public).unwrap();
+        let unsigned = CosmosTx {
+            chain_id: cosmos::TESTNET.into(),
+            from: from.clone(),
+            to: to.clone(),
+            amount: "1000".into(),
+            public_key_hex: key.public_hex(),
+            account_number: "42".into(),
+            sequence: "0".into(),
+            gas_limit: 100000,
+            fee_amount: "2500".into(),
+            timeout_height: 123,
+        };
+        let mut i = intent("cosmos", &to, "1000");
+        i.chain_id = ChainId(cosmos::TESTNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to,
+            asset: AssetRef(format!("{}:native", cosmos::TESTNET)),
+            amount: Amount("1000".into()),
+        };
+        propose(&mut v, i, "d", 5).unwrap();
+        attach(
+            &mut v,
+            "cosmos",
+            Signer {
+                wallet_id: "w".into(),
+                path: path.into(),
+                address: from,
+            },
+            unsigned,
+            serde_json::json!({"ok":true}),
+            true,
+            "d",
+            6,
+        )
+        .unwrap();
+        evaluate(&mut v, "cosmos", "d", 7).unwrap();
+        assert_eq!(
+            approve(&mut v, "cosmos", &pw(), "d", 8).unwrap().state,
+            TxState::Signed
+        );
+        report(&mut v, "cosmos", TxState::Broadcast, None, "d", 9).unwrap();
+        report(&mut v, "cosmos", TxState::Pending, None, "d", 10).unwrap();
+        assert_eq!(
+            report(
+                &mut v,
+                "cosmos",
+                TxState::Expired,
+                Some("timeout".into()),
+                "d",
+                11
+            )
+            .unwrap()
+            .state,
+            TxState::Expired
+        );
+        assert!(approve(&mut v, "cosmos", &pw(), "d", 12).is_err());
+        load_ledger(&v).unwrap().validate().unwrap();
     }
 
     #[test]

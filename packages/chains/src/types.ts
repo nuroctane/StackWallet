@@ -70,6 +70,9 @@ export interface Holding {
   amount: Amount;
   updatedAtMs: number;
   provenance?: HoldingProvenance;
+  /** Token metadata is untrusted display data; the contract address remains the identity. */
+  metadata?: { symbol: string; decimals: number };
+  error?: string;
 }
 
 export interface TxRecord {

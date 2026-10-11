@@ -3,6 +3,7 @@ import type { Account } from '@stackwallet/core-client';
 import type { ChainRegistry, Holding } from '@stackwallet/chains';
 
 import { useRegistry } from './RegistryContext.js';
+import { useTokens } from './tokens.js';
 
 export const BALANCE_STALE_MS = 60_000;
 
@@ -30,6 +31,7 @@ export class BalanceCache {
   private readonly listeners = new Set<() => void>();
   private readonly now: () => number;
   private readonly staleMs: number;
+  private generation = 0;
 
   constructor(options: { now?: () => number; staleMs?: number } = {}) {
     this.now = options.now ?? (() => Date.now());
@@ -47,6 +49,12 @@ export class BalanceCache {
 
   get(chainId: string, address: string): BalanceEntry | undefined {
     return this.snapshot.get(balanceKey(chainId, address));
+  }
+
+  invalidate(): void {
+    this.generation++;
+    this.snapshot = new Map();
+    for (const l of this.listeners) l();
   }
 
   isStale(key: string): boolean {
@@ -85,6 +93,7 @@ export class BalanceCache {
     if (!options.force && !this.isStale(key)) return Promise.resolve();
 
     const prev = this.snapshot.get(key);
+    const generation = this.generation;
     this.set(key, {
       holdings: prev?.holdings ?? [],
       fetchedAtMs: prev?.fetchedAtMs ?? 0,
@@ -97,17 +106,20 @@ export class BalanceCache {
       try {
         const adapter = source.adapterFor(account.chainId);
         const holdings = await adapter.getBalances(account.address, account.chainId);
-        this.set(key, { holdings, fetchedAtMs: this.now(), loading: false });
+        if (generation === this.generation)
+          this.set(key, { holdings, fetchedAtMs: this.now(), loading: false });
       } catch (err) {
-        this.set(key, {
-          holdings: prev?.holdings ?? [],
-          fetchedAtMs: this.now(),
-          error: errorMessage(err),
-          loading: false,
-        });
+        if (generation === this.generation)
+          this.set(key, {
+            holdings: prev?.holdings ?? [],
+            fetchedAtMs: this.now(),
+            error: errorMessage(err),
+            loading: false,
+          });
       } finally {
         this.inflight.delete(key);
       }
+      if (generation !== this.generation) await this.ensure(source, account);
     });
     this.inflight.set(key, run);
     return run;
@@ -135,6 +147,7 @@ export interface BalancesView {
 
 export function useBalances(accounts: readonly Account[]): BalancesView {
   const registry = useRegistry();
+  const tokens = useTokens();
   const snapshot = useSyncExternalStore(
     balanceCache.subscribe,
     balanceCache.getSnapshot,
@@ -151,7 +164,7 @@ export function useBalances(accounts: readonly Account[]): BalancesView {
     const id = setInterval(tick, BALANCE_STALE_MS);
     return () => clearInterval(id);
     // `keys` stands in for `accounts`, whose array identity changes on every render.
-  }, [keys, registry]);
+  }, [keys, registry, tokens]);
 
   const refresh = useCallback(() => balanceCache.refresh(registry, accounts), [keys, registry]);
 

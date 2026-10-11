@@ -1,5 +1,7 @@
-import { useId, useMemo, useState, type FormEvent } from 'react';
+import { useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { isValidEvmAddress, tokenInfo, type EvmAdapter } from '@stackwallet/chains-evm';
+import { SOLANA_DEVNET, isValidSolanaAddress } from '@stackwallet/chains-solana';
+import { COSMOS_TESTNET, isValidCosmosAddress } from '@stackwallet/chains-cosmos';
 import type { TxRecord } from '@stackwallet/core-client';
 import { Button, Dialog, Field, Input, LoadingWord, Select } from '@stackwallet/ui';
 
@@ -10,12 +12,13 @@ import { parseUnits } from '../lib/format.js';
 import { useDirectory } from '../store/persist.js';
 import { useRegistry } from '../store/RegistryContext.js';
 import { proposeSend } from '../store/txs.js';
+import { tokenStore } from '../store/tokens.js';
 import { AddressLabel } from './AddressLabel.js';
 import { useShell } from './ShellContext.js';
 import { useWalletLabel } from './WalletName.js';
 
 /**
- * Propose a transfer from a single-key EVM account. Nothing is signed here:
+ * Propose a transfer from a supported single-key account. Nothing is signed here:
  * the proposal goes through the core (intent check, policy) and lands in the
  * approval queue, where signing needs the passphrase again.
  */
@@ -68,7 +71,12 @@ function SendForm({
   const accounts = useMemo(() => {
     const single = new Set(state.wallets.filter((w) => w.kind === 'single').map((w) => w.id));
     return state.accounts.filter(
-      (a) => a.family === 'evm' && single.has(a.walletId) && a.derivationPath,
+      (a) =>
+        (a.family === 'evm' ||
+          (a.family === 'solana' && a.chainId === SOLANA_DEVNET) ||
+          (a.family === 'cosmos' && a.chainId === COSMOS_TESTNET)) &&
+        single.has(a.walletId) &&
+        a.derivationPath,
     );
   }, [state]);
   const [accountId, setAccountId] = useState(
@@ -81,6 +89,7 @@ function SendForm({
   const [assetKind, setAssetKind] = useState<'native' | 'token'>('native');
   const [token, setToken] = useState('');
   const [tokenMeta, setTokenMeta] = useState<{ symbol: string; decimals: number } | null>(null);
+  const tokenLookup = useRef(0);
   const [amount, setAmount] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
@@ -89,8 +98,7 @@ function SendForm({
   if (accounts.length === 0) {
     return (
       <p className="p-4 text-[12px] text-faint">
-        No single-key EVM account yet. Create a wallet with an EVM chain (Sepolia works for a first
-        test) and it appears here.
+        Create a single-key wallet with an EVM chain, Solana Devnet or Osmosis Testnet to send here.
       </p>
     );
   }
@@ -98,18 +106,37 @@ function SendForm({
   const decimals =
     assetKind === 'native' ? (chain?.nativeAsset.decimals ?? 18) : tokenMeta?.decimals;
   const symbol = assetKind === 'native' ? (chain?.nativeAsset.symbol ?? '') : tokenMeta?.symbol;
-  const toValid = isValidEvmAddress(to.trim());
+  const toValid =
+    account?.family === 'solana'
+      ? isValidSolanaAddress(to.trim())
+      : account?.family === 'cosmos'
+        ? isValidCosmosAddress(to.trim(), 'osmo') && to.trim() === to.trim().toLowerCase()
+        : isValidEvmAddress(to.trim());
   const units = decimals === undefined ? null : parseUnits(amount, decimals);
+  const exceedsLamports =
+    (account?.family === 'solana' || account?.family === 'cosmos') &&
+    units !== null &&
+    BigInt(units) > 0xffffffffffffffffn;
   const canSubmit =
-    !working && toValid && units !== null && units !== '0' && (assetKind === 'native' || tokenMeta);
+    !working &&
+    toValid &&
+    units !== null &&
+    units !== '0' &&
+    !exceedsLamports &&
+    (assetKind === 'native' || tokenMeta);
 
   const lookupToken = async () => {
+    const generation = ++tokenLookup.current;
     setTokenMeta(null);
     if (!account || !isValidEvmAddress(token.trim())) return;
     try {
       const adapter = registry.adapterFor(account.chainId) as unknown as EvmAdapter;
-      setTokenMeta(await tokenInfo(adapter, account.chainId, token.trim()));
+      const metadata = await tokenInfo(adapter, account.chainId, token.trim());
+      if (generation !== tokenLookup.current) return;
+      tokenStore.track({ chainId: account.chainId, address: token.trim(), ...metadata });
+      setTokenMeta(metadata);
     } catch (err) {
+      if (generation !== tokenLookup.current) return;
       setError(`Not a token on this chain: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
@@ -165,7 +192,17 @@ function SendForm({
   return (
     <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-4 p-4">
       <Field label="From" htmlFor={ids.from}>
-        <Select id={ids.from} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+        <Select
+          id={ids.from}
+          value={accountId}
+          disabled={working}
+          onChange={(e) => {
+            ++tokenLookup.current;
+            setTokenMeta(null);
+            setAssetKind('native');
+            setAccountId(e.target.value);
+          }}
+        >
           {accounts.map((a) => {
             const w = state.wallets.find((x) => x.id === a.walletId)!;
             return (
@@ -189,13 +226,28 @@ function SendForm({
       <Field
         label="To"
         htmlFor={ids.to}
-        error={to.trim() !== '' && !toValid ? 'Not a valid EVM address (checksum included)' : null}
+        error={
+          to.trim() !== '' && !toValid
+            ? account?.family === 'solana'
+              ? 'Not a valid Solana public key'
+              : account?.family === 'cosmos'
+                ? 'Not a lowercase osmo address'
+                : 'Not a valid EVM address (checksum included)'
+            : null
+        }
       >
         <Input
           id={ids.to}
           value={to}
+          disabled={working}
           onChange={(e) => setTo(e.target.value)}
-          placeholder="0x…"
+          placeholder={
+            account?.family === 'solana'
+              ? 'Solana public key…'
+              : account?.family === 'cosmos'
+                ? 'osmo1…'
+                : '0x…'
+          }
           spellCheck={false}
           autoComplete="off"
         />
@@ -209,12 +261,25 @@ function SendForm({
         <Select
           id={ids.asset}
           value={assetKind}
+          disabled={working}
           onChange={(e) => setAssetKind(e.target.value as 'native' | 'token')}
         >
           <option value="native">{chain?.nativeAsset.symbol ?? 'native'}</option>
-          <option value="token">ERC-20 token…</option>
+          {account?.family === 'evm' && <option value="token">ERC-20 token…</option>}
         </Select>
       </Field>
+      {account?.family === 'solana' && (
+        <p className="text-[11px] text-faint">
+          Devnet SOL only. Approval expires with the blockhash; an expired transfer needs a fresh
+          proposal.
+        </p>
+      )}
+      {account?.family === 'cosmos' && (
+        <p className="text-[11px] text-faint">
+          Osmosis Testnet native transfers only. A changed account sequence or expired timeout needs
+          a fresh proposal.
+        </p>
+      )}
       {assetKind === 'token' && (
         <Field
           label="Token contract"
@@ -224,7 +289,12 @@ function SendForm({
           <Input
             id={ids.token}
             value={token}
-            onChange={(e) => setToken(e.target.value)}
+            disabled={working}
+            onChange={(e) => {
+              ++tokenLookup.current;
+              setTokenMeta(null);
+              setToken(e.target.value);
+            }}
             onBlur={() => void lookupToken()}
             placeholder="0x…"
             spellCheck={false}
@@ -234,11 +304,18 @@ function SendForm({
       <Field
         label={`Amount${symbol ? ` (${symbol})` : ''}`}
         htmlFor={ids.amount}
-        error={amount !== '' && units === null ? 'Not an amount this asset can hold' : null}
+        error={
+          exceedsLamports
+            ? 'Amount exceeds the transfer base-unit limit'
+            : amount !== '' && units === null
+              ? 'Not an amount this asset can hold'
+              : null
+        }
       >
         <Input
           id={ids.amount}
           value={amount}
+          disabled={working}
           inputMode="decimal"
           onChange={(e) => setAmount(e.target.value)}
           placeholder="0.0"
