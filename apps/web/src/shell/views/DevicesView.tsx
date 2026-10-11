@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
   decodePairingOffer,
-  encodePairingOffer,
   isPairingOfferExpired,
   PAIRING_OFFER_PREFIX,
   PairingOfferError,
@@ -22,8 +21,10 @@ import {
   useToasts,
 } from '@stackwallet/ui';
 
-import { vault } from '../../core/bridge.js';
+import { pairing, vault } from '../../core/bridge.js';
+import { usePairing, type ScannerState } from '../../core/pairing.js';
 import { useVaultView } from '../../core/vault.js';
+import { RTC_PREFIX, splitPairingText } from '../../core/webrtc.js';
 import { relativeTime } from '../../lib/format.js';
 import { devices, sortedDevices, useDevices, type LocalDevice } from '../../store/devices.js';
 import { useShell } from '../ShellContext.js';
@@ -31,14 +32,21 @@ import { QrCode } from './QrCode.js';
 
 /**
  * The identity lives in the vault, so everything that signs needs it unlocked.
- * The handshake itself also needs a carrier the browser does not have yet;
- * every control that is blocked says which of the two it is waiting for.
+ * The handshake runs over a WebRTC data channel the two devices open by
+ * swapping pasted offers; every blocked control says which piece is missing.
  */
 const NO_IDENTITY_REASON = 'This browser has no device identity yet. Create a vault to mint one.';
 const LOCKED_REASON = "Unlock the vault to use this device's identity.";
-const NO_CARRIER_REASON =
-  'Pinning runs the pairing handshake over a channel to the other device; the browser carrier (WebRTC) is not wired yet.';
-const OFFER_TTL_MS = 10 * 60_000;
+const NO_WEBRTC_REASON =
+  'This browser has no WebRTC, so it cannot open a direct channel to another device.';
+const NO_RTC_IN_CODE_REASON =
+  'This code has no connection offer. Ask the other device to show a fresh pairing code and paste the whole thing.';
+/** Byte-mode capacity at ECC M; past it the QR encoder refuses and the paste path remains. */
+const QR_MAX_CHARS = 2_300;
+
+function hasWebRtc(): boolean {
+  return typeof RTCPeerConnection !== 'undefined';
+}
 
 const KIND_LABEL: Record<DeviceKind, string> = {
   desktop: 'desktop',
@@ -192,108 +200,199 @@ function ThisDeviceSection({ local }: { local: LocalDevice | null }) {
         <span className="text-faint">Noise static</span>
         <Fingerprint hex={local.noiseStaticHex} />
       </div>
-      <MyPairingCode local={local} unlocked={unlocked} />
+      <MyPairingCode unlocked={unlocked} />
     </section>
   );
 }
 
-/**
- * The offer another device scans to pair with this browser. The one-time code
- * comes from the core's CSPRNG and the offer is re-issued on demand; it is kept
- * only in component state, so closing the pane forgets it.
- */
-function MyPairingCode({ local, unlocked }: { local: LocalDevice; unlocked: boolean }) {
+/** One toast per pairing outcome; the toast API is not referentially stable across renders. */
+function usePairedToast(peer: Device | null): void {
   const toasts = useToasts();
-  const now = useNow();
-  const [offer, setOffer] = useState<{ offer: PairingOffer; text: string } | null>(null);
-  const [issuing, setIssuing] = useState(false);
-  const live = offer !== null && !isPairingOfferExpired(offer.offer, now);
-
-  const issue = async () => {
-    const core = vault.core;
-    if (!core) return;
-    setIssuing(true);
-    try {
-      const fresh: PairingOffer = {
-        version: 1,
-        deviceId: local.id,
-        deviceName: local.name,
-        kind: local.kind,
-        identityPubHex: local.identityPubHex,
-        noiseStaticHex: local.noiseStaticHex,
-        endpoints: [],
-        oneTimeCodeHex: await core.newPairingCodeHex(),
-        expiresAtMs: Date.now() + OFFER_TTL_MS,
-      };
-      setOffer({ offer: fresh, text: encodePairingOffer(fresh) });
-    } catch (err) {
-      toasts.push(err instanceof Error ? err.message : String(err), 'danger');
-    } finally {
-      setIssuing(false);
+  const announced = useRef<Device | null>(null);
+  useEffect(() => {
+    if (peer && announced.current !== peer) {
+      announced.current = peer;
+      toasts.push(`Paired with ${peer.name}`);
     }
-  };
+  }, [peer, toasts]);
+}
 
-  const copy = async () => {
-    if (!offer) return;
+function useCopy(): (text: string, what: string) => Promise<void> {
+  const toasts = useToasts();
+  return async (text, what) => {
     try {
-      await navigator.clipboard.writeText(offer.text);
-      toasts.push('Pairing code copied');
+      await navigator.clipboard.writeText(text);
+      toasts.push(`${what} copied`);
     } catch {
       toasts.push('Clipboard unavailable', 'danger');
     }
   };
+}
+
+/** A code block plus QR for text one device hands to another. */
+function HandoffCode({ text, qrLabel }: { text: string; qrLabel: string }) {
+  const tooLong = text.length > QR_MAX_CHARS;
+  return (
+    <div className="grid gap-4 min-[700px]:grid-cols-[auto_1fr]">
+      {tooLong ? (
+        <div className="flex w-[min(100%,220px)] items-center justify-center rounded-sw-sm border border-dashed border-edge p-3 text-center text-[11px] text-faint">
+          too long for a QR code; copy it instead
+        </div>
+      ) : (
+        <QrCode text={text} className="w-[min(100%,220px)]" />
+      )}
+      <div className="flex min-w-0 flex-col gap-2">
+        <span className="text-[11px] text-faint">{qrLabel}</span>
+        <code className="block max-h-32 overflow-auto rounded-sw-sm border border-edge bg-paper p-2 font-mono text-[11px] break-all text-muted select-all">
+          {text}
+        </code>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The code another device pastes to pair with this browser: a signed offer
+ * with a one-time secret plus a WebRTC offer, shown as one blob. The other
+ * device answers with its own blob, which is pasted back here to open the
+ * channel; the core then runs the handshake over it. State lives in the
+ * pairing controller so a pane closing mid-handshake does not abandon it.
+ */
+function MyPairingCode({ unlocked }: { unlocked: boolean }) {
+  const toasts = useToasts();
+  const copy = useCopy();
+  const now = useNow();
+  const { issuer } = usePairing(pairing);
+  const [answer, setAnswer] = useState('');
+  const [answerError, setAnswerError] = useState<string | null>(null);
+  usePairedToast(issuer.phase === 'paired' ? issuer.peer : null);
+
+  const canIssue = unlocked && hasWebRtc();
+  const issueBlocker = !unlocked ? LOCKED_REASON : !hasWebRtc() ? NO_WEBRTC_REASON : undefined;
+  const issue = () => {
+    setAnswer('');
+    setAnswerError(null);
+    void pairing.issue();
+  };
+  const connect = async () => {
+    setAnswerError(null);
+    try {
+      await pairing.acceptAnswer(answer);
+    } catch (err) {
+      setAnswerError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const expired = issuer.phase === 'live' && now >= issuer.offer.expiresAtMs;
+  const busy =
+    issuer.phase === 'issuing' || issuer.phase === 'connecting' || issuer.phase === 'handshaking';
 
   return (
     <div className="flex flex-col gap-3 border-t border-edge px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          disabled={!unlocked || issuing}
-          title={unlocked ? undefined : LOCKED_REASON}
-          onClick={() => void issue()}
-        >
-          {issuing ? (
+        <Button size="sm" disabled={!canIssue || busy} title={issueBlocker} onClick={issue}>
+          {issuer.phase === 'issuing' ? (
             <LoadingWord label="issuing" />
-          ) : live ? (
-            'New pairing code'
-          ) : (
+          ) : issuer.phase === 'idle' ? (
             'Show my pairing code'
+          ) : (
+            'New pairing code'
           )}
         </Button>
-        {live && (
+        {(issuer.phase === 'live' || issuer.phase === 'connecting') && (
           <>
-            <Button size="sm" variant="ghost" onClick={() => void copy()}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void copy(issuer.text, 'Pairing code')}
+            >
               Copy
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setOffer(null)}>
+            <Button size="sm" variant="ghost" onClick={() => pairing.resetIssuer()}>
               Hide
             </Button>
-            <span className="text-[11px] text-faint tabular-nums">
-              expires in {countdown(offer.offer.expiresAtMs - now)}
-            </span>
+            {expired ? (
+              <Badge>expired</Badge>
+            ) : (
+              <span className="text-[11px] text-faint tabular-nums">
+                expires in {countdown(issuer.offer.expiresAtMs - now)}
+              </span>
+            )}
           </>
         )}
-        {offer !== null && !live && <Badge>expired</Badge>}
+        {issuer.phase === 'connecting' && <LoadingWord label="connecting" />}
+        {issuer.phase === 'handshaking' && <LoadingWord label="handshaking" />}
+        {issuer.phase === 'paired' && (
+          <>
+            <Badge tone="ok">paired</Badge>
+            <Button size="sm" variant="ghost" onClick={() => pairing.resetIssuer()}>
+              Done
+            </Button>
+          </>
+        )}
+        {issuer.phase === 'failed' && <Badge tone="danger">failed</Badge>}
       </div>
-      {live ? (
-        <div className="grid gap-4 min-[700px]:grid-cols-[auto_1fr]">
-          <QrCode text={offer.text} className="w-[min(100%,220px)]" />
-          <div className="flex min-w-0 flex-col gap-2">
-            <code className="block max-h-32 overflow-auto rounded-sw-sm border border-edge bg-paper p-2 font-mono text-[11px] break-all text-muted select-all">
-              {offer.text}
-            </code>
-            <span className="text-[11px] text-faint">
-              No endpoint is advertised yet: another device can read this code, but it cannot reach
-              this browser until the WebRTC carrier is wired. The one-time code is single use and
-              dies with the countdown.
-            </span>
-          </div>
-        </div>
-      ) : (
+
+      {issuer.phase === 'idle' && (
         <span className="text-[11px] text-faint">
-          {unlocked
-            ? 'Issues a signed offer with a fresh one-time code for another device to scan or paste.'
-            : LOCKED_REASON}
+          {issueBlocker ??
+            'Issues a signed offer with a fresh one-time code and a direct connection offer for another device on this network to paste.'}
+        </span>
+      )}
+      {issuer.phase === 'failed' && <span className="text-[12px] text-danger">{issuer.error}</span>}
+      {issuer.phase === 'paired' && (
+        <span className="text-[12px] text-muted">
+          {issuer.peer.name} verified this device's keys and is now in the table.
+        </span>
+      )}
+      {(issuer.phase === 'live' || issuer.phase === 'connecting') && (
+        <>
+          <HandoffCode
+            text={issuer.text}
+            qrLabel="Scan or paste this on the other device. It carries public keys, a one-time secret that only this device can redeem, and a direct connection offer that is only reachable from this network."
+          />
+          <Field
+            label="Answer from the other device"
+            htmlFor="pairing-answer"
+            hint={
+              answerError
+                ? undefined
+                : 'Once the other device pastes the code above, it shows an answer. Paste it here to open the channel.'
+            }
+            error={answerError ?? undefined}
+          >
+            <div className="flex flex-col gap-2">
+              <textarea
+                id="pairing-answer"
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                placeholder={`${RTC_PREFIX}…`}
+                rows={3}
+                spellCheck={false}
+                autoComplete="off"
+                disabled={issuer.phase !== 'live' || expired}
+                aria-invalid={answerError !== null || undefined}
+                className={`w-full resize-y rounded-sw-sm border bg-paper px-3 py-2 font-mono text-[12px] break-all text-ink outline-none placeholder:text-faint focus:border-edge-strong disabled:opacity-60 ${
+                  answerError ? 'border-danger/70' : 'border-edge'
+                }`}
+              />
+              <Button
+                size="sm"
+                variant="primary"
+                className="self-start"
+                disabled={issuer.phase !== 'live' || expired || answer.trim() === ''}
+                title={expired ? 'This code has expired; issue a new one' : undefined}
+                onClick={() => void connect()}
+              >
+                Connect
+              </Button>
+            </div>
+          </Field>
+        </>
+      )}
+      {issuer.phase === 'handshaking' && (
+        <span className="text-[12px] text-muted">
+          Channel open. The core is verifying the other device's keys and the one-time code.
         </span>
       )}
     </div>
@@ -327,13 +426,13 @@ function PairedDevicesSection({ list }: { list: Device[] }) {
           description="Paste a pairing code below to preview a device. Pinning it needs a channel to that device."
         />
       ) : (
-        <div className="overflow-auto">
+        <div className="@container overflow-auto">
           <table className="w-full table-fixed border-collapse text-[12px]">
             <colgroup>
               <col />
               <col className="w-[5.5rem]" />
-              <col className="hidden w-[9rem] min-[700px]:table-column" />
-              <col className="hidden w-[11rem] min-[900px]:table-column" />
+              <col className="hidden w-[9rem] @min-[700px]:table-column" />
+              <col className="hidden w-[11rem] @min-[900px]:table-column" />
               <col className="w-[7.5rem]" />
               <col className="w-[9.5rem]" />
             </colgroup>
@@ -341,8 +440,8 @@ function PairedDevicesSection({ list }: { list: Device[] }) {
               <tr className="h-9 border-b border-edge">
                 <th className="px-4 text-left font-semibold">Name</th>
                 <th className="px-3 text-left font-semibold">Kind</th>
-                <th className="hidden px-3 text-left font-semibold min-[700px]:table-cell">Id</th>
-                <th className="hidden px-3 text-left font-semibold min-[900px]:table-cell">
+                <th className="hidden px-3 text-left font-semibold @min-[700px]:table-cell">Id</th>
+                <th className="hidden px-3 text-left font-semibold @min-[900px]:table-cell">
                   Endpoints
                 </th>
                 <th className="px-3 text-right font-semibold">Seen</th>
@@ -417,10 +516,10 @@ function DeviceRow({
       <td className="px-3">
         <Badge>{KIND_LABEL[device.kind]}</Badge>
       </td>
-      <td className="hidden px-3 font-mono text-muted min-[700px]:table-cell" title={device.id}>
+      <td className="hidden px-3 font-mono text-muted @min-[700px]:table-cell" title={device.id}>
         {shortId(device.id)}
       </td>
-      <td className="hidden px-3 font-mono text-muted min-[900px]:table-cell">
+      <td className="hidden px-3 font-mono text-muted @min-[900px]:table-cell">
         {device.endpoints.length === 0 ? (
           <span className="text-faint">—</span>
         ) : (
@@ -576,7 +675,27 @@ function previewOf(text: string): Preview {
 
 function AddDeviceSection({ local }: { local: LocalDevice | null }) {
   const [text, setText] = useState('');
-  const preview = useMemo(() => previewOf(text), [text]);
+  const parts = useMemo(() => splitPairingText(text), [text]);
+  const preview = useMemo(
+    () => previewOf(text.trim() === '' ? '' : (parts.pair ?? text)),
+    [text, parts],
+  );
+  const { scanner } = usePairing(pairing);
+
+  if (scanner.phase !== 'idle') {
+    return (
+      <section className="sw-elevated flex min-w-0 flex-col overflow-hidden">
+        <SectionHeader title="Add a device" meta={scannerMeta(scanner)} />
+        <ScannerProgress
+          state={scanner}
+          onDone={() => {
+            pairing.resetScanner();
+            setText('');
+          }}
+        />
+      </section>
+    );
+  }
 
   return (
     <section className="sw-elevated flex min-w-0 flex-col overflow-hidden">
@@ -607,7 +726,7 @@ function AddDeviceSection({ local }: { local: LocalDevice | null }) {
           />
         </Field>
         {preview.kind === 'offer' ? (
-          <OfferPreview offer={preview.offer} text={preview.text} local={local} />
+          <OfferPreview offer={preview.offer} text={preview.text} rtc={parts.rtc} local={local} />
         ) : (
           <div className="flex min-h-[8rem] items-center justify-center rounded-sw-sm border border-dashed border-edge px-4 text-center text-[12px] text-faint">
             {preview.kind === 'empty'
@@ -620,17 +739,102 @@ function AddDeviceSection({ local }: { local: LocalDevice | null }) {
   );
 }
 
+function scannerMeta(state: ScannerState): string {
+  switch (state.phase) {
+    case 'answering':
+      return `answering ${state.offer.deviceName}`;
+    case 'waiting':
+      return `waiting for ${state.offer.deviceName}`;
+    case 'handshaking':
+      return `handshaking with ${state.offer.deviceName}`;
+    case 'paired':
+      return `paired with ${state.peer.name}`;
+    case 'failed':
+      return 'failed';
+    default:
+      return '';
+  }
+}
+
+/** The scanner's side after "Pin device": answer out, channel up, core handshake, pinned. */
+function ScannerProgress({ state, onDone }: { state: ScannerState; onDone: () => void }) {
+  const copy = useCopy();
+  usePairedToast(state.phase === 'paired' ? state.peer : null);
+
+  return (
+    <div className="flex flex-col gap-3 px-4 py-3">
+      {state.phase === 'answering' && <LoadingWord label="building the answer" />}
+      {state.phase === 'waiting' && (
+        <>
+          <HandoffCode
+            text={state.answerText}
+            qrLabel={`Paste this answer on ${state.offer.deviceName}, under its pairing code. The channel opens as soon as it does.`}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => void copy(state.answerText, 'Answer')}
+            >
+              Copy answer
+            </Button>
+            <LoadingWord label="waiting for the channel" />
+            <span className="flex-1" />
+            <Button size="sm" variant="ghost" onClick={onDone}>
+              Cancel
+            </Button>
+          </div>
+        </>
+      )}
+      {state.phase === 'handshaking' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <LoadingWord label="handshaking" />
+          <span className="text-[12px] text-muted">
+            Channel open. The core is verifying {state.offer.deviceName}'s keys and redeeming the
+            one-time code.
+          </span>
+        </div>
+      )}
+      {state.phase === 'paired' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="ok">paired</Badge>
+          <span className="text-[12px] text-muted">
+            {state.peer.name} is pinned by the keys the core verified during the handshake.
+          </span>
+          <span className="flex-1" />
+          <Button size="sm" variant="primary" onClick={onDone}>
+            Done
+          </Button>
+        </div>
+      )}
+      {state.phase === 'failed' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="danger">failed</Badge>
+          <span className="text-[12px] text-danger">{state.error}</span>
+          <span className="flex-1" />
+          <Button size="sm" variant="ghost" onClick={onDone}>
+            Try again
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OfferPreview({
   offer,
   text,
+  rtc,
   local,
 }: {
   offer: PairingOffer;
   text: string;
+  rtc: string | undefined;
   local: LocalDevice | null;
 }) {
   const now = useNow();
   const expired = isPairingOfferExpired(offer, now);
+  const unlocked = useVaultView(vault).status.kind === 'unlocked';
   const [idMatches, setIdMatches] = useState<boolean | null>(null);
   const [showQr, setShowQr] = useState(true);
 
@@ -651,17 +855,25 @@ function OfferPreview({
 
   const isSelf = local !== null && local.id === offer.deviceId;
   const alreadyPinned = useDevices().devices.some((d) => d.id === offer.deviceId);
-  const blocker = isSelf
+  const blocker: string | null = isSelf
     ? 'This code was issued by this device'
     : alreadyPinned
       ? 'This device is already in the table'
       : idMatches === false
         ? 'Device id does not match the identity key; refuse this code'
-        : expired
-          ? 'This code has expired; ask for a fresh one'
-          : local === null
-            ? NO_IDENTITY_REASON
-            : NO_CARRIER_REASON;
+        : idMatches === null
+          ? 'Checking the device id against the identity key'
+          : expired
+            ? 'This code has expired; ask for a fresh one'
+            : local === null
+              ? NO_IDENTITY_REASON
+              : !unlocked
+                ? LOCKED_REASON
+                : !hasWebRtc()
+                  ? NO_WEBRTC_REASON
+                  : rtc === undefined
+                    ? NO_RTC_IN_CODE_REASON
+                    : null;
 
   return (
     <div className="flex min-w-0 flex-col gap-3 rounded-sw-sm border border-edge p-3">
@@ -715,10 +927,22 @@ function OfferPreview({
         </div>
       )}
       <div className="flex flex-col gap-1 border-t border-edge pt-3">
-        <Button size="sm" disabled className="self-start" title={blocker}>
+        <Button
+          size="sm"
+          variant={blocker === null ? 'primary' : 'default'}
+          disabled={blocker !== null}
+          className="self-start"
+          title={blocker ?? undefined}
+          onClick={() => {
+            if (rtc !== undefined) void pairing.connect(offer, rtc);
+          }}
+        >
           Pin device
         </Button>
-        <span className="text-[11px] text-faint">{blocker}</span>
+        <span className="text-[11px] text-faint">
+          {blocker ??
+            'Opens a direct channel to this device and runs the pairing handshake in the core; it is pinned only if its keys and the one-time code check out.'}
+        </span>
       </div>
     </div>
   );

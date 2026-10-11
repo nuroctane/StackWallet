@@ -7,7 +7,9 @@ import { useSyncExternalStore } from 'react';
 import { createCoreClient, type CoreClient, type IdentityInfo } from '@stackwallet/core-client';
 
 import { devices } from '../store/devices.js';
+import { PairingController } from './pairing.js';
 import { createVaultStore, describeDevice } from './vault.js';
+import { webRtcCarriers } from './webrtc.js';
 
 export interface CoreStatus {
   backend: CoreClient['backend'];
@@ -52,6 +54,15 @@ function onIdentity(info: IdentityInfo | null): void {
 }
 
 export const vault = createVaultStore({ onIdentity });
+
+/** One pairing controller per page: the handshake outlives whichever pane started it. */
+export const pairing = new PairingController({
+  core: () => vault.core,
+  identity: () => vault.identity(),
+  local: () => devices.getSnapshot().localDevice,
+  carriers: webRtcCarriers,
+  pin: (peer) => devices.pin(peer),
+});
 
 export const coreReady: Promise<CoreClient> = createCoreClient().then(async (client) => {
   if (client.backend === 'unavailable') {

@@ -477,6 +477,36 @@ account change / UTXO arrival)`, `manual`, `agent`.
 7. **Devices**: pair, revoke, re-share, backup and recovery drills.
 8. **Settings**: RPC endpoints, provider keys, unlock method, export/import encrypted vault.
 
+### 12.1 Provenance and exposure tags
+
+Every wallet and every directory set carries a provenance the UI never hides:
+
+- **Key exposed**: the moment a private key or seed created inside StackWallet is exported,
+  copied, or otherwise shown (clipboard, file, screen), the wallet gets a permanent red
+  `exposed` tag. The tag is written by the core in the same transaction as the export (audit
+  row included) and cannot be cleared; a wallet without it has never had its key leave the
+  vault. `tss` wallets have no complete key and can never acquire it.
+- **Imported**: a directory set that arrives from another instance (desktop to phone, PC to PC,
+  web to desktop, any direction) is tagged `imported` on every device it lands on, with the
+  source device and time. This is distinct from `exposed`: the transfer is encrypted and
+  authenticated, but the user must always see that a copy exists elsewhere. A set with
+  neither tag is local, never duplicated, and therefore has no backup; the UI says so.
+- **Transfer gate**: exporting or transferring a directory set requires the strongest unlock
+  factor configured for the instance (to get in) and again for the set (to take it out). Both
+  checks run in the core; the transfer itself rides the paired-device channel (§5.3) or an
+  encrypted file sealed to the receiving device's identity.
+
+### 12.2 Collectibles and names
+
+- **Collectibles** are first class on every chain family: the wallet view lists NFTs and other
+  collectibles for each account, with metadata fetched by the client (D3) and treated as
+  untrusted input (sanitized before it reaches the model or the UI).
+- **Name services**: when a wallet is opened or watched, the client resolves the names attached
+  to its addresses on every chain that has a name service (ENS, SNS, THORName, ICNS, and
+  others as adapters add them) and shows the resolved name as the wallet's display name in
+  place of the user tag or raw address. Reverse records are verified by forward resolution
+  before they are displayed; the raw address stays one click away.
+
 ## 13. Phases
 
 0. **Scaffold**: repo, workspaces, AGENTS.md, SPEC/SECURITY/DESIGN/CHAINS, CI, design tokens,
@@ -496,8 +526,11 @@ account change / UTXO arrival)`, `manual`, `agent`.
    a static `wasm/` asset (built by `wasm-pack` in CI and deploy), `CoreClient` exposes vault,
    identity and `Session` handles over it, the browser keeps its vault ciphertext locally
    (localStorage until the SQLite-WASM/OPFS store lands) and mints its device identity inside
-   it, and the Devices element issues signed pairing offers. The WebRTC carrier that lets
-   another device reach the browser follows in the same phase.
+   it, and the Devices element issues signed pairing offers. The WebRTC carrier is the browser's
+   `Carrier`: the pairing code carries the signed offer plus a `stackwallet-rtc:` SDP offer
+   (host candidates only, no ICE servers, so same-network reach and nothing further), the
+   scanner answers with its own `stackwallet-rtc:` blob pasted back, and the core's `Session`
+   runs the handshake over the data channel; both sides pin the peer the core vouched for.
 4. **Chains**: Bitcoin (PSBT, Taproot via FROST secp256k1-tr), Solana, Cosmos; swaps per family.
 5. **Agent runtime**: providers, tools, run loop, grants, agent party.
 6. **Automations + scheduler**: triggers / actions, headless CLI as automation device.
