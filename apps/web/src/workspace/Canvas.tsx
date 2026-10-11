@@ -148,10 +148,7 @@ export function Canvas() {
     maxRight = Math.max(maxRight, p.x + p.w);
     maxBottom = Math.max(maxBottom, p.y + p.h);
   }
-  const sizerStyle = {
-    width: Math.max(viewportSize.width, maxRight + MARGIN),
-    height: Math.max(viewportSize.height, maxBottom + MARGIN),
-  };
+  const sizerStyle = { width: maxRight + MARGIN, height: maxBottom + MARGIN };
   const viewportRect: Rect | undefined = fullscreen
     ? {
         x: scrollRef.current.x,

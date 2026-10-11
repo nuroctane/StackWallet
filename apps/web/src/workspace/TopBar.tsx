@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Kbd } from '@stackwallet/ui';
 
 import { vault } from '../core/bridge.js';
@@ -28,17 +29,7 @@ export function TopBar({ trayOpen, onToggleTray }: TopBarProps) {
     <header className="flex h-10 flex-none items-center gap-2 border-b border-edge bg-paper px-3 font-mono text-[12px] lowercase">
       <span className="mr-1 font-semibold tracking-[-0.01em] text-ink">stackwallet</span>
 
-      <button
-        type="button"
-        className={`${ghost} ${locked ? 'border-edge-strong text-ink' : ''}`}
-        aria-pressed={locked}
-        aria-label={locked ? 'unlock layout' : 'lock layout'}
-        title={locked ? 'layout locked (l)' : 'lock layout (l)'}
-        onClick={() => workspace.toggleLock()}
-      >
-        <PadlockIcon locked={locked} />
-        layout
-      </button>
+      <LayoutLockButton locked={locked} />
 
       <button
         type="button"
@@ -144,6 +135,66 @@ function VaultChip({ onOpen }: { onOpen: () => void }) {
       <span>{label}</span>
       <span aria-hidden className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
     </button>
+  );
+}
+
+/**
+ * State lives in the icon and the tint (closed and filled with the accent while
+ * locked, open and plain while unlocked); the hint names the action a press
+ * will take. Each toggle replays a short latch so the press registers.
+ */
+function LayoutLockButton({ locked }: { locked: boolean }) {
+  const first = useRef(true);
+  const [latch, setLatch] = useState(0);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    setLatch((n) => n + 1);
+  }, [locked]);
+  const action = locked ? 'unlock layout' : 'lock layout';
+  return (
+    <button
+      type="button"
+      className={`sw-pressable sw-lock-btn inline-flex h-7 items-center gap-1.5 rounded-sw-sm border px-2 text-[12px] lowercase ${
+        locked ? 'border-warm/60 bg-warm/14 text-warm' : 'border-transparent text-muted'
+      }`}
+      data-locked={locked ? '' : undefined}
+      aria-pressed={locked}
+      aria-label={action}
+      title={action}
+      onClick={() => workspace.toggleLock()}
+    >
+      <span key={latch} className={latch > 0 ? 'sw-latch inline-flex' : 'inline-flex'}>
+        <LockStateIcon locked={locked} />
+      </span>
+      layout
+    </button>
+  );
+}
+
+function LockStateIcon({ locked }: { locked: boolean }) {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="sw-lock-icon"
+      data-open={locked ? undefined : ''}
+    >
+      <g className="sw-shackle">
+        <path d="M4 5.5V4a2 2 0 0 1 4 0" />
+        <path className="sw-shackle-right" d="M8 4v1.5" />
+      </g>
+      <rect className="sw-lock-body" x="2.5" y="5.5" width="7" height="5" rx="1" />
+    </svg>
   );
 }
 

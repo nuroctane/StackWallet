@@ -35,6 +35,7 @@ import { Canvas } from './workspace/Canvas.js';
 import { ElementCatalogue } from './workspace/ElementCatalogue.js';
 import { registry as elementRegistry } from './workspace/elements/registry.js';
 import { LayoutTabs } from './workspace/LayoutTabs.js';
+import { LockSignal } from './workspace/LockSignal.js';
 import { OmniSearch } from './workspace/OmniSearch.js';
 import { workspace, workspaceQuarantinedKey } from './workspace/persist.js';
 import { Recorders } from './workspace/Recorders.js';
@@ -225,6 +226,7 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
           <ApprovalRailBody />
         </Tray>
         <Recorders />
+        <LockSignal />
 
         <OmniSearch
           open={searchOpen}

@@ -6,6 +6,14 @@
   min-height: 0;
   overflow: auto;
   background-color: var(--sw-paper);
+  /* The grid belongs to the scroll container, attached to its content, so it
+     always fills the viewport and still travels with the panes. One 32px tile
+     per cell instead of a repeating gradient across a canvas-sized layer. */
+  background-image:
+    linear-gradient(to right, var(--sw-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--sw-grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-attachment: local;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--sw-edge) transparent;
@@ -14,12 +22,14 @@
   overflow: hidden;
 }
 
-/* The grid lives on the sizer so it scrolls with the panes. */
+/* Sized to the panes plus a margin, never smaller than the viewport. The floor
+   is CSS rather than a measured pixel size: a measured floor feeds back through
+   the scrollbars (a 1px overshoot adds a bar, the bar shrinks the viewport, the
+   bar goes away) and the canvas flickers when the content just fits. */
 .sw-canvas-sizer {
   position: relative;
-  background-image:
-    repeating-linear-gradient(0deg, var(--sw-grid) 0 1px, transparent 1px 32px),
-    repeating-linear-gradient(90deg, var(--sw-grid) 0 1px, transparent 1px 32px);
+  min-width: 100%;
+  min-height: 100%;
 }
 
 .sw-pane {
@@ -226,6 +236,117 @@
       opacity: 0;
     }
     to {
+      opacity: 1;
+    }
+  }
+}
+
+/* Layout lock: the icon carries the state, the press carries a latch. */
+.sw-lock-icon .sw-shackle {
+  transition: transform 160ms var(--sw-ease);
+}
+.sw-lock-icon[data-open] .sw-shackle {
+  transform: translate(1.5px, -1.6px) rotate(14deg);
+  transform-origin: 4px 5.5px;
+}
+.sw-lock-icon .sw-lock-body {
+  fill: currentColor;
+  fill-opacity: 0.85;
+  transition: fill-opacity 160ms var(--sw-ease);
+}
+.sw-lock-icon[data-open] .sw-lock-body {
+  fill-opacity: 0;
+}
+.sw-latch {
+  animation: sw-latch 220ms var(--sw-ease) both;
+}
+@keyframes sw-latch {
+  0% {
+    transform: scale(0.8);
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* The ring traces the canvas so the change is confirmed where it applies. */
+.sw-lock-notice {
+  position: fixed;
+  left: 50%;
+  top: 76px;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--sw-edge-strong);
+  border-radius: 999px;
+  background: var(--sw-elevated);
+  color: var(--sw-ink);
+  font-size: 12px;
+  text-transform: lowercase;
+  pointer-events: none;
+  translate: -50% 0;
+  animation: sw-lock-notice 1100ms var(--sw-ease) both;
+}
+.sw-lock-notice[data-locked] {
+  border-color: color-mix(in srgb, var(--sw-warm) 60%, transparent);
+  color: var(--sw-warm);
+}
+@keyframes sw-lock-notice {
+  0% {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  15%,
+  70% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+.sw-lock-ring {
+  position: fixed;
+  pointer-events: none;
+  z-index: 39;
+  border: 1px solid var(--sw-warm);
+  border-radius: 2px;
+  animation: sw-lock-ring 420ms var(--sw-ease) both;
+}
+.sw-lock-ring:not([data-locked]) {
+  border-color: var(--sw-edge-strong);
+}
+@keyframes sw-lock-ring {
+  from {
+    opacity: 0.9;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sw-latch,
+  .sw-lock-icon .sw-shackle {
+    animation: none;
+    transition: none;
+  }
+  .sw-lock-notice {
+    animation-name: sw-lock-notice-fade;
+  }
+  @keyframes sw-lock-notice-fade {
+    0%,
+    100% {
+      opacity: 0;
+    }
+    15%,
+    70% {
       opacity: 1;
     }
   }
