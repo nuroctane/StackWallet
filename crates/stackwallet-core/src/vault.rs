@@ -397,6 +397,20 @@ impl EncryptedVault {
         Ok(Secret::new(dek.expose().to_vec()))
     }
 
+    /// Step-up check for operations that take material out of the vault
+    /// (revealing a key, exporting a directory set). Being unlocked proves the
+    /// passphrase was known once; this proves it is known now, by running the
+    /// full KDF and DEK unwrap again and comparing against the live key.
+    pub fn verify_passphrase(&self, passphrase: &Secret) -> Result<()> {
+        let live = self.dek.as_ref().ok_or(CoreError::Locked)?;
+        self.file.kdf.params.validate()?;
+        let dek = unwrap_dek(&self.file, passphrase)?;
+        if dek.expose() != live.expose() {
+            return Err(CoreError::Unlock);
+        }
+        Ok(())
+    }
+
     /// Re-wrap the DEK under a new passphrase and a fresh salt. Works on a
     /// locked vault too, so a locked state stays locked afterwards.
     ///

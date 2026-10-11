@@ -1,4 +1,5 @@
 import * as r from './reducers.js';
+import * as sets from './sets.js';
 import type { DirectoryState } from './schema.js';
 
 export type ActionResult<T = undefined> = { ok: true; value: T } | { ok: false; error: string };
@@ -60,6 +61,21 @@ export class DirectoryStore {
 
   createWatchWallet(input: r.WatchWalletInput): ActionResult<string> {
     return this.apply(r.createWatchWallet(this.state, input, this.ctx));
+  }
+
+  /** A `single` wallet whose key the core sealed under `input.walletId` first. */
+  createKeyedWallet(input: {
+    walletId: string;
+    name: string;
+    folderId: string;
+    accounts: sets.KeyedAccountInput[];
+  }): ActionResult<string> {
+    return this.apply(sets.createKeyedWallet(this.state, input, this.ctx));
+  }
+
+  /** Merge a set that arrived from another device under the root folder. */
+  importSet(payload: unknown, setFolderId: string): ActionResult<string> {
+    return this.apply(sets.importPayload(this.state, payload, setFolderId, this.ctx));
   }
 
   deleteWallet(walletId: string): ActionResult {

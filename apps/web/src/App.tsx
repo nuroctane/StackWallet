@@ -16,6 +16,9 @@ import {
   type ShellDialog,
   type UiRoute,
 } from './shell/ShellContext.js';
+import { NewWalletDialog } from './shell/NewWalletDialog.js';
+import { RevealDialog } from './shell/RevealDialog.js';
+import { ImportSetDialog, TransferSetDialog } from './shell/SetTransferDialogs.js';
 import { StatusBar } from './shell/StatusBar.js';
 import { ThemeStudio } from './shell/ThemeStudio.js';
 import { VaultDialog } from './shell/VaultDialog.js';
@@ -267,6 +270,22 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       />
       <VaultDialog open={dialog?.kind === 'vault'} onClose={closeDialog} />
       <ThemeStudio open={dialog?.kind === 'theme'} onClose={closeDialog} />
+      <NewWalletDialog
+        open={dialog?.kind === 'newWallet'}
+        folderId={dialog?.kind === 'newWallet' ? dialog.folderId : undefined}
+        onClose={closeDialog}
+      />
+      <RevealDialog
+        open={dialog?.kind === 'reveal'}
+        walletId={dialog?.kind === 'reveal' ? dialog.walletId : undefined}
+        onClose={closeDialog}
+      />
+      <TransferSetDialog
+        open={dialog?.kind === 'transferSet'}
+        folderId={dialog?.kind === 'transferSet' ? dialog.folderId : undefined}
+        onClose={closeDialog}
+      />
+      <ImportSetDialog open={dialog?.kind === 'importSet'} onClose={closeDialog} />
     </ShellContext>
   );
 }

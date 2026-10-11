@@ -119,6 +119,38 @@ describe.skipIf(!built)('wasm bridge against the built core', () => {
     reopened.free();
   });
 
+  it('keeps single-wallet keys inside and marks every reveal', async () => {
+    const c = await load();
+    const v = await c.createVault(PASS);
+    await v.importPhrase('dev', 'test test test test test test test test test test test junk', 1);
+    // The first Hardhat account: proves the path math matches every other wallet.
+    const pub = await v.singlePublicKey('dev', 'secp256k1', "m/44'/60'/0'/0/0");
+    expect(pub).toMatch(/^0[23][0-9a-f]{64}$/);
+    expect((await v.provenance()).wallets[0]?.origin.kind).toBe('importedPhrase');
+
+    await expect(
+      v.reveal('dev', 'wrong passphrase!', { kind: 'mnemonic' }, 'screen', 2),
+    ).rejects.toThrow();
+    expect((await v.provenance()).wallets[0]?.exposures).toEqual([]);
+    const key = await v.reveal(
+      'dev',
+      PASS,
+      { kind: 'privateKey', curve: 'secp256k1', path: "m/44'/60'/0'/0/0" },
+      'clipboard',
+      3,
+    );
+    expect(key.secret).toBe('ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80');
+    expect(key.publicHex).toBe(pub);
+    const exposures = (await v.provenance()).wallets[0]?.exposures ?? [];
+    expect(exposures.map((e) => e.channel)).toEqual(['clipboard']);
+
+    await v.createSingle('fresh', 4);
+    const sol = await v.singlePublicKey('fresh', 'ed25519', "m/44'/501'/0'/0'");
+    expect(sol).toMatch(/^[0-9a-f]{64}$/);
+    expect(await v.hasSingleKey('fresh')).toBe(true);
+    v.free();
+  });
+
   it('pairs two identities through the sans-IO session end to end', async () => {
     const c = await load();
     const vaultA = await c.createVault(PASS);

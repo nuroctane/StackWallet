@@ -17,12 +17,15 @@
 //! - [`store`]     SQLite persistence
 
 pub mod audit;
+pub mod hd;
 pub mod identity;
 pub mod intent;
 pub mod lifecycle;
 pub mod model;
 pub mod policy;
+pub mod provenance;
 pub mod store;
+pub mod transfer;
 pub mod transport;
 pub mod tss;
 pub mod vault;

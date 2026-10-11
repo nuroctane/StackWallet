@@ -7,7 +7,11 @@ export type ShellDialog =
   | { kind: 'deleteFolder'; folderId: string }
   | { kind: 'move'; walletId: string }
   | { kind: 'vault' }
-  | { kind: 'theme' };
+  | { kind: 'theme' }
+  | { kind: 'newWallet'; folderId?: string }
+  | { kind: 'reveal'; walletId: string }
+  | { kind: 'transferSet'; folderId: string }
+  | { kind: 'importSet' };
 
 export type UiRoute = { kind: 'directory' } | { kind: 'network' } | { kind: 'devices' };
 

@@ -11,15 +11,21 @@ import { z } from 'zod';
 
 import {
   CeremonyMessage,
+  Curve,
   Decision,
   Device,
   DeviceId,
+  ExposureChannel,
   Frame,
+  ImportedSet,
   Hex32,
   KeyGroup,
   PairingOffer,
   Policy,
   PolicyContext,
+  ProvenanceTable,
+  Revealed,
+  RevealedSecret,
   SessionEvent,
   SessionStateName,
   SignedCeremonyMessage,
@@ -86,6 +92,36 @@ export interface VaultHandle {
   devices(): Promise<Device[]>;
   /** Validate and seal the whole table; the core refuses forged ids and duplicates. */
   setDevices(devices: Device[]): Promise<void>;
+  /** Generate and seal a fresh phrase for a new `single` wallet. */
+  createSingle(walletId: string, nowMs: number): Promise<void>;
+  /** Seal a phrase from elsewhere; the wallet starts `imported`. */
+  importPhrase(walletId: string, phrase: string, nowMs: number): Promise<void>;
+  hasSingleKey(walletId: string): Promise<boolean>;
+  singlePublicKey(walletId: string, curve: Curve, path: string): Promise<string>;
+  /** Step-up reveal; the core marks the wallet exposed before returning the secret. */
+  reveal(
+    walletId: string,
+    passphrase: string,
+    what: Revealed,
+    channel: ExposureChannel,
+    nowMs: number,
+  ): Promise<RevealedSecret>;
+  provenance(): Promise<ProvenanceTable>;
+  exportSet(req: {
+    identityLabel: string;
+    passphrase: string;
+    toDeviceId: string;
+    folderId: string;
+    walletIds: string[];
+    directory: unknown;
+    nowMs: number;
+  }): Promise<string>;
+  importSet(
+    identityLabel: string,
+    passphrase: string,
+    bundle: string,
+    nowMs: number,
+  ): Promise<ImportedSet>;
   free(): void;
 }
 
@@ -179,6 +215,28 @@ export interface WasmVaultObject {
   sign_ceremony_message(label: string, msgJson: string): string;
   devices_json(): string;
   set_devices_json(devicesJson: string): void;
+  create_single(walletId: string, nowMs: number): void;
+  import_phrase(walletId: string, phrase: string, nowMs: number): void;
+  has_single_key(walletId: string): boolean;
+  single_public_key(walletId: string, curve: string, path: string): string;
+  reveal(
+    walletId: string,
+    passphrase: string,
+    whatJson: string,
+    channel: string,
+    nowMs: number,
+  ): string;
+  provenance_json(): string;
+  export_set(
+    identityLabel: string,
+    passphrase: string,
+    toDeviceId: string,
+    folderId: string,
+    walletIdsJson: string,
+    directoryJson: string,
+    nowMs: number,
+  ): string;
+  import_set(identityLabel: string, passphrase: string, bundle: string, nowMs: number): string;
   free(): void;
 }
 
@@ -305,6 +363,61 @@ class WasmVaultHandle implements VaultHandle {
   }
   async setDevices(devices: Device[]) {
     this.raw.set_devices_json(JSON.stringify(Device.array().parse(devices)));
+  }
+  async createSingle(walletId: string, nowMs: number) {
+    this.raw.create_single(walletId, nowMs);
+  }
+  async importPhrase(walletId: string, phrase: string, nowMs: number) {
+    this.raw.import_phrase(walletId, phrase, nowMs);
+  }
+  async hasSingleKey(walletId: string) {
+    return this.raw.has_single_key(walletId);
+  }
+  async singlePublicKey(walletId: string, curve: Curve, path: string) {
+    return this.raw.single_public_key(walletId, Curve.parse(curve), path);
+  }
+  async reveal(
+    walletId: string,
+    passphrase: string,
+    what: Revealed,
+    channel: ExposureChannel,
+    nowMs: number,
+  ) {
+    const out = this.raw.reveal(
+      walletId,
+      passphrase,
+      JSON.stringify(Revealed.parse(what)),
+      ExposureChannel.parse(channel),
+      nowMs,
+    );
+    return RevealedSecret.parse(JSON.parse(out));
+  }
+  async provenance() {
+    return ProvenanceTable.parse(JSON.parse(this.raw.provenance_json()));
+  }
+  async exportSet(req: {
+    identityLabel: string;
+    passphrase: string;
+    toDeviceId: string;
+    folderId: string;
+    walletIds: string[];
+    directory: unknown;
+    nowMs: number;
+  }) {
+    return this.raw.export_set(
+      req.identityLabel,
+      req.passphrase,
+      req.toDeviceId,
+      req.folderId,
+      JSON.stringify(req.walletIds),
+      JSON.stringify(req.directory),
+      req.nowMs,
+    );
+  }
+  async importSet(identityLabel: string, passphrase: string, bundle: string, nowMs: number) {
+    return ImportedSet.parse(
+      JSON.parse(this.raw.import_set(identityLabel, passphrase, bundle, nowMs)),
+    );
   }
   free() {
     this.raw.free();

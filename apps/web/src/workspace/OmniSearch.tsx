@@ -134,6 +134,20 @@ function SearchBody({
         run: () => shell.openDialog({ kind: 'watch' }),
       },
       {
+        id: 'a:wallet',
+        type: 'action',
+        label: 'new wallet',
+        dim: 'key sealed in the vault',
+        run: () => shell.openDialog({ kind: 'newWallet' }),
+      },
+      {
+        id: 'a:importset',
+        type: 'action',
+        label: 'import set',
+        dim: 'from a paired device',
+        run: () => shell.openDialog({ kind: 'importSet' }),
+      },
+      {
         id: 'a:folder',
         type: 'action',
         label: 'new folder',

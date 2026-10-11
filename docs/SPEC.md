@@ -495,6 +495,26 @@ Every wallet and every directory set carries a provenance the UI never hides:
   factor configured for the instance (to get in) and again for the set (to take it out). Both
   checks run in the core; the transfer itself rides the paired-device channel (§5.3) or an
   encrypted file sealed to the receiving device's identity.
+- **Copied**: the sending side tags every transferred wallet `copied`, so the user also knows
+  that a second copy exists. A `single` wallet with none of `exposed`, `imported` or `copied`
+  shows `local · no backup`.
+
+Implementation (core `hd`, `provenance`, `transfer`):
+
+- `single` wallets hold a BIP39 phrase sealed under `mnemonic:<walletId>`; accounts derive with
+  BIP32 (secp256k1) and SLIP-10 (Ed25519) on the standard paths (`m/44'/60'/0'/0/0`,
+  `m/44'/501'/0'/0'`, `m/84'/0'/0'/0/0`, `m/44'/<coinType>'/0'/0/0`), so an exported phrase
+  restores the same addresses in other wallets. A restored phrase starts `imported`.
+- The provenance table is sealed in the vault under `provenance`; saves are refused unless they
+  only add history. `reveal` re-verifies the passphrase, seals the exposure, then returns the
+  secret. The browser mirrors the table to `localStorage` for display while locked.
+- The step-up factor today is the vault passphrase (the only factor a vault has); platform and
+  hardware factors join the same gate when they land (Phase 8).
+- A set bundle (`stackwallet-set:`) is sealed with ephemeral X25519 to the recipient's pinned
+  Noise static, HKDF-SHA256, XChaCha20-Poly1305, and signed by the sender's Ed25519 identity.
+  The recipient must be the addressed device and the sender a pinned, unrevoked peer; a set
+  already present is refused, so a bundle cannot be replayed. Exposure history travels with
+  the wallets.
 
 ### 12.2 Collectibles and names
 

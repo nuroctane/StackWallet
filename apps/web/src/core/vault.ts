@@ -7,18 +7,26 @@
  * Devices element can show it while the vault is locked.
  */
 import { useSyncExternalStore } from 'react';
-import type {
-  CoreClient,
-  Device,
-  IdentityHandle,
-  IdentityInfo,
-  VaultHandle,
-  VaultLabel,
+import {
+  ProvenanceTable,
+  type CoreClient,
+  type Curve,
+  type Device,
+  type ExposureChannel,
+  type IdentityHandle,
+  type IdentityInfo,
+  type ImportedSet,
+  type Revealed,
+  type RevealedSecret,
+  type VaultHandle,
+  type VaultLabel,
 } from '@stackwallet/core-client';
 
 import type { StorageLike } from '../store/persist.js';
 
 export const VAULT_STORAGE_KEY = 'stackwallet.vault.v1';
+/** Read-only mirror of the sealed provenance table, so tags stay visible while locked. */
+export const PROVENANCE_CACHE_KEY = 'stackwallet.provenance.v1';
 export const IDENTITY_LABEL = 'device-identity';
 export const MIN_PASSPHRASE_CHARS = 10;
 
@@ -34,6 +42,12 @@ export type VaultStatus =
 export interface VaultView {
   status: VaultStatus;
   busy: boolean;
+  /**
+   * Where every key came from and where it has been. From the core while
+   * unlocked; from the local mirror while locked (display only, never trusted
+   * for a decision).
+   */
+  provenance: ProvenanceTable;
 }
 
 export type VaultResult = { ok: true } | { ok: false; error: string };
@@ -96,7 +110,11 @@ export interface VaultStoreDeps {
 }
 
 export class VaultStore {
-  private view: VaultView = { status: { kind: 'loading' }, busy: false };
+  private view: VaultView = {
+    status: { kind: 'loading' },
+    busy: false,
+    provenance: { wallets: [], sets: [] },
+  };
   private client: CoreClient | null = null;
   private vault: VaultHandle | null = null;
   private readonly listeners = new Set<() => void>();
@@ -104,6 +122,28 @@ export class VaultStore {
 
   constructor(private readonly deps: VaultStoreDeps) {
     this.now = deps.now ?? (() => Date.now());
+    this.view = { ...this.view, provenance: this.cachedProvenance() };
+  }
+
+  private cachedProvenance(): ProvenanceTable {
+    try {
+      const raw = this.deps.storage?.getItem(PROVENANCE_CACHE_KEY);
+      const r = raw ? ProvenanceTable.safeParse(JSON.parse(raw)) : null;
+      return r?.success ? r.data : { wallets: [], sets: [] };
+    } catch {
+      return { wallets: [], sets: [] };
+    }
+  }
+
+  private async refreshProvenance(): Promise<void> {
+    if (!this.vault || this.view.status.kind !== 'unlocked') return;
+    const provenance = await this.vault.provenance();
+    try {
+      this.deps.storage?.setItem(PROVENANCE_CACHE_KEY, JSON.stringify(provenance));
+    } catch {
+      // The sealed table is the record; the mirror is a convenience.
+    }
+    this.set({ provenance });
   }
 
   readonly subscribe = (l: () => void): (() => void) => {
@@ -172,6 +212,7 @@ export class VaultStore {
     this.deps.onIdentity?.(identity);
     this.deps.onDevices?.(await this.vault.devices(), this.writeDevices);
     this.set({ status: { kind: 'unlocked', labels, identity } });
+    await this.refreshProvenance();
   }
 
   /** Seal a whole device table and persist the vault; the core validates before writing. */
@@ -237,6 +278,95 @@ export class VaultStore {
       if (problem) throw new Error(problem);
       await this.vault.changePassphrase(current, next);
       await this.persist();
+    });
+  }
+
+  private unlockedVault(): VaultHandle {
+    if (!this.vault || this.view.status.kind !== 'unlocked') {
+      throw new Error('Unlock the vault first');
+    }
+    return this.vault;
+  }
+
+  /** Like `guarded`, for operations that hand a value back. */
+  private async guardedValue<T>(
+    op: () => Promise<T>,
+  ): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
+    if (this.view.busy) return { ok: false, error: 'The vault is busy' };
+    this.set({ busy: true });
+    try {
+      return { ok: true, value: await op() };
+    } catch (err) {
+      return { ok: false, error: message(err) };
+    } finally {
+      this.set({ busy: false });
+    }
+  }
+
+  /** Seal a key for a new `single` wallet: fresh, or a phrase brought from elsewhere. */
+  createSingle(walletId: string, phrase?: string): Promise<VaultResult> {
+    return this.guarded(async () => {
+      const v = this.unlockedVault();
+      if (phrase === undefined) await v.createSingle(walletId, this.now());
+      else await v.importPhrase(walletId, phrase, this.now());
+      await this.persist();
+      await this.refreshProvenance();
+    });
+  }
+
+  async publicKey(walletId: string, curve: Curve, path: string): Promise<string> {
+    return this.unlockedVault().singlePublicKey(walletId, curve, path);
+  }
+
+  /**
+   * Take a phrase or key out. The core re-checks the passphrase and seals the
+   * exposure before it returns anything, so the tag cannot be skipped.
+   */
+  reveal(
+    walletId: string,
+    passphrase: string,
+    what: Revealed,
+    channel: ExposureChannel,
+  ): Promise<{ ok: true; value: RevealedSecret } | { ok: false; error: string }> {
+    return this.guardedValue(async () => {
+      const v = this.unlockedVault();
+      const out = await v.reveal(walletId, passphrase, what, channel, this.now());
+      await this.persist();
+      await this.refreshProvenance();
+      return out;
+    });
+  }
+
+  exportSet(req: {
+    passphrase: string;
+    toDeviceId: string;
+    folderId: string;
+    walletIds: string[];
+    directory: unknown;
+  }): Promise<{ ok: true; value: string } | { ok: false; error: string }> {
+    return this.guardedValue(async () => {
+      const v = this.unlockedVault();
+      const bundle = await v.exportSet({
+        identityLabel: IDENTITY_LABEL,
+        nowMs: this.now(),
+        ...req,
+      });
+      await this.persist();
+      await this.refreshProvenance();
+      return bundle;
+    });
+  }
+
+  importSet(
+    passphrase: string,
+    bundle: string,
+  ): Promise<{ ok: true; value: ImportedSet } | { ok: false; error: string }> {
+    return this.guardedValue(async () => {
+      const v = this.unlockedVault();
+      const got = await v.importSet(IDENTITY_LABEL, passphrase, bundle, this.now());
+      await this.persist();
+      await this.refreshProvenance();
+      return got;
     });
   }
 

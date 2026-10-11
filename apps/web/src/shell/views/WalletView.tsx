@@ -13,7 +13,9 @@ import type { DirectoryState } from '../../store/schema.js';
 import { accountsOf, kindLabel, pathTo } from '../../store/selectors.js';
 import { Breadcrumb } from '../Breadcrumb.js';
 import { isTypingTarget, useShell } from '../ShellContext.js';
+import { WalletTags } from '../ProvenanceTags.js';
 import { nameTitle, useWalletLabel } from '../WalletName.js';
+import { KeysSection } from './KeysSection.js';
 import { CollectiblesGrid } from './CollectiblesGrid.js';
 import { NamesSection } from './NamesSection.js';
 
@@ -84,6 +86,7 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
             </button>
           )}
           <Badge>{kindLabel(wallet)}</Badge>
+          <WalletTags wallet={wallet} />
           <span className="flex-1" />
           <Button
             size="sm"
@@ -165,6 +168,8 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
         )}
       </section>
 
+      {wallet.kind === 'single' && <KeysSection wallet={wallet} />}
+
       <NamesSection accounts={accounts} />
 
       <section className="sw-elevated flex min-w-0 flex-col overflow-hidden">
@@ -183,7 +188,11 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
           </h3>
           <p className="text-[12px] text-faint">
             Removes this wallet and its accounts from this device. Nothing on-chain changes
-            {wallet.kind === 'watch' ? '; the address keeps existing without you.' : '.'}
+            {wallet.kind === 'watch'
+              ? '; the address keeps existing without you.'
+              : wallet.kind === 'single'
+                ? '. The key stays sealed in the vault, so restoring the phrase later finds it again.'
+                : '.'}
           </p>
         </div>
         <div>

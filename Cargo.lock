@@ -3843,6 +3843,7 @@ dependencies = [
  "serde_json",
  "stackwallet-core",
  "wasm-bindgen",
+ "zeroize",
 ]
 
 [[package]]

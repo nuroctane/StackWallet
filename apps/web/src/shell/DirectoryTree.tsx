@@ -6,6 +6,7 @@ import { directory, useDirectory } from '../store/persist.js';
 import type { DirectoryState } from '../store/schema.js';
 import { flattenTree, kindLabel, walletFamilies, type TreeRow } from '../store/selectors.js';
 import { useShell } from './ShellContext.js';
+import { SetTags, WalletTags } from './ProvenanceTags.js';
 import { WalletName } from './WalletName.js';
 
 export function DirectoryTree() {
@@ -141,6 +142,9 @@ export function DirectoryTree() {
         <div className="flex gap-1">
           <Button size="sm" variant="ghost" onClick={() => shell.openDialog({ kind: 'folder' })}>
             + folder
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => shell.openDialog({ kind: 'newWallet' })}>
+            + wallet
           </Button>
           <Button size="sm" variant="ghost" onClick={() => shell.openDialog({ kind: 'watch' })}>
             + watch
@@ -317,6 +321,9 @@ function Row({
           {wallet ? <WalletName wallet={wallet} className="max-w-full" /> : row.name}
         </span>
       )}
+
+      {!renaming && wallet && <WalletTags wallet={wallet} compact />}
+      {!renaming && row.kind === 'folder' && <SetTags folderId={row.id} />}
 
       {wallet && !renaming && (
         <>

@@ -529,3 +529,82 @@ export const SessionEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('closed'), reason: z.string() }),
 ]);
 export type SessionEvent = z.infer<typeof SessionEvent>;
+
+// ---------------------------------------------------------------------------
+// Provenance and directory-set transfer (core `provenance`, `transfer`)
+// ---------------------------------------------------------------------------
+
+export const Origin = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('created'), atMs: z.number().int() }),
+  z.object({ kind: z.literal('importedPhrase'), atMs: z.number().int() }),
+  z.object({
+    kind: z.literal('importedFromDevice'),
+    atMs: z.number().int(),
+    deviceId: z.string(),
+    deviceName: z.string(),
+    bundleId: z.string(),
+  }),
+]);
+export type Origin = z.infer<typeof Origin>;
+
+export const ExposureChannel = z.enum(['screen', 'clipboard', 'file']);
+export type ExposureChannel = z.infer<typeof ExposureChannel>;
+
+export const Revealed = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('mnemonic') }),
+  z.object({ kind: z.literal('privateKey'), curve: Curve, path: z.string() }),
+]);
+export type Revealed = z.infer<typeof Revealed>;
+
+export const Exposure = z.object({
+  atMs: z.number().int(),
+  channel: ExposureChannel,
+  what: Revealed,
+});
+export type Exposure = z.infer<typeof Exposure>;
+
+export const Transfer = z.object({
+  atMs: z.number().int(),
+  toDeviceId: z.string(),
+  bundleId: z.string(),
+});
+export type Transfer = z.infer<typeof Transfer>;
+
+export const WalletProvenance = z.object({
+  walletId: z.string(),
+  origin: Origin,
+  exposures: z.array(Exposure).default([]),
+  transfers: z.array(Transfer).default([]),
+});
+export type WalletProvenance = z.infer<typeof WalletProvenance>;
+
+export const SetProvenance = z.object({
+  folderId: z.string(),
+  origin: Origin,
+  transfers: z.array(Transfer).default([]),
+});
+export type SetProvenance = z.infer<typeof SetProvenance>;
+
+export const ProvenanceTable = z.object({
+  wallets: z.array(WalletProvenance).default([]),
+  sets: z.array(SetProvenance).default([]),
+});
+export type ProvenanceTable = z.infer<typeof ProvenanceTable>;
+
+export const RevealedSecret = z.object({
+  what: Revealed,
+  secret: z.string().min(1),
+  publicHex: z.string().nullable(),
+});
+export type RevealedSecret = z.infer<typeof RevealedSecret>;
+
+export const ImportedSet = z.object({
+  bundleId: z.string(),
+  folderId: z.string(),
+  fromDeviceId: z.string(),
+  fromDeviceName: z.string(),
+  exportedAtMs: z.number().int(),
+  directory: z.unknown(),
+  walletsWithKeys: z.array(z.string()),
+});
+export type ImportedSet = z.infer<typeof ImportedSet>;

@@ -18,6 +18,7 @@ import {
 } from '../../store/selectors.js';
 import { Breadcrumb } from '../Breadcrumb.js';
 import { useShell } from '../ShellContext.js';
+import { SetTags } from '../ProvenanceTags.js';
 import { WalletName } from '../WalletName.js';
 import { TotalsStrip } from './TotalsStrip.js';
 
@@ -42,6 +43,7 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
     <div className="flex flex-col gap-5 p-5">
       <div className="flex flex-col gap-2">
         <Breadcrumb path={path.slice(0, -1)} leaf={folder.name} />
+        <SetTags folderId={folder.id} />
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-[22px] font-semibold tracking-[-0.01em]">{folder.name}</h1>
           <div className="flex gap-2">
@@ -54,10 +56,37 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
             </Button>
             <Button
               size="sm"
+              variant="ghost"
+              onClick={() => shell.openDialog({ kind: 'newWallet', folderId: folder.id })}
+            >
+              + wallet
+            </Button>
+            <Button
+              size="sm"
               onClick={() => shell.openDialog({ kind: 'watch', folderId: folder.id })}
             >
               + watch
             </Button>
+            {folder.parentId === null && (
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Open a set sealed for this device"
+                onClick={() => shell.openDialog({ kind: 'importSet' })}
+              >
+                Import set…
+              </Button>
+            )}
+            {folder.parentId !== null && (
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Seal this folder and everything in it for a paired device"
+                onClick={() => shell.openDialog({ kind: 'transferSet', folderId: folder.id })}
+              >
+                Transfer set…
+              </Button>
+            )}
           </div>
         </div>
       </div>

@@ -5,10 +5,12 @@
 mod transport;
 
 use stackwallet_core::identity::{DeviceIdentity, SignedCeremonyMessage};
+use stackwallet_core::model::Curve;
 use stackwallet_core::store::devices::{load_device_table, save_device_table};
 use stackwallet_core::store::Device;
 use stackwallet_core::tss::CeremonyMessage;
 use stackwallet_core::vault::{EncryptedVault, KdfParams, Secret, SecretHandle, Vault};
+use stackwallet_core::{provenance, transfer};
 use wasm_bindgen::prelude::*;
 
 pub use transport::{
@@ -202,6 +204,122 @@ impl WasmVault {
             let signed = SignedCeremonyMessage::sign(id, msg.clone());
             Ok(serde_json::to_string(&signed)?)
         })
+    }
+
+    /// Generate and seal a fresh 24-word phrase for a new `single` wallet.
+    pub fn create_single(&mut self, wallet_id: &str, now_ms: f64) -> Result<(), JsError> {
+        provenance::create_single(&mut self.inner, wallet_id, now_ms as i64).map_err(core_err)
+    }
+
+    /// Seal a phrase the user brought from elsewhere; the wallet starts `imported`.
+    pub fn import_phrase(
+        &mut self,
+        wallet_id: &str,
+        phrase: String,
+        now_ms: f64,
+    ) -> Result<(), JsError> {
+        let phrase = zeroize::Zeroizing::new(phrase);
+        provenance::import_phrase(&mut self.inner, wallet_id, &phrase, now_ms as i64)
+            .map_err(core_err)
+    }
+
+    pub fn has_single_key(&self, wallet_id: &str) -> bool {
+        provenance::has_single_key(&self.inner, wallet_id)
+    }
+
+    /// Public key hex for `curve` (`"secp256k1"` | `"ed25519"`) at a BIP32/SLIP-10 path.
+    pub fn single_public_key(
+        &self,
+        wallet_id: &str,
+        curve: &str,
+        path: &str,
+    ) -> Result<String, JsError> {
+        let curve: Curve = serde_json::from_value(serde_json::Value::String(curve.into()))?;
+        provenance::public_key(&self.inner, wallet_id, curve, path).map_err(core_err)
+    }
+
+    /// Step-up reveal. The exposure is sealed before this returns
+    /// `{ what, secret, publicHex }`; a wrong passphrase reveals and records nothing.
+    pub fn reveal(
+        &mut self,
+        wallet_id: &str,
+        passphrase: String,
+        what_json: &str,
+        channel: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let what: provenance::Revealed = serde_json::from_str(what_json)?;
+        let channel: provenance::Channel =
+            serde_json::from_value(serde_json::Value::String(channel.into()))?;
+        let r = provenance::reveal(
+            &mut self.inner,
+            wallet_id,
+            &secret_from_string(passphrase),
+            what,
+            channel,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(serde_json::json!({
+            "what": r.what,
+            "secret": r.secret.as_str(),
+            "publicHex": r.public_hex,
+        })
+        .to_string())
+    }
+
+    /// The sealed provenance table (`ProvenanceTable` JSON). Read-only by design.
+    pub fn provenance_json(&self) -> Result<String, JsError> {
+        Ok(serde_json::to_string(
+            &provenance::load_provenance(&self.inner).map_err(core_err)?,
+        )?)
+    }
+
+    /// Seal a directory set for one paired device; returns the `stackwallet-set:` text.
+    #[allow(clippy::too_many_arguments)]
+    pub fn export_set(
+        &mut self,
+        identity_label: &str,
+        passphrase: String,
+        to_device_id: &str,
+        folder_id: &str,
+        wallet_ids_json: &str,
+        directory_json: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let wallet_ids: Vec<String> = serde_json::from_str(wallet_ids_json)?;
+        transfer::export_set(
+            &mut self.inner,
+            transfer::ExportRequest {
+                identity_label,
+                passphrase: &secret_from_string(passphrase),
+                to_device_id,
+                folder_id,
+                wallet_ids: &wallet_ids,
+                directory_json,
+                now_ms: now_ms as i64,
+            },
+        )
+        .map_err(core_err)
+    }
+
+    /// Open a bundle addressed to this device; returns `ImportedSet` JSON.
+    pub fn import_set(
+        &mut self,
+        identity_label: &str,
+        passphrase: String,
+        bundle: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let got = transfer::import_set(
+            &mut self.inner,
+            identity_label,
+            &secret_from_string(passphrase),
+            bundle,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(serde_json::to_string(&got)?)
     }
 
     fn with_identity<T>(

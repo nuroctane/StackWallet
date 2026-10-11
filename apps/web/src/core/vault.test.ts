@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type {
   CoreClient,
   Device,
+  ExposureChannel,
   IdentityHandle,
   IdentityInfo,
+  ProvenanceTable,
+  Revealed,
   VaultHandle,
   VaultLabel,
 } from '@stackwallet/core-client';
@@ -14,6 +17,7 @@ import {
   encodeBytes,
   IDENTITY_LABEL,
   passphraseProblem,
+  PROVENANCE_CACHE_KEY,
   VAULT_STORAGE_KEY,
   VaultStore,
 } from './vault.js';
@@ -113,6 +117,53 @@ class FakeVault implements VaultHandle {
     if (!this.labelList.some((l) => l.label === 'device-table')) {
       this.labelList.push({ handle: 'h-device-table', label: 'device-table' });
     }
+  }
+  prov: ProvenanceTable = { wallets: [], sets: [] };
+  async createSingle(walletId: string, nowMs: number) {
+    if (!this.unlocked) throw new Error('locked');
+    this.prov.wallets.push({
+      walletId,
+      origin: { kind: 'created', atMs: nowMs },
+      exposures: [],
+      transfers: [],
+    });
+  }
+  async importPhrase(walletId: string, _phrase: string, nowMs: number) {
+    this.prov.wallets.push({
+      walletId,
+      origin: { kind: 'importedPhrase', atMs: nowMs },
+      exposures: [],
+      transfers: [],
+    });
+  }
+  async hasSingleKey(walletId: string) {
+    return this.prov.wallets.some((w) => w.walletId === walletId);
+  }
+  async singlePublicKey() {
+    return '02'.padEnd(66, '1');
+  }
+  async reveal(
+    walletId: string,
+    passphrase: string,
+    what: Revealed,
+    channel: ExposureChannel,
+    nowMs: number,
+  ) {
+    if (passphrase !== this.pass) throw new Error('wrong passphrase');
+    this.prov.wallets
+      .find((w) => w.walletId === walletId)!
+      .exposures.push({ atMs: nowMs, channel, what });
+    return { what, secret: 'abandon about', publicHex: null };
+  }
+  async provenance() {
+    if (!this.unlocked) throw new Error('locked');
+    return structuredClone(this.prov);
+  }
+  async exportSet(): Promise<never> {
+    throw new Error('not used');
+  }
+  async importSet(): Promise<never> {
+    throw new Error('not used');
   }
   free() {}
 }
@@ -253,6 +304,33 @@ describe('VaultStore', () => {
     await reopened.attach(fakeClient());
     await reopened.unlock(PASS);
     expect(events.at(-1)?.writable).toBe(true);
+  });
+
+  it('marks a revealed wallet exposed and keeps the tag visible while locked', async () => {
+    const storage = new MemoryStorage();
+    const store = new VaultStore({ storage, now: () => 42 });
+    await store.attach(fakeClient());
+    await store.create(PASS);
+    expect(await store.createSingle('w1')).toEqual({ ok: true });
+    expect(store.getSnapshot().provenance.wallets[0]?.origin).toEqual({
+      kind: 'created',
+      atMs: 42,
+    });
+
+    const wrong = await store.reveal('w1', 'nope', { kind: 'mnemonic' }, 'screen');
+    expect(wrong.ok).toBe(false);
+    expect(store.getSnapshot().provenance.wallets[0]?.exposures).toEqual([]);
+
+    const r = await store.reveal('w1', PASS, { kind: 'mnemonic' }, 'clipboard');
+    expect(r.ok).toBe(true);
+    expect(store.getSnapshot().provenance.wallets[0]?.exposures).toHaveLength(1);
+
+    await store.lock();
+    expect(store.getSnapshot().provenance.wallets[0]?.exposures).toHaveLength(1);
+    // A fresh page load shows the mirror before any unlock.
+    const reloaded = new VaultStore({ storage });
+    expect(reloaded.getSnapshot().provenance.wallets[0]?.exposures).toHaveLength(1);
+    expect(storage.getItem(PROVENANCE_CACHE_KEY)).toContain('clipboard');
   });
 
   it('persists a passphrase change', async () => {
