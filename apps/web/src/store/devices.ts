@@ -34,12 +34,12 @@ export type LocalDevice = z.infer<typeof LocalDevice>;
  * records can be handed to the wasm `Session` lookup or written to the native
  * store later without a translation step.
  *
- * Trust note: this blob lives in localStorage, which any script on the origin
- * can rewrite. That is acceptable only because nothing here is authoritative
- * yet: pinning is disabled until the core bridge lands, and when it does the
- * device table moves into the core's encrypted store and this slice becomes a
- * read-through cache that the core re-validates on every load. Do not let a
- * session constructor consume these records without that re-validation.
+ * Trust note: the authoritative table is sealed inside the vault and the core
+ * re-validates it (ids derived from identity keys, no duplicates, bounds) on
+ * every load and save. The localStorage blob is only a cache so the list stays
+ * visible while the vault is locked; any script on the origin can rewrite it,
+ * so it is replaced by the core's copy on unlock and no session constructor
+ * may consume these records without going through the core.
  */
 export const DevicesState = z.object({
   version: z.literal(DEVICES_VERSION),
@@ -230,16 +230,34 @@ export type DevicesActionResult<T = undefined> =
   | { ok: true; value: T }
   | { ok: false; error: string };
 
+export const DEVICES_READ_ONLY = 'Unlock the vault to change paired devices';
+
+/**
+ * Where the pinned table really lives: the core seals it in the vault and
+ * validates it on every read and write. The store's own storage is a cache
+ * of the last table the core handed over, kept so the list is visible while
+ * the vault is locked.
+ */
+export interface DeviceTableSink {
+  write(devices: Device[]): Promise<void>;
+}
+
 export class DevicesStore {
   private state: DevicesState;
   private readonly listeners = new Set<DevicesListener>();
+  private sink: DeviceTableSink | null;
+  // Mutations are serialized so two writers never seal tables computed from
+  // the same base and silently drop one another's change.
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(
     initial: DevicesState,
     private readonly storage: StorageLike | null,
     private readonly now: () => number = () => Date.now(),
+    sink: DeviceTableSink | null = null,
   ) {
     this.state = initial;
+    this.sink = sink;
   }
 
   readonly subscribe = (l: DevicesListener): (() => void) => {
@@ -251,38 +269,83 @@ export class DevicesStore {
 
   readonly getSnapshot = (): DevicesState => this.state;
 
-  private apply<T>(outcome: DevicesOutcome<T>): DevicesActionResult<T> {
-    if (!outcome.ok) return { ok: false, error: outcome.error };
-    if (outcome.state !== this.state) {
-      this.state = outcome.state;
-      if (this.storage) saveDevices(this.storage, outcome.state);
-      for (const l of this.listeners) l();
-    }
-    return { ok: true, value: outcome.value };
+  /** Whether the table can be changed right now (the core is holding an unlocked vault). */
+  get writable(): boolean {
+    return this.sink !== null;
   }
 
-  pin(device: Device): DevicesActionResult<string> {
-    return this.apply(pinDevice(this.state, device));
+  private commit(next: DevicesState): void {
+    if (next === this.state) return;
+    this.state = next;
+    if (this.storage) saveDevices(this.storage, next);
+    for (const l of this.listeners) l();
   }
 
-  rename(id: string, name: string): DevicesActionResult {
-    return this.apply(renameDevice(this.state, id, name));
+  private serialized<T>(run: () => Promise<T>): Promise<T> {
+    const p = this.queue.then(run, run);
+    this.queue = p.catch(() => undefined);
+    return p;
   }
 
-  revoke(id: string): DevicesActionResult {
-    return this.apply(revokeDevice(this.state, id, this.now()));
+  /**
+   * The core handed over its validated table (unlock) or withdrew (lock).
+   * `devices === null` keeps the cached list visible but read-only.
+   */
+  adopt(devices: Device[] | null, sink: DeviceTableSink | null): Promise<void> {
+    return this.serialized(async () => {
+      this.sink = sink;
+      if (devices === null) return;
+      const parsed = DevicesState.safeParse({ ...this.state, devices });
+      if (!parsed.success) throw new Error('Device table from the core is not valid');
+      this.commit(parsed.data);
+    });
   }
 
-  remove(id: string): DevicesActionResult {
-    return this.apply(removeDevice(this.state, id));
+  private mutate<T>(
+    step: (state: DevicesState) => DevicesOutcome<T>,
+  ): Promise<DevicesActionResult<T>> {
+    return this.serialized(async () => {
+      const outcome = step(this.state);
+      if (!outcome.ok) return { ok: false, error: outcome.error };
+      if (outcome.state.devices !== this.state.devices) {
+        if (!this.sink) return { ok: false, error: DEVICES_READ_ONLY };
+        try {
+          await this.sink.write(outcome.state.devices);
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      }
+      this.commit(outcome.state);
+      return { ok: true, value: outcome.value };
+    });
   }
 
-  markSeen(id: string): DevicesActionResult {
-    return this.apply(markSeen(this.state, id, this.now()));
+  pin(device: Device): Promise<DevicesActionResult<string>> {
+    return this.mutate((s) => pinDevice(s, device));
   }
 
+  rename(id: string, name: string): Promise<DevicesActionResult> {
+    return this.mutate((s) => renameDevice(s, id, name));
+  }
+
+  revoke(id: string): Promise<DevicesActionResult> {
+    return this.mutate((s) => revokeDevice(s, id, this.now()));
+  }
+
+  remove(id: string): Promise<DevicesActionResult> {
+    return this.mutate((s) => removeDevice(s, id));
+  }
+
+  markSeen(id: string): Promise<DevicesActionResult> {
+    return this.mutate((s) => markSeen(s, id, this.now()));
+  }
+
+  /** The local identity is derived from the vault, not stored in the table; no sink needed. */
   setLocal(local: LocalDevice | null): DevicesActionResult {
-    return this.apply(setLocalDevice(this.state, local));
+    const outcome = setLocalDevice(this.state, local);
+    if (!outcome.ok) return { ok: false, error: outcome.error };
+    this.commit(outcome.state);
+    return { ok: true, value: outcome.value };
   }
 }
 

@@ -531,6 +531,8 @@ Every wallet and every directory set carries a provenance the UI never hides:
    (host candidates only, no ICE servers, so same-network reach and nothing further), the
    scanner answers with its own `stackwallet-rtc:` blob pasted back, and the core's `Session`
    runs the handshake over the data channel; both sides pin the peer the core vouched for.
+   The pinned table itself is sealed in the vault (`device-table`) and validated by the core on
+   every load and save; the browser's localStorage copy is a read-only cache while locked.
 4. **Chains**: Bitcoin (PSBT, Taproot via FROST secp256k1-tr), Solana, Cosmos; swaps per family.
 5. **Agent runtime**: providers, tools, run loop, grants, agent party.
 6. **Automations + scheduler**: triggers / actions, headless CLI as automation device.

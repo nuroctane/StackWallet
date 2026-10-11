@@ -139,7 +139,7 @@ export interface PairingDeps {
   identity: () => Promise<IdentityHandle>;
   local: () => LocalDevice | null;
   carriers: CarrierFactory;
-  pin: (peer: Device) => { ok: true } | { ok: false; error: string };
+  pin: (peer: Device) => Promise<{ ok: true } | { ok: false; error: string }>;
   now?: () => number;
   lingerMs?: number;
 }
@@ -338,7 +338,7 @@ export class PairingController {
         carrier,
         nowMs: this.now(),
       });
-      const pinned = this.deps.pin(peer);
+      const pinned = await this.deps.pin(peer);
       if (!pinned.ok) throw new Error(pinned.error);
       return peer;
     } finally {

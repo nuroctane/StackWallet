@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type {
   CoreClient,
+  Device,
   IdentityHandle,
   IdentityInfo,
   VaultHandle,
@@ -101,6 +102,18 @@ class FakeVault implements VaultHandle {
   async signCeremonyMessage(): Promise<never> {
     throw new Error('not used');
   }
+  table: Device[] = [];
+  async devices() {
+    if (!this.unlocked) throw new Error('locked');
+    return this.table.slice();
+  }
+  async setDevices(devices: Device[]) {
+    if (!this.unlocked) throw new Error('locked');
+    this.table = devices.slice();
+    if (!this.labelList.some((l) => l.label === 'device-table')) {
+      this.labelList.push({ handle: 'h-device-table', label: 'device-table' });
+    }
+  }
   free() {}
 }
 
@@ -192,6 +205,54 @@ describe('VaultStore', () => {
 
     expect(await second.lock()).toEqual({ ok: true });
     expect(second.getSnapshot().status.kind).toBe('locked');
+  });
+
+  it('hands the sealed device table to the UI on unlock and withdraws the writer on lock', async () => {
+    const storage = new MemoryStorage();
+    const events: Array<{ table: Device[] | null; writable: boolean }> = [];
+    let writer: ((d: Device[]) => Promise<void>) | null = null;
+    const store = new VaultStore({
+      storage,
+      onDevices: (table, write) => {
+        events.push({ table, writable: write !== null });
+        writer = write;
+      },
+    });
+    await store.attach(fakeClient());
+    await store.create(PASS);
+    expect(events).toEqual([{ table: [], writable: true }]);
+
+    const peer: Device = {
+      id: '66687aadf862bd776c8fc18b8e9f8e20',
+      name: 'Laptop',
+      kind: 'desktop',
+      identityPubHex: '00'.repeat(32),
+      noiseStaticHex: '11'.repeat(32),
+      endpoints: [],
+      pairedAtMs: 1,
+      lastSeenAtMs: null,
+      revokedAtMs: null,
+    };
+    const write = writer!;
+    await write([peer]);
+    const status = store.getSnapshot().status;
+    if (status.kind === 'unlocked') {
+      expect(status.labels.map((l) => l.label)).toContain('device-table');
+    }
+
+    await store.lock();
+    expect(events.at(-1)).toEqual({ table: null, writable: false });
+    expect(writer).toBeNull();
+    await expect(write([peer])).rejects.toThrow(/Unlock/);
+
+    // The ciphertext written after the table change carries the table.
+    const reopened = new VaultStore({
+      storage,
+      onDevices: (table, write) => events.push({ table, writable: write !== null }),
+    });
+    await reopened.attach(fakeClient());
+    await reopened.unlock(PASS);
+    expect(events.at(-1)?.writable).toBe(true);
   });
 
   it('persists a passphrase change', async () => {

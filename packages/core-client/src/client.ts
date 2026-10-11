@@ -82,6 +82,10 @@ export interface VaultHandle {
   identityInfo(label: string): Promise<IdentityInfo>;
   identity(label: string): Promise<IdentityHandle>;
   signCeremonyMessage(label: string, msg: CeremonyMessage): Promise<SignedCeremonyMessage>;
+  /** The pinned device table sealed in the vault, validated by the core; empty if none. */
+  devices(): Promise<Device[]>;
+  /** Validate and seal the whole table; the core refuses forged ids and duplicates. */
+  setDevices(devices: Device[]): Promise<void>;
   free(): void;
 }
 
@@ -173,6 +177,8 @@ export interface WasmVaultObject {
   identity_info(label: string): string;
   identity(label: string): WasmIdentityObject;
   sign_ceremony_message(label: string, msgJson: string): string;
+  devices_json(): string;
+  set_devices_json(devicesJson: string): void;
   free(): void;
 }
 
@@ -293,6 +299,12 @@ class WasmVaultHandle implements VaultHandle {
   async signCeremonyMessage(label: string, msg: CeremonyMessage) {
     const out = this.raw.sign_ceremony_message(label, JSON.stringify(CeremonyMessage.parse(msg)));
     return SignedCeremonyMessage.parse(JSON.parse(out));
+  }
+  async devices() {
+    return Device.array().parse(JSON.parse(this.raw.devices_json()));
+  }
+  async setDevices(devices: Device[]) {
+    this.raw.set_devices_json(JSON.stringify(Device.array().parse(devices)));
   }
   free() {
     this.raw.free();

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{ChainFamily, ChainId, Curve, KeyGroup};
 
+pub mod devices;
 #[cfg(feature = "store")]
 mod sqlite;
 #[cfg(feature = "store")]

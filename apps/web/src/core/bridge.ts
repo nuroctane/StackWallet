@@ -4,7 +4,12 @@
  * for every element that mounts after the first paint.
  */
 import { useSyncExternalStore } from 'react';
-import { createCoreClient, type CoreClient, type IdentityInfo } from '@stackwallet/core-client';
+import {
+  createCoreClient,
+  type CoreClient,
+  type Device,
+  type IdentityInfo,
+} from '@stackwallet/core-client';
 
 import { devices } from '../store/devices.js';
 import { PairingController } from './pairing.js';
@@ -53,7 +58,15 @@ function onIdentity(info: IdentityInfo | null): void {
   });
 }
 
-export const vault = createVaultStore({ onIdentity });
+/**
+ * The core's sealed table replaces the cache on unlock; on lock the cache
+ * stays visible but every mutation is refused until the next unlock.
+ */
+function onDevices(table: Device[] | null, write: ((d: Device[]) => Promise<void>) | null): void {
+  void devices.adopt(table, write ? { write } : null);
+}
+
+export const vault = createVaultStore({ onIdentity, onDevices });
 
 /** One pairing controller per page: the handshake outlives whichever pane started it. */
 export const pairing = new PairingController({

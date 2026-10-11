@@ -75,7 +75,7 @@ function controllerFor(side: Browser, carriers: LoopbackFactory): PairingControl
     identity: () => side.vault.identity(IDENTITY),
     local: () => side.local,
     carriers,
-    pin: (peer) => {
+    pin: async (peer) => {
       side.pinned.push(peer);
       return { ok: true };
     },

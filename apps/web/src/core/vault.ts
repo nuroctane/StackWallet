@@ -9,6 +9,7 @@
 import { useSyncExternalStore } from 'react';
 import type {
   CoreClient,
+  Device,
   IdentityHandle,
   IdentityInfo,
   VaultHandle,
@@ -84,6 +85,14 @@ export interface VaultStoreDeps {
   now?: () => number;
   /** Called after the identity is minted or read, so the device table can mirror it. */
   onIdentity?: (info: IdentityInfo | null) => void;
+  /**
+   * Called with the core-validated pinned table on unlock and `null` on lock,
+   * together with the writer that seals changes (`null` while locked).
+   */
+  onDevices?: (
+    devices: Device[] | null,
+    write: ((devices: Device[]) => Promise<void>) | null,
+  ) => void;
 }
 
 export class VaultStore {
@@ -161,8 +170,18 @@ export class VaultStore {
       identity = await this.vault.identityInfo(IDENTITY_LABEL);
     }
     this.deps.onIdentity?.(identity);
+    this.deps.onDevices?.(await this.vault.devices(), this.writeDevices);
     this.set({ status: { kind: 'unlocked', labels, identity } });
   }
+
+  /** Seal a whole device table and persist the vault; the core validates before writing. */
+  private readonly writeDevices = async (devices: Device[]): Promise<void> => {
+    if (!this.vault || this.view.status.kind !== 'unlocked')
+      throw new Error('Unlock the vault first');
+    await this.vault.setDevices(devices);
+    await this.persist();
+    this.set({ status: { ...this.view.status, labels: await this.vault.labels() } });
+  };
 
   private async guarded(op: () => Promise<void>): Promise<VaultResult> {
     if (this.view.busy) return { ok: false, error: 'The vault is busy' };
@@ -206,6 +225,7 @@ export class VaultStore {
     return this.guarded(async () => {
       if (!this.vault) throw new Error('No vault to lock');
       await this.vault.lock();
+      this.deps.onDevices?.(null, null);
       this.set({ status: { kind: 'locked', labels: await this.vault.labels() } });
     });
   }

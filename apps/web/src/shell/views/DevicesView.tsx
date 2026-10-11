@@ -26,7 +26,13 @@ import { usePairing, type ScannerState } from '../../core/pairing.js';
 import { useVaultView } from '../../core/vault.js';
 import { RTC_PREFIX, splitPairingText } from '../../core/webrtc.js';
 import { relativeTime } from '../../lib/format.js';
-import { devices, sortedDevices, useDevices, type LocalDevice } from '../../store/devices.js';
+import {
+  DEVICES_READ_ONLY,
+  devices,
+  sortedDevices,
+  useDevices,
+  type LocalDevice,
+} from '../../store/devices.js';
 import { useShell } from '../ShellContext.js';
 import { QrCode } from './QrCode.js';
 
@@ -413,12 +419,17 @@ function PairedDevicesSection({ list }: { list: Device[] }) {
   const now = useNow(5_000);
   const [revoking, setRevoking] = useState<Device | null>(null);
   const active = list.filter((d) => d.revokedAtMs === null).length;
+  // The table is sealed in the vault; while it is locked the list is a cache.
+  const writable = useVaultView(vault).status.kind === 'unlocked';
+  const counts = `${active} active · ${list.length - active} revoked`;
 
   return (
     <section className="sw-elevated flex min-w-0 flex-col overflow-hidden">
       <SectionHeader
         title="Paired devices"
-        meta={list.length === 0 ? undefined : `${active} active · ${list.length - active} revoked`}
+        meta={
+          list.length === 0 ? undefined : writable ? counts : `${counts} · read-only while locked`
+        }
       />
       {list.length === 0 ? (
         <EmptyState
@@ -452,7 +463,13 @@ function PairedDevicesSection({ list }: { list: Device[] }) {
             </thead>
             <tbody className="divide-y divide-edge">
               {list.map((d) => (
-                <DeviceRow key={d.id} device={d} now={now} onRevoke={() => setRevoking(d)} />
+                <DeviceRow
+                  key={d.id}
+                  device={d}
+                  now={now}
+                  writable={writable}
+                  onRevoke={() => setRevoking(d)}
+                />
               ))}
             </tbody>
           </table>
@@ -466,18 +483,20 @@ function PairedDevicesSection({ list }: { list: Device[] }) {
 function DeviceRow({
   device,
   now,
+  writable,
   onRevoke,
 }: {
   device: Device;
   now: number;
+  writable: boolean;
   onRevoke: () => void;
 }) {
   const toasts = useToasts();
   const [renaming, setRenaming] = useState(false);
   const revoked = device.revokedAtMs !== null;
 
-  const remove = () => {
-    const result = devices.remove(device.id);
+  const remove = async () => {
+    const result = await devices.remove(device.id);
     if (!result.ok) toasts.push(result.error, 'danger');
     else toasts.push(`Removed ${device.name}`);
   };
@@ -493,10 +512,10 @@ function DeviceRow({
         {renaming ? (
           <RenameInput
             initial={device.name}
-            onDone={(name) => {
+            onDone={async (name) => {
               setRenaming(false);
               if (name === null) return;
-              const result = devices.rename(device.id, name);
+              const result = await devices.rename(device.id, name);
               if (!result.ok) toasts.push(result.error, 'danger');
             }}
           />
@@ -538,7 +557,14 @@ function DeviceRow({
       </td>
       <td className="px-4 text-right whitespace-nowrap">
         {revoked ? (
-          <Button size="sm" variant="ghost" aria-label={`Remove ${device.name}`} onClick={remove}>
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={`Remove ${device.name}`}
+            onClick={() => void remove()}
+            disabled={!writable}
+            title={writable ? undefined : DEVICES_READ_ONLY}
+          >
             remove
           </Button>
         ) : (
@@ -548,7 +574,8 @@ function DeviceRow({
               variant="ghost"
               aria-label={`Rename ${device.name}`}
               onClick={() => setRenaming(true)}
-              disabled={renaming}
+              disabled={renaming || !writable}
+              title={writable ? undefined : DEVICES_READ_ONLY}
             >
               rename
             </Button>
@@ -557,6 +584,8 @@ function DeviceRow({
               variant="ghost"
               aria-label={`Revoke ${device.name}`}
               onClick={onRevoke}
+              disabled={!writable}
+              title={writable ? undefined : DEVICES_READ_ONLY}
             >
               revoke
             </Button>
@@ -605,9 +634,9 @@ function RevokeDialog({ device, onClose }: { device: Device | null; onClose: () 
   const toasts = useToasts();
   const [error, setError] = useState<string | null>(null);
 
-  const confirm = () => {
+  const confirm = async () => {
     if (!device) return;
-    const result = devices.revoke(device.id);
+    const result = await devices.revoke(device.id);
     if (!result.ok) {
       setError(result.error);
       return;
@@ -638,7 +667,7 @@ function RevokeDialog({ device, onClose }: { device: Device | null; onClose: () 
           <Button variant="ghost" onClick={close} autoFocus>
             Cancel
           </Button>
-          <Button variant="danger" onClick={confirm}>
+          <Button variant="danger" onClick={() => void confirm()}>
             Revoke device
           </Button>
         </div>

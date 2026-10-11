@@ -90,6 +90,35 @@ describe.skipIf(!built)('wasm bridge against the built core', () => {
     reopened.free();
   });
 
+  it('seals the device table in the vault and refuses a forged entry', async () => {
+    const c = await load();
+    const own = await c.createVault(PASS);
+    const peerVault = await c.createVault(PASS);
+    const peerInfo = await peerVault.createIdentity('id');
+    peerVault.free();
+
+    expect(await own.devices()).toEqual([]);
+    const peer = deviceFrom(peerInfo, 'Peer laptop');
+    await own.setDevices([peer]);
+    expect((await own.labels()).map((l) => l.label)).toEqual(['device-table']);
+
+    const bytes = await own.toBytes();
+    own.free();
+    const reopened = await c.openVault(bytes);
+    await expect(reopened.devices()).rejects.toThrow();
+    await reopened.unlock(PASS);
+    expect(await reopened.devices()).toEqual([peer]);
+
+    // An id that is not the derivation of the identity key must never be sealed.
+    const forged = { ...peer, id: 'ab'.repeat(16) };
+    await expect(reopened.setDevices([forged])).rejects.toThrow(/identity key/);
+    expect(await reopened.devices()).toEqual([peer]);
+    await expect(reopened.setDevices([peer, { ...peer, name: 'Twin' }])).rejects.toThrow();
+    await reopened.setDevices([]);
+    expect(await reopened.devices()).toEqual([]);
+    reopened.free();
+  });
+
   it('pairs two identities through the sans-IO session end to end', async () => {
     const c = await load();
     const vaultA = await c.createVault(PASS);

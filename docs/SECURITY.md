@@ -86,9 +86,12 @@ other paired devices (their own core)
   controller does the same: a rejected answer paste keeps the offer, but once an answer is
   accepted the offer is spent whether the handshake succeeds or fails, and it is never
   re-emitted after a `paired` event.
-- The browser's device list in localStorage is a cache, not the trust root: when the core bridge
-  lands, the pinned device table lives in the core's encrypted store and the core re-validates
-  anything the UI hands it.
+- The browser's device list in localStorage is a cache, not the trust root. The pinned device
+  table is sealed in the vault under the `device-table` label; the core validates every table
+  it loads or saves (each id is the derivation of its identity key, Noise statics are 32 bytes,
+  names are bounded, ids are unique, at most 256 entries) and refuses the write otherwise. The
+  UI replaces its cache with the core's copy on unlock and refuses every table change while the
+  vault is locked.
 
 ## 5. Privacy
 

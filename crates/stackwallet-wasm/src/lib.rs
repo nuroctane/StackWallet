@@ -5,6 +5,8 @@
 mod transport;
 
 use stackwallet_core::identity::{DeviceIdentity, SignedCeremonyMessage};
+use stackwallet_core::store::devices::{load_device_table, save_device_table};
+use stackwallet_core::store::Device;
 use stackwallet_core::tss::CeremonyMessage;
 use stackwallet_core::vault::{EncryptedVault, KdfParams, Secret, SecretHandle, Vault};
 use wasm_bindgen::prelude::*;
@@ -175,6 +177,21 @@ impl WasmVault {
                 .map(WasmIdentity::from_inner)
                 .map_err(core_err)
         })
+    }
+
+    /// The pinned device table sealed in this vault, validated: `Device[]`
+    /// JSON, empty when nothing has been pinned. Needs the vault unlocked.
+    pub fn devices_json(&self) -> Result<String, JsError> {
+        let table = load_device_table(&self.inner).map_err(core_err)?;
+        Ok(serde_json::to_string(&table)?)
+    }
+
+    /// Validate and seal a whole `Device[]` table. A record whose id is not
+    /// the derivation of its identity key, a duplicate, or an oversized table
+    /// is refused before anything is written.
+    pub fn set_devices_json(&mut self, devices_json: &str) -> Result<(), JsError> {
+        let table: Vec<Device> = serde_json::from_str(devices_json)?;
+        save_device_table(&mut self.inner, &table).map_err(core_err)
     }
 
     /// Sign a `CeremonyMessage` JSON with the identity under `label`;

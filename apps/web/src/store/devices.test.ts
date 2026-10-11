@@ -5,6 +5,7 @@ import {
   activeDevices,
   DEVICES_STORAGE_KEY,
   deviceFromOffer,
+  DEVICES_READ_ONLY,
   DevicesState,
   DevicesStore,
   emptyDevicesState,
@@ -191,21 +192,70 @@ describe('loadDevices', () => {
 });
 
 describe('DevicesStore', () => {
-  it('persists every change, notifies once per change, and surfaces errors', () => {
+  it('writes every table change through the sink, caches it, and notifies once per change', async () => {
     const storage = new MemoryStorage();
     let t = 1_000;
-    const store = new DevicesStore(emptyDevicesState(), storage, () => (t += 1));
+    const sealed: Device[][] = [];
+    const store = new DevicesStore(emptyDevicesState(), storage, () => (t += 1), {
+      write: async (d) => {
+        sealed.push(d);
+      },
+    });
     let n = 0;
     store.subscribe(() => (n += 1));
 
-    expect(store.pin(device('1a', 'Laptop'))).toEqual({ ok: true, value: hex('1a', 16) });
-    expect(store.pin(device('1a', 'Laptop'))).toEqual({ ok: false, error: 'Already paired' });
-    expect(store.rename(hex('1a', 16), 'Laptop')).toEqual({ ok: true, value: undefined });
-    expect(store.revoke(hex('1a', 16)).ok).toBe(true);
+    expect(await store.pin(device('1a', 'Laptop'))).toEqual({ ok: true, value: hex('1a', 16) });
+    expect(await store.pin(device('1a', 'Laptop'))).toEqual({ ok: false, error: 'Already paired' });
+    expect(await store.rename(hex('1a', 16), 'Laptop')).toEqual({ ok: true, value: undefined });
+    expect((await store.revoke(hex('1a', 16))).ok).toBe(true);
     expect(store.getSnapshot().devices[0]?.revokedAtMs).toBe(1_001);
-    expect(store.remove(hex('1a', 16)).ok).toBe(true);
-    // pin, revoke, remove changed state; the no-op rename and the failed pin did not.
+    expect((await store.remove(hex('1a', 16))).ok).toBe(true);
+    // pin, revoke, remove changed the table; the no-op rename and the failed pin did not.
     expect(n).toBe(3);
+    expect(sealed.map((d) => d.length)).toEqual([1, 1, 0]);
     expect(JSON.parse(storage.getItem(DEVICES_STORAGE_KEY)!)).toEqual(emptyDevicesState());
+  });
+
+  it('is read-only without a sink and keeps the cache when a seal fails', async () => {
+    const storage = new MemoryStorage();
+    const store = new DevicesStore(emptyDevicesState(), storage);
+    expect(store.writable).toBe(false);
+    expect(await store.pin(device('1a', 'Laptop'))).toEqual({
+      ok: false,
+      error: DEVICES_READ_ONLY,
+    });
+    // Local identity is not part of the sealed table, so it stays writable.
+    expect(store.setLocal(null).ok).toBe(true);
+
+    await store.adopt([device('1a', 'Laptop')], {
+      write: async () => {
+        throw new Error('vault refused');
+      },
+    });
+    expect(store.writable).toBe(true);
+    expect(store.getSnapshot().devices.map((d) => d.name)).toEqual(['Laptop']);
+    expect(await store.rename(hex('1a', 16), 'Desk')).toEqual({
+      ok: false,
+      error: 'vault refused',
+    });
+    expect(store.getSnapshot().devices[0]?.name).toBe('Laptop');
+
+    await store.adopt(null, null);
+    expect(store.writable).toBe(false);
+    expect(store.getSnapshot().devices).toHaveLength(1);
+    expect(await store.revoke(hex('1a', 16))).toEqual({ ok: false, error: DEVICES_READ_ONLY });
+  });
+
+  it('serializes overlapping mutations so none is computed from a stale table', async () => {
+    const store = new DevicesStore(emptyDevicesState(), null, () => 1, {
+      write: () => new Promise((r) => setTimeout(r, 2)),
+    });
+    const results = await Promise.all([
+      store.pin(device('1a', 'A')),
+      store.pin(device('2b', 'B')),
+      store.pin(device('1a', 'A again')),
+    ]);
+    expect(results.map((r) => r.ok)).toEqual([true, true, false]);
+    expect(store.getSnapshot().devices).toHaveLength(2);
   });
 });
