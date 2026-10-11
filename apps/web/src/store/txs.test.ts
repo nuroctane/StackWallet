@@ -18,10 +18,15 @@ const mocks = vi.hoisted(() => ({
   broadcastCosmos: vi.fn(),
   cosmosApprovalValid: vi.fn(),
   cosmosTransferStatus: vi.fn(),
+  prepareBitcoin: vi.fn(),
+  bitcoinInputsUnspent: vi.fn(),
+  broadcastBitcoin: vi.fn(),
+  bitcoinTransferStatus: vi.fn(),
 }));
 vi.mock('../core/bridge.js', () => ({ vault: mocks }));
 vi.mock('@stackwallet/chains-solana', () => mocks);
 vi.mock('@stackwallet/chains-cosmos', () => mocks);
+vi.mock('@stackwallet/chains-bitcoin', () => mocks);
 vi.mock('@stackwallet/chains-evm', async (original) => ({
   ...(await original<typeof import('@stackwallet/chains-evm')>()),
   broadcastEvm: mocks.broadcastEvm,
@@ -86,6 +91,57 @@ beforeEach(() => {
   );
   mocks.broadcastSolana.mockResolvedValue(signed.hash);
   mocks.cosmosApprovalValid.mockResolvedValue(true);
+  mocks.bitcoinInputsUnspent.mockResolvedValue(true);
+});
+
+describe('Bitcoin core lifecycle orchestration', () => {
+  const chainId = 'bip122:00000008819873e925422c1ff0f99f7c';
+  const bitcoinTx: TxRecord = {
+    ...tx,
+    intent: { ...tx.intent, chainId },
+    unsigned: {
+      chainId,
+      from: 'from',
+      to: 'to',
+      amount: '1000',
+      fee: '200',
+      inputs: [{ txid: 'a'.repeat(64), vout: 0, previousTxHex: '00' }],
+    },
+  };
+  const bitcoinRegistry = { adapterFor: () => ({ family: 'bitcoin' }) } as unknown as ChainRegistry;
+  it('refuses spent or unavailable inputs before invoking the core signer', async () => {
+    mocks.bitcoinInputsUnspent.mockResolvedValue(false);
+    expect((await approveAndSend(bitcoinRegistry, bitcoinTx, 'pw')).ok).toBe(false);
+    expect(mocks.txApprove).not.toHaveBeenCalled();
+    mocks.bitcoinInputsUnspent.mockRejectedValue(new Error('offline'));
+    expect((await approveAndSend(bitcoinRegistry, bitcoinTx, 'pw')).ok).toBe(false);
+    expect(mocks.txApprove).not.toHaveBeenCalled();
+  });
+  it('tracks the core txid after an ambiguous broadcast and a restart without resending', async () => {
+    mocks.broadcastBitcoin.mockRejectedValue(new Error('timeout'));
+    expect(await approveAndSend(bitcoinRegistry, bitcoinTx, 'pw')).toMatchObject({
+      ok: true,
+      value: { state: 'pending' },
+    });
+    expect(mocks.txReport).toHaveBeenLastCalledWith(
+      't',
+      'pending',
+      expect.stringContaining('uncertain'),
+    );
+    mocks.txReport.mockClear();
+    mocks.broadcastBitcoin.mockClear();
+    mocks.bitcoinTransferStatus.mockResolvedValue({ state: 'unknown' });
+    await pollPending(bitcoinRegistry, [{ ...bitcoinTx, state: 'signed', hash: 'a'.repeat(64) }]);
+    expect(mocks.txReport).toHaveBeenLastCalledWith(
+      't',
+      'pending',
+      expect.stringContaining('unknown'),
+    );
+    expect(mocks.broadcastBitcoin).not.toHaveBeenCalled();
+    mocks.bitcoinTransferStatus.mockResolvedValue({ state: 'confirmed', blockNumber: 100 });
+    await pollPending(bitcoinRegistry, [{ ...bitcoinTx, state: 'pending', hash: 'a'.repeat(64) }]);
+    expect(mocks.txReport).toHaveBeenLastCalledWith('t', 'confirmed', 'block 100');
+  });
 });
 
 describe('Cosmos core lifecycle orchestration', () => {

@@ -1,4 +1,11 @@
 import type { ChainRegistry } from '@stackwallet/chains';
+import {
+  prepareBitcoin,
+  bitcoinInputsUnspent,
+  broadcastBitcoin,
+  bitcoinTransferStatus,
+  type BitcoinAdapter,
+} from '@stackwallet/chains-bitcoin';
 import { broadcastEvm, nodeMessage, prepareEvm, type EvmAdapter } from '@stackwallet/chains-evm';
 import {
   broadcastSolana,
@@ -47,6 +54,11 @@ function cosmosAdapter(registry: ChainRegistry, chainId: string): CosmosAdapter 
   if (a.family !== 'cosmos') throw new Error(`${chainId} is not a Cosmos chain`);
   return a as unknown as CosmosAdapter;
 }
+function bitcoinAdapter(registry: ChainRegistry, chainId: string): BitcoinAdapter {
+  const a = registry.adapterFor(chainId);
+  if (a.family !== 'bitcoin') throw new Error('Not a Bitcoin chain');
+  return a as unknown as BitcoinAdapter;
+}
 
 /**
  * Propose a transfer: the core records the intent, the adapter prepares the
@@ -78,24 +90,30 @@ export async function proposeSend(
   let prepared;
   try {
     prepared =
-      account.family === 'solana'
-        ? await prepareSolana(
-            solanaAdapter(registry, account.chainId),
+      account.family === 'bitcoin'
+        ? await prepareBitcoin(
+            bitcoinAdapter(registry, account.chainId),
             proposed.value.intent,
             account.address,
           )
-        : account.family === 'cosmos'
-          ? await prepareCosmos(
-              cosmosAdapter(registry, account.chainId),
+        : account.family === 'solana'
+          ? await prepareSolana(
+              solanaAdapter(registry, account.chainId),
               proposed.value.intent,
               account.address,
-              account.publicKeyHex,
             )
-          : await prepareEvm(
-              evmAdapter(registry, account.chainId),
-              proposed.value.intent,
-              account.address,
-            );
+          : account.family === 'cosmos'
+            ? await prepareCosmos(
+                cosmosAdapter(registry, account.chainId),
+                proposed.value.intent,
+                account.address,
+                account.publicKeyHex,
+              )
+            : await prepareEvm(
+                evmAdapter(registry, account.chainId),
+                proposed.value.intent,
+                account.address,
+              );
   } catch (err) {
     return {
       ok: false,
@@ -139,6 +157,19 @@ async function approveAndBroadcast(
 ): Promise<Result<TxRecord>> {
   const solana = tx.unsigned && 'recentBlockhash' in tx.unsigned ? tx.unsigned : null;
   const cosmos = tx.unsigned && 'timeoutHeight' in tx.unsigned ? tx.unsigned : null;
+  const bitcoin = tx.unsigned && 'inputs' in tx.unsigned ? tx.unsigned : null;
+  if (bitcoin) {
+    try {
+      if (!(await bitcoinInputsUnspent(bitcoinAdapter(registry, tx.intent.chainId), bitcoin)))
+        return {
+          ok: false,
+          error:
+            'A selected input has been spent. Reject this proposal and prepare a fresh transfer.',
+        };
+    } catch (err) {
+      return { ok: false, error: `Could not verify inputs: ${nodeMessage(err)}` };
+    }
+  }
   if (solana) {
     try {
       if (!(await solanaBlockhashValid(solanaAdapter(registry, tx.intent.chainId), solana)))
@@ -169,23 +200,29 @@ async function approveAndBroadcast(
   const b = await vault.txReport(tx.id, 'broadcast', null);
   if (!b.ok) return b;
   try {
-    const hash = solana
-      ? await broadcastSolana(
-          solanaAdapter(registry, tx.intent.chainId),
-          tx.intent.chainId,
+    const hash = bitcoin
+      ? await broadcastBitcoin(
+          bitcoinAdapter(registry, tx.intent.chainId),
+          bitcoin,
           signed.value.rawSignedHex,
         )
-      : cosmos
-        ? await broadcastCosmos(
-            cosmosAdapter(registry, tx.intent.chainId),
-            cosmos,
-            signed.value.rawSignedHex,
-          )
-        : await broadcastEvm(
-            evmAdapter(registry, tx.intent.chainId),
+      : solana
+        ? await broadcastSolana(
+            solanaAdapter(registry, tx.intent.chainId),
             tx.intent.chainId,
             signed.value.rawSignedHex,
-          );
+          )
+        : cosmos
+          ? await broadcastCosmos(
+              cosmosAdapter(registry, tx.intent.chainId),
+              cosmos,
+              signed.value.rawSignedHex,
+            )
+          : await broadcastEvm(
+              evmAdapter(registry, tx.intent.chainId),
+              tx.intent.chainId,
+              signed.value.rawSignedHex,
+            );
     const note = (
       solana ? hash === signed.value.hash : hash.toLowerCase() === signed.value.hash?.toLowerCase()
     )
@@ -193,7 +230,7 @@ async function approveAndBroadcast(
       : `node reported ${hash}; tracking the core signature`;
     return vault.txReport(tx.id, 'pending', note);
   } catch (err) {
-    if (solana || cosmos)
+    if (solana || cosmos || bitcoin)
       return vault.txReport(
         tx.id,
         'pending',
@@ -217,9 +254,10 @@ export async function pollPending(
       try {
         const solana = t.unsigned && 'recentBlockhash' in t.unsigned ? t.unsigned : null;
         const cosmos = t.unsigned && 'timeoutHeight' in t.unsigned ? t.unsigned : null;
+        const bitcoin = t.unsigned && 'inputs' in t.unsigned ? t.unsigned : null;
         // Resume tracking after a crash between signing, broadcast and the saved response.
         if (t.state !== 'pending') {
-          if (!solana && !cosmos) continue;
+          if (!solana && !cosmos && !bitcoin) continue;
           if (t.state === 'signed') {
             const resumed = await vault.txReport(
               t.id,
@@ -235,11 +273,17 @@ export async function pollPending(
           );
           if (!resumed.ok) continue;
         }
-        const status = solana
-          ? await solanaTransferStatus(solanaAdapter(registry, t.intent.chainId), solana, t.hash)
-          : cosmos
-            ? await cosmosTransferStatus(cosmosAdapter(registry, t.intent.chainId), cosmos, t.hash)
-            : await registry.adapterFor(t.intent.chainId).status(t.hash, t.intent.chainId);
+        const status = bitcoin
+          ? await bitcoinTransferStatus(bitcoinAdapter(registry, t.intent.chainId), bitcoin, t.hash)
+          : solana
+            ? await solanaTransferStatus(solanaAdapter(registry, t.intent.chainId), solana, t.hash)
+            : cosmos
+              ? await cosmosTransferStatus(
+                  cosmosAdapter(registry, t.intent.chainId),
+                  cosmos,
+                  t.hash,
+                )
+              : await registry.adapterFor(t.intent.chainId).status(t.hash, t.intent.chainId);
         if (status.state === 'confirmed') {
           await vault.txReport(t.id, 'confirmed', `block ${status.blockNumber}`);
         } else if (status.state === 'failed') {

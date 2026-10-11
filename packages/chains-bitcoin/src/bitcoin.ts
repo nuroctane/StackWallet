@@ -1,8 +1,8 @@
 /**
  * Bitcoin-family adapter (BTC mainnet/testnet4/signet, LTC, DOGE). Address
  * derivation and validation are pure; balances and status use the
- * mempool.space REST API shape. PSBT construction, coin control and fee
- * estimation arrive with bitcoinjs-lib in a later phase.
+ * mempool.space REST API shape. Signet native send helpers use public codecs;
+ * the Rust core owns PSBT construction and signing.
  */
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -17,6 +17,9 @@ import {
   secp256k1Compressed,
   withCrossCheck,
   withFailover,
+  fetchJson,
+  fetchText,
+  HttpError,
   type Address,
   type BaseAdapterOptions,
   type ChainInfo,
@@ -121,6 +124,12 @@ const TxStatusBody = z.object({
 });
 
 export type BitcoinAdapterOptions = BaseAdapterOptions;
+export type EsploraQuery = <T>(
+  path: string,
+  schema: z.ZodType<T>,
+  text?: boolean,
+  body?: string,
+) => Promise<T | null>;
 
 /** mempool.space answers 404 for an address or tx it has not indexed. */
 const NOT_FOUND: readonly number[] = [404];
@@ -138,6 +147,33 @@ export function balanceFromStats(stats: z.infer<typeof AddressStats>): bigint {
 export class BitcoinAdapter extends BaseAdapter<'bitcoin'> {
   constructor(opts: BitcoinAdapterOptions = {}) {
     super('bitcoin', opts);
+  }
+
+  /** Bind dependent UTXO observations and broadcasts to one verified Signet endpoint. */
+  withSignet<T>(chainId: ChainId, operation: (query: EsploraQuery) => Promise<T>): Promise<T> {
+    if (chainId !== 'bip122:00000008819873e925422c1ff0f99f7c')
+      throw new Error('Only Bitcoin Signet sends are enabled');
+    return withFailover(this.rpc, chainId, async (url) => {
+      const query: EsploraQuery = async (path, schema, text = false, body) => {
+        const endpoint = `${url.replace(/\/$/, '')}${path}`;
+        try {
+          const raw = text
+            ? await fetchText(endpoint, this.fetchOptions(), body)
+            : await fetchJson(endpoint, this.fetchOptions());
+          return schema.parse(raw);
+        } catch (err) {
+          if (body === undefined && err instanceof HttpError && err.status === 404) return null;
+          throw err;
+        }
+      };
+      const genesis = await query(
+        '/block-height/0',
+        z.literal('00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6'),
+        true,
+      );
+      if (!genesis) throw new Error('Cannot verify Signet genesis');
+      return operation(query);
+    });
   }
 
   /**

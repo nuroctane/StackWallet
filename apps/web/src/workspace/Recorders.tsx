@@ -66,7 +66,9 @@ export function Recorders() {
     ledger?.txs.filter(
       (t) =>
         t.state === 'pending' ||
-        ((t.intent.chainId.startsWith('solana:') || t.intent.chainId.startsWith('cosmos:')) &&
+        ((t.intent.chainId.startsWith('solana:') ||
+          t.intent.chainId.startsWith('cosmos:') ||
+          t.intent.chainId.startsWith('bip122:')) &&
           ['signed', 'broadcast'].includes(t.state)),
     ) ?? [];
   const pendingKey = pending.map((t) => t.id).join('|');

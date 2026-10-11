@@ -323,7 +323,7 @@ mod tests {
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
         );
         assert_eq!(
-            hex::encode(m.to_seed("TREZOR").as_ref()),
+            hex::encode(&m.to_seed("TREZOR")[..]),
             "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e53495531f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04"
         );
         let m = Mnemonic::from_entropy(&[0xffu8; 32]).unwrap();
@@ -332,7 +332,7 @@ mod tests {
             "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote"
         );
         assert_eq!(
-            hex::encode(m.to_seed("TREZOR").as_ref()),
+            hex::encode(&m.to_seed("TREZOR")[..]),
             "dd48c104698c30cfe2b6142103248622fb7bb0ff692eebb00089b32d22484e1613912f0a5b694407be899ffd31ed3992c456cdf60f5d4564b8ba3f05a69890ad"
         );
     }

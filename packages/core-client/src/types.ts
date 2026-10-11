@@ -651,7 +651,28 @@ export const CosmosTx = z.strictObject({
   timeoutHeight: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
 });
 export type CosmosTx = z.infer<typeof CosmosTx>;
-export const LedgerUnsignedTx = z.union([EvmTx, SolanaTx, CosmosTx]);
+export const BitcoinTx = z.strictObject({
+  chainId: z.literal('bip122:00000008819873e925422c1ff0f99f7c'),
+  from: z.string().max(90),
+  to: z.string().max(90),
+  amount: Amount,
+  fee: Amount,
+  inputs: z
+    .array(
+      z.strictObject({
+        txid: z.string().regex(/^[0-9a-f]{64}$/),
+        vout: z.number().int().nonnegative().max(0xffffffff),
+        previousTxHex: z
+          .string()
+          .max(400000)
+          .regex(/^(?:[0-9a-f]{2})+$/),
+      }),
+    )
+    .min(1)
+    .max(8),
+});
+export type BitcoinTx = z.infer<typeof BitcoinTx>;
+export const LedgerUnsignedTx = z.union([EvmTx, SolanaTx, CosmosTx, BitcoinTx]);
 export type LedgerUnsignedTx = z.infer<typeof LedgerUnsignedTx>;
 
 export const Signer = z.object({ walletId: z.string(), path: z.string(), address: z.string() });

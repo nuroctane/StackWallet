@@ -465,7 +465,12 @@ export const MAX_BODY_BYTES = 1 << 20;
  * headers: an endpoint that answers quickly and then trickles the body would
  * otherwise hold the request (and the failover loop) open forever.
  */
-async function fetchJsonBody(url: string, init: RequestInit, opts: FetchOptions): Promise<unknown> {
+async function fetchJsonBody(
+  url: string,
+  init: RequestInit,
+  opts: FetchOptions,
+  rawText = false,
+): Promise<unknown> {
   const doFetch = opts.fetch ?? globalThis.fetch;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
@@ -481,6 +486,7 @@ async function fetchJsonBody(url: string, init: RequestInit, opts: FetchOptions)
     const res = await doFetch(url, { ...init, signal: controller.signal });
     const text = await readBody(url, res);
     if (!res.ok) throw new HttpError(url, res.status, text.slice(0, 512));
+    if (rawText) return text;
     try {
       return JSON.parse(text) as unknown;
     } catch {
@@ -524,6 +530,27 @@ async function readBody(url: string, res: Response): Promise<string> {
 /** GET a JSON document. The caller validates the shape with zod. */
 export async function fetchJson(url: string, opts: FetchOptions = {}): Promise<unknown> {
   return fetchJsonBody(url, { method: 'GET', headers: { accept: 'application/json' } }, opts);
+}
+
+/** Bounded Esplora text reads and raw-transaction broadcasts share the JSON timeout. */
+export async function fetchText(
+  url: string,
+  opts: FetchOptions = {},
+  body?: string,
+): Promise<string> {
+  return (await fetchJsonBody(
+    url,
+    {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: {
+        accept: 'text/plain',
+        ...(body === undefined ? {} : { 'Content-Type': 'text/plain' }),
+      },
+      ...(body === undefined ? {} : { body }),
+    },
+    opts,
+    true,
+  )) as string;
 }
 
 /** POST a JSON-RPC 2.0 call and return `result`. The caller validates the shape with zod. */

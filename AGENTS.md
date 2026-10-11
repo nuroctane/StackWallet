@@ -87,8 +87,10 @@ Worker `stackwallet` (config in `apps/web/wrangler.jsonc`) to
 opens+closes a `deployment` issue. It needs the repo secrets `CLOUDFLARE_API_TOKEN`
 (Workers Scripts: Edit) and `CLOUDFLARE_ACCOUNT_ID`; without the token the run stays green
 and skips the deploy. Do not also run `wrangler deploy` by hand after a push (double deploy).
-Manual fallback: `pnpm --filter @stackwallet/web build; pnpm --filter @stackwallet/web deploy`.
+Manual fallback: `pnpm --filter @stackwallet/web build; pnpm --filter @stackwallet/web run deploy`.
 
 **Windows shell note:** this machine's `PATH` is longer than cmd.exe's 8191-char limit, so pnpm
 lifecycle scripts fail with `'node' is not recognized`. Set a trimmed `$env:Path` (nodejs, pnpm,
 cargo, Git, System32) in the same command before running `pnpm`.
+The Bitcoin WASM dependency also needs Clang; include the installed LLVM `bin` directory in
+that trimmed path when building the browser core.

@@ -134,6 +134,7 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
   const evm = tx.unsigned && 'dataHex' in tx.unsigned ? tx.unsigned : null;
   const solana = tx.unsigned && 'recentBlockhash' in tx.unsigned ? tx.unsigned : null;
   const cosmos = tx.unsigned && 'timeoutHeight' in tx.unsigned ? tx.unsigned : null;
+  const bitcoin = tx.unsigned && 'inputs' in tx.unsigned ? tx.unsigned : null;
   const call = decodeCalldata(evm?.dataHex ?? '');
   const native = chain?.nativeAsset;
   const maxFee = evm ? BigInt(evm.maxFeePerGas) * BigInt(evm.gasLimit) : undefined;
@@ -173,6 +174,20 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
         </Row>
       )}
       <DecodedLine call={call} chainId={i.chainId} />
+      {bitcoin && (
+        <p className="text-[11px] text-muted">
+          {bitcoin.inputs.length} confirmed input(s) · change returns to the sender. RBF signaled;
+          replacement is not implemented. Confirmation waits for six blocks; unknown outcomes stay
+          pending.
+        </p>
+      )}
+      {bitcoin && native && (
+        <Row label="fee">
+          <span className="font-mono">
+            {formatUnits(bitcoin.fee, native.decimals, native.decimals)} {native.symbol}
+          </span>
+        </Row>
+      )}
       {cosmos && (
         <p className="text-[11px] text-muted">
           One native bank transfer · expires after block {cosmos.timeoutHeight}. If the sequence

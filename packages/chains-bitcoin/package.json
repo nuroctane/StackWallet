@@ -12,6 +12,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "bitcoinjs-lib": "7.0.1",
     "@noble/hashes": "2.4.0",
     "@scure/base": "2.4.0",
     "@stackwallet/chains": "workspace:*",
@@ -19,6 +20,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@cosmjs/crypto": "0.39.0",
     "typescript": "7.0.2",
     "vitest": "3.2.6"
   }

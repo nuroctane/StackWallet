@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::audit::{Actor, AuditChain, AuditEntry, AuditEvent};
+use crate::bitcoin::{self, BitcoinTx};
 use crate::cosmos::{self, CosmosTx};
 use crate::evm::{self, EvmTx};
 use crate::intent::TxIntent;
@@ -54,6 +55,7 @@ pub enum UnsignedTx {
     Evm(EvmTx),
     Solana(SolanaTx),
     Cosmos(CosmosTx),
+    Bitcoin(BitcoinTx),
 }
 
 impl From<EvmTx> for UnsignedTx {
@@ -77,14 +79,49 @@ impl UnsignedTx {
             Self::Evm(tx) => evm::check_matches_intent(tx, intent),
             Self::Solana(tx) => tx.check_matches_intent(intent),
             Self::Cosmos(tx) => tx.check_matches_intent(intent),
+            Self::Bitcoin(tx) => tx.check_matches_intent(intent),
         }
     }
     fn curve(&self) -> Curve {
         match self {
-            Self::Evm(_) | Self::Cosmos(_) => Curve::Secp256k1,
+            Self::Evm(_) | Self::Cosmos(_) | Self::Bitcoin(_) => Curve::Secp256k1,
             Self::Solana(_) => Curve::Ed25519,
         }
     }
+}
+impl From<BitcoinTx> for UnsignedTx {
+    fn from(tx: BitcoinTx) -> Self {
+        Self::Bitcoin(tx)
+    }
+}
+
+fn check_bitcoin_reservations(ledger: &Ledger, id: &str, unsigned: &UnsignedTx) -> Result<()> {
+    let UnsignedTx::Bitcoin(tx) = unsigned else {
+        return Ok(());
+    };
+    for other in &ledger.txs {
+        if other.id == id
+            || (other.raw_signed_hex.is_none()
+                && matches!(
+                    other.state,
+                    TxState::Denied | TxState::Rejected | TxState::Failed | TxState::Expired
+                ))
+        {
+            continue;
+        }
+        if let Some(UnsignedTx::Bitcoin(reserved)) = &other.unsigned {
+            if reserved.inputs.iter().any(|a| {
+                tx.inputs
+                    .iter()
+                    .any(|b| a.txid == b.txid && a.vout == b.vout)
+            }) {
+                return Err(invalid(
+                    "Bitcoin input is reserved by another active or signed transfer",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -282,6 +319,8 @@ pub fn propose(
         solana::check_chain(&intent.chain_id.0)?;
     } else if intent.chain_id.0.starts_with("cosmos:") {
         cosmos::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("bip122:") {
+        bitcoin::check_chain(&intent.chain_id.0)?;
     } else {
         evm::eip155_number(&intent.chain_id.0)?;
     }
@@ -325,10 +364,17 @@ fn signer_address(
     signer: &Signer,
     unsigned: &UnsignedTx,
 ) -> Result<String> {
+    // Bitcoin sighashes do not carry a network ID; refuse mainnet coin derivations.
+    if matches!(unsigned, UnsignedTx::Bitcoin(_)) && !signer.path.starts_with("m/84'/1'/") {
+        return Err(invalid(
+            "Signet signing requires a testnet BIP84 derivation path",
+        ));
+    }
     let key = provenance::signing_key(vault, &signer.wallet_id, unsigned.curve(), &signer.path)?;
     match unsigned {
         UnsignedTx::Solana(_) => Ok(bs58::encode(&key.public).into_string()),
         UnsignedTx::Cosmos(_) => cosmos::address(&key.public),
+        UnsignedTx::Bitcoin(_) => bitcoin::address(&key.public),
         UnsignedTx::Evm(_) => Ok(evm::checksum_address(&evm::address_from_public(
             &key.public,
         )?)),
@@ -356,11 +402,13 @@ pub fn attach(
         return Err(invalid("signer wallet differs from the intent"));
     }
     unsigned.check_matches_intent(&ledger.txs[i].intent)?;
+    check_bitcoin_reservations(&ledger, tx_id, &unsigned)?;
     let derived = signer_address(vault, &signer, &unsigned)?;
     let matches = match &unsigned {
         UnsignedTx::Evm(_) => evm::parse_address(&derived)? == evm::parse_address(&signer.address)?,
         UnsignedTx::Solana(tx) => derived == signer.address && tx.from == derived,
         UnsignedTx::Cosmos(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Bitcoin(tx) => derived == signer.address && tx.from == derived,
     };
     if !matches {
         return Err(invalid(format!(
@@ -435,6 +483,9 @@ pub fn approve(
             "only a transaction awaiting approval can be approved",
         ));
     }
+    if let Some(unsigned) = &ledger.txs[i].unsigned {
+        check_bitcoin_reservations(&ledger, tx_id, unsigned)?;
+    }
     // Policies can change while a proposal waits; the signing-time answer wins.
     let ctx = ledger.context(tx_id, now_ms, ledger.txs[i].simulation_ok);
     let decision = policy::evaluate(&ledger.policies, &ledger.txs[i].intent, &ctx);
@@ -482,6 +533,7 @@ pub fn approve(
             }
             UnsignedTx::Solana(tx) => tx.sign(key.secret()),
             UnsignedTx::Cosmos(tx) => tx.sign(key.secret()),
+            UnsignedTx::Bitcoin(tx) => tx.sign(key.secret()),
         }
     })();
     match signed {
@@ -625,6 +677,67 @@ mod tests {
 
     fn pw() -> Secret {
         Secret::new(b"pw".to_vec())
+    }
+
+    #[test]
+    fn bitcoin_inputs_are_reserved_and_the_full_lifecycle_is_audited() {
+        let mut v = vault();
+        let path = "m/84'/1'/0'/0/0";
+        let key = provenance::signing_key(&v, "w", Curve::Secp256k1, path).unwrap();
+        let unsigned = bitcoin::fixture(&key.public);
+        let make_intent = |id: &str| {
+            let mut i = intent(id, &unsigned.to, &unsigned.amount);
+            i.chain_id = ChainId(bitcoin::SIGNET.into());
+            i.kind = TxIntentKind::Transfer {
+                to: unsigned.to.clone(),
+                asset: AssetRef(format!("{}:native", bitcoin::SIGNET)),
+                amount: Amount(unsigned.amount.clone()),
+            };
+            i
+        };
+        let signer = Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: unsigned.from.clone(),
+        };
+        let wrong_path = Signer {
+            path: "m/84'/0'/0'/0/0".into(),
+            ..signer.clone()
+        };
+        assert!(signer_address(&v, &wrong_path, &UnsignedTx::Bitcoin(unsigned.clone())).is_err());
+        propose(&mut v, make_intent("btc"), "d", 1).unwrap();
+        attach(
+            &mut v,
+            "btc",
+            signer.clone(),
+            unsigned.clone(),
+            serde_json::json!({"ok":false}),
+            false,
+            "d",
+            2,
+        )
+        .unwrap();
+        evaluate(&mut v, "btc", "d", 3).unwrap();
+        propose(&mut v, make_intent("conflict"), "d", 4).unwrap();
+        assert!(attach(
+            &mut v,
+            "conflict",
+            signer.clone(),
+            unsigned.clone(),
+            serde_json::json!({}),
+            false,
+            "d",
+            5
+        )
+        .is_err());
+        assert!(approve(&mut v, "btc", &Secret::new(b"wrong".to_vec()), "d", 6).is_err());
+        let signed = approve(&mut v, "btc", &pw(), "d", 7).unwrap();
+        assert_eq!(signed.state, TxState::Signed);
+        report(&mut v, "btc", TxState::Broadcast, None, "d", 8).unwrap();
+        report(&mut v, "btc", TxState::Pending, None, "d", 9).unwrap();
+        assert!(report(&mut v, "btc", TxState::Expired, None, "d", 10).is_err());
+        report(&mut v, "btc", TxState::Confirmed, None, "d", 11).unwrap();
+        load_ledger(&v).unwrap().validate().unwrap();
     }
 
     fn intent(id: &str, to: &str, amount: &str) -> TxIntent {

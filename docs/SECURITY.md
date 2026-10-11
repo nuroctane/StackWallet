@@ -162,6 +162,19 @@ The single-key Cosmos increment has independent wire/signature tests but no veri
 confirmation and does not satisfy the TSS testnet support gate. Mainnet, IBC, staking, arbitrary
 messages and threshold Cosmos sends are not enabled.
 
+Bitcoin signing is restricted to Signet in Rust. Signing also requires the testnet BIP84 coin
+path (`m/84'/1'/…`) because Bitcoin sighashes do not include a network ID; mainnet coin derivations
+are refused. Complete funding transactions bind input
+values and scripts to their IDs; the core constructs the PSBT, recipient/change outputs and
+BIP143 SIGHASH_ALL digests. Inputs from coinbase transactions, duplicates, unsupported scripts,
+non-canonical addresses, dust and excessive fees are refused. The core prevents competing active
+proposals from using the same input. Endpoint genesis and pre-signing outspend checks prevent
+accidental network mismatch and stale input use; they do not authenticate chain state. Network
+simulation is unavailable and simulation policies fail closed. Broadcast uncertainty remains
+pending indefinitely until a matching indexed result reaches six observed confirmations.
+There is no timeout-based release or automatic resend. No funded Signet confirmation has been
+verified; mainnet, Taproot and threshold Bitcoin sends remain disabled.
+
 ## 7. Reporting
 
 Security issues: open a private report to the repository owner. Do not file public issues

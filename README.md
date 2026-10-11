@@ -25,4 +25,7 @@ pnpm desktop                    # Tauri dev window (needs Rust + WebView2)
 ```
 
 Browser build of the core: `rustup target add wasm32-unknown-unknown` once, then
-`pnpm --filter @stackwallet/core-client build:wasm` (needs `wasm-pack`).
+`pnpm --filter @stackwallet/web build:wasm` (needs `wasm-pack` and Clang on `PATH`
+for the Bitcoin library's public-key validation code). On Windows, add your LLVM `bin`
+directory to the trimmed path used for pnpm lifecycle commands, and set
+`$env:AR_wasm32_unknown_unknown` to the full path of `llvm-ar.exe` before a WASM build.

@@ -2,6 +2,7 @@ import { useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { isValidEvmAddress, tokenInfo, type EvmAdapter } from '@stackwallet/chains-evm';
 import { SOLANA_DEVNET, isValidSolanaAddress } from '@stackwallet/chains-solana';
 import { COSMOS_TESTNET, isValidCosmosAddress } from '@stackwallet/chains-cosmos';
+import { BITCOIN_SIGNET, isSignetRecipient } from '@stackwallet/chains-bitcoin';
 import type { TxRecord } from '@stackwallet/core-client';
 import { Button, Dialog, Field, Input, LoadingWord, Select } from '@stackwallet/ui';
 
@@ -74,7 +75,8 @@ function SendForm({
       (a) =>
         (a.family === 'evm' ||
           (a.family === 'solana' && a.chainId === SOLANA_DEVNET) ||
-          (a.family === 'cosmos' && a.chainId === COSMOS_TESTNET)) &&
+          (a.family === 'cosmos' && a.chainId === COSMOS_TESTNET) ||
+          (a.family === 'bitcoin' && a.chainId === BITCOIN_SIGNET)) &&
         single.has(a.walletId) &&
         a.derivationPath,
     );
@@ -98,7 +100,8 @@ function SendForm({
   if (accounts.length === 0) {
     return (
       <p className="p-4 text-[12px] text-faint">
-        Create a single-key wallet with an EVM chain, Solana Devnet or Osmosis Testnet to send here.
+        Create a single-key wallet with an EVM chain, Bitcoin Signet, Solana Devnet or Osmosis
+        Testnet to send here.
       </p>
     );
   }
@@ -107,11 +110,13 @@ function SendForm({
     assetKind === 'native' ? (chain?.nativeAsset.decimals ?? 18) : tokenMeta?.decimals;
   const symbol = assetKind === 'native' ? (chain?.nativeAsset.symbol ?? '') : tokenMeta?.symbol;
   const toValid =
-    account?.family === 'solana'
-      ? isValidSolanaAddress(to.trim())
-      : account?.family === 'cosmos'
-        ? isValidCosmosAddress(to.trim(), 'osmo') && to.trim() === to.trim().toLowerCase()
-        : isValidEvmAddress(to.trim());
+    account?.family === 'bitcoin'
+      ? isSignetRecipient(to.trim())
+      : account?.family === 'solana'
+        ? isValidSolanaAddress(to.trim())
+        : account?.family === 'cosmos'
+          ? isValidCosmosAddress(to.trim(), 'osmo') && to.trim() === to.trim().toLowerCase()
+          : isValidEvmAddress(to.trim());
   const units = decimals === undefined ? null : parseUnits(amount, decimals);
   const exceedsLamports =
     (account?.family === 'solana' || account?.family === 'cosmos') &&
@@ -278,6 +283,13 @@ function SendForm({
         <p className="text-[11px] text-faint">
           Osmosis Testnet native transfers only. A changed account sequence or expired timeout needs
           a fresh proposal.
+        </p>
+      )}
+      {account?.family === 'bitcoin' && (
+        <p className="text-[11px] text-faint">
+          Signet native P2WPKH only. Confirmed inputs are selected automatically; minimum 294 sats.
+          Change returns to this sender. Network simulation is unavailable; policies requiring it
+          refuse this transfer.
         </p>
       )}
       {assetKind === 'token' && (

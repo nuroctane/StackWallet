@@ -17,6 +17,7 @@
 //! - [`store`]     SQLite persistence
 
 pub mod audit;
+pub mod bitcoin;
 pub mod cosmos;
 pub mod evm;
 pub mod hd;
