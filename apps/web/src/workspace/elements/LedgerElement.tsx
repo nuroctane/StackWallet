@@ -42,22 +42,46 @@ export function LedgerElement({ pane, width, height }: ElementBodyProps) {
   if (assets.length === 0) {
     return (
       <p className="p-4 text-[12px] text-faint">
-        The ledger fills in as balances load. Totals are recorded locally on every complete refresh;
-        nothing leaves this device.
+        Balance history fills in as balances load. Totals are recorded locally on every complete
+        refresh; nothing leaves this device.
       </p>
     );
   }
 
+  const points = series[0]?.points ?? [];
   return (
-    <CanvasChart
-      ariaLabel={`${symbol} total over time`}
-      series={series}
-      width={width}
-      height={height}
-      yFormat={(v) => `${compact(v)} ${symbol}`}
-      gridlines
-      lastValuePill
-    />
+    <div className="h-full overflow-auto">
+      <CanvasChart
+        ariaLabel={symbol + ' total over time'}
+        series={series}
+        width={width}
+        height={Math.max(80, height - 36)}
+        yFormat={(v) => compact(v) + ' ' + symbol}
+        gridlines
+        lastValuePill
+      />
+      <details className="px-3 py-2 text-[11px]">
+        <summary className="cursor-pointer text-muted">
+          Read balance snapshots · {points.length} points
+        </summary>
+        <p className="my-2 break-all text-faint">
+          {assetRef} · {range} · local snapshots
+        </p>
+        <ol className="space-y-2">
+          {points
+            .slice()
+            .reverse()
+            .map((p) => (
+              <li key={p.t} className="flex flex-wrap justify-between gap-2 break-all text-muted">
+                <time>{new Date(p.t).toLocaleString()}</time>
+                <span>
+                  {p.v.toLocaleString(undefined, { maximumFractionDigits: 20 })} {symbol}
+                </span>
+              </li>
+            ))}
+        </ol>
+      </details>
+    </div>
   );
 }
 

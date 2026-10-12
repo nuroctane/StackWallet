@@ -10,6 +10,7 @@ export const elementDefaults: Record<ElementKind, { w: number; h: number }> = {
   holdings: { w: 760, h: 360 },
   terrain: { w: 520, h: 300 },
   ledger: { w: 620, h: 300 },
+  transactions: { w: 680, h: 480 },
   approvals: { w: 320, h: 360 },
   devices: { w: 760, h: 520 },
   network: { w: 640, h: 420 },

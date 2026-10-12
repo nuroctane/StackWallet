@@ -16,6 +16,8 @@ import type { z } from 'zod';
 
 import { chainsForFamily } from './catalog.js';
 import { NotImplementedError, UnknownChainError } from './errors.js';
+import { readHistory } from './history.js';
+import type { HistoryOptions } from './indexed-history.js';
 import {
   HttpError,
   MemoryRpcPool,
@@ -139,8 +141,23 @@ export abstract class BaseAdapter<F extends ChainFamily = ChainFamily> implement
   abstract getBalances(addr: Address, chainId: ChainId): Promise<Holding[]>;
   abstract status(hash: TxHash, chainId: ChainId): Promise<TxStatus>;
 
-  getHistory(_addr: Address, _chainId: ChainId, _cursor?: string): Promise<Page<TxRecord>> {
-    return Promise.reject(this.notImplemented('getHistory'));
+  getHistory(
+    addr: Address,
+    chainId: ChainId,
+    cursor?: string,
+    options?: HistoryOptions,
+  ): Promise<Page<TxRecord>> {
+    const chain = this.requireChain(chainId);
+    if (!this.validateAddress(addr, chainId))
+      return Promise.reject(new Error('Invalid history address'));
+    return readHistory(
+      chain,
+      addr,
+      this.rpc,
+      { ...this.fetchOptions(), ...(options?.signal ? { signal: options.signal } : {}) },
+      cursor,
+      options,
+    );
   }
 
   build(_intent: TxIntent, _chainId: ChainId): Promise<UnsignedTx> {

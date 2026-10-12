@@ -29,3 +29,10 @@ Browser build of the core: `rustup target add wasm32-unknown-unknown` once, then
 for the Bitcoin library's public-key validation code). On Windows, add your LLVM `bin`
 directory to the trimmed path used for pnpm lifecycle commands, and set
 `$env:AR_wasm32_unknown_unknown` to the full path of `llvm-ar.exe` before a WASM build.
+
+Workspace elements include **workspace activity** (local events, with mouse/touch terrain
+navigation), **balance history** (local totals and readable snapshots), and **transaction history**
+(local core signing records plus paginated public EVM/Bitcoin/Solana/Cosmos reads).
+Narrow panes retain full details through wrapping, stacked tables and expandable rows.
+See [history coverage](docs/CHAINS.md#read-only-transaction-history) for endpoint requirements
+and decoding limits.

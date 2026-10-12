@@ -22,6 +22,10 @@ export interface HoldingRow {
   chain: string;
   address: string;
   symbol: string;
+  assetRef: string;
+  metadataKnown: boolean;
+  hasAmount: boolean;
+  provenance: string;
   amount: string;
   decimals: number;
   fetchedAtMs: number;
@@ -53,13 +57,20 @@ export function buildHoldingRows(
       chain: info?.name ?? a.chainId,
       address: a.address,
       symbol: info?.nativeAsset.symbol ?? '?',
+      assetRef: info?.nativeAsset.ref ?? a.chainId + ':native',
+      metadataKnown: !!info,
+      hasAmount: !!native,
+      provenance: native?.provenance
+        ? JSON.stringify(native.provenance, null, 2)
+        : 'Unverified / unavailable',
       amount,
       decimals: info?.nativeAsset.decimals ?? 0,
       fetchedAtMs: e?.fetchedAtMs ?? 0,
       loading: e?.loading ?? false,
-      zero: /^0*$/.test(amount),
+      zero: !!native && !e?.error && !native.error && /^0*$/.test(amount),
     };
-    if (e?.error) row.error = e.error;
+    const readError = e?.error ?? native?.error;
+    if (readError) row.error = readError;
     rows.push(row);
     for (const holding of e?.holdings ?? []) {
       if (holding.assetRef === info?.nativeAsset.ref) continue;
@@ -68,6 +79,12 @@ export function buildHoldingRows(
         key: `${a.id}|${holding.assetRef}`,
         amount: holding.amount,
         symbol: holding.metadata?.symbol ?? holding.assetRef,
+        assetRef: holding.assetRef,
+        metadataKnown: !!holding.metadata,
+        hasAmount: true,
+        provenance: holding.provenance
+          ? JSON.stringify(holding.provenance, null, 2)
+          : 'Unverified / unavailable',
         decimals: holding.metadata?.decimals ?? 0,
         zero: !holding.error && /^0*$/.test(holding.amount),
         ...(holding.error ? { error: holding.error } : {}),
@@ -77,7 +94,8 @@ export function buildHoldingRows(
   return rows.sort((x, y) => x.wallet.localeCompare(y.wallet) || x.chain.localeCompare(y.chain));
 }
 
-export function HoldingsElement({ pane, height }: ElementBodyProps) {
+export function HoldingsElement({ pane, width, height }: ElementBodyProps) {
+  const [readable, setReadable] = useState(false);
   const state = useDirectory();
   const registry = useRegistry();
   const balances = useBalances(state.accounts);
@@ -112,7 +130,11 @@ export function HoldingsElement({ pane, height }: ElementBodyProps) {
         key: 'address',
         header: 'address',
         width: 'minmax(96px,1.4fr)',
-        render: (r) => <span className="text-muted">{shortAddress(r.address)}</span>,
+        render: (r) => (
+          <span className="text-muted" title={r.address}>
+            {shortAddress(r.address)}
+          </span>
+        ),
       },
       {
         key: 'balance',
@@ -128,7 +150,8 @@ export function HoldingsElement({ pane, height }: ElementBodyProps) {
             <span className="text-faint">··</span>
           ) : (
             <span className={r.zero ? 'text-faint' : 'text-ink'}>
-              {formatUnits(r.amount, r.decimals)} <span className="text-faint">{r.symbol}</span>
+              {r.metadataKnown ? formatUnits(r.amount, r.decimals) : r.amount + ' base units'}{' '}
+              <span className="text-faint">{r.symbol}</span>
             </span>
           ),
       },
@@ -147,22 +170,111 @@ export function HoldingsElement({ pane, height }: ElementBodyProps) {
     [now],
   );
 
-  const bodyHeight = Math.max(0, height - HEADER_H);
+  if (width < 640 || readable)
+    return (
+      <div className="h-full overflow-auto p-3 text-[12px]" aria-label="Holdings">
+        {width >= 640 && (
+          <button
+            type="button"
+            className="sw-pressable mb-2 min-h-8 text-muted underline"
+            onClick={() => setReadable(false)}
+          >
+            Return to table
+          </button>
+        )}
+        {rows.length === 0 && (
+          <p className="text-faint">
+            {state.accounts.length === 0 ? 'no accounts yet' : 'nothing matches the filter'}
+          </p>
+        )}
+        {rows.map((r) => (
+          <details key={r.key} className="border-b border-edge py-2">
+            <summary className="cursor-pointer break-words leading-relaxed">
+              <span className="text-ink">{r.wallet}</span> · {r.chain}
+              <span className="block text-muted">
+                {r.error
+                  ? 'Read failed · expand for details'
+                  : r.fetchedAtMs === 0
+                    ? 'Not yet read'
+                    : (r.metadataKnown
+                        ? formatUnits(r.amount, r.decimals)
+                        : r.amount + ' base units') +
+                      ' ' +
+                      r.symbol}
+              </span>
+            </summary>
+            <dl className="mt-2 space-y-2 text-[11px]">
+              <div>
+                <dt className="text-faint">Asset reference</dt>
+                <dd className="select-text break-all">{r.assetRef}</dd>
+              </div>
+              <div>
+                <dt className="text-faint">Balance source</dt>
+                <dd className="select-text whitespace-pre-wrap break-all">{r.provenance}</dd>
+              </div>
+              <div>
+                <dt className="text-faint">Account address</dt>
+                <dd className="select-text break-all">{r.address}</dd>
+              </div>
+              <div>
+                <dt className="text-faint">Chain ID</dt>
+                <dd className="select-text break-all">{r.chainId}</dd>
+              </div>
+              <div>
+                <dt className="text-faint">Base units</dt>
+                <dd className="select-text break-all">{r.hasAmount ? r.amount : 'Unknown'}</dd>
+              </div>
+              <div>
+                <dt className="text-faint">Last read</dt>
+                <dd>
+                  {r.fetchedAtMs ? new Date(r.fetchedAtMs).toLocaleString() : 'Never'}
+                  {r.loading ? ' · refreshing' : ''}
+                </dd>
+              </div>
+              {r.error && (
+                <div>
+                  <dt className="text-faint">Error</dt>
+                  <dd className="break-words text-danger">{r.error}</dd>
+                </div>
+              )}
+            </dl>
+            <button
+              type="button"
+              className="sw-pressable mt-2 min-h-8 text-muted underline"
+              onClick={() => directory.reveal(r.walletId)}
+            >
+              Open wallet
+            </button>
+          </details>
+        ))}
+      </div>
+    );
+
+  const bodyHeight = Math.max(0, height - HEADER_H - 32);
   return (
-    <VirtualTable
-      ariaLabel="Holdings"
-      rows={rows}
-      columns={columns}
-      rowKey={(r) => r.key}
-      height={bodyHeight + HEADER_H}
-      density="normal"
-      selectedKey={state.ui.selectedId}
-      onRowClick={(r) => directory.reveal(r.walletId)}
-      rowAge={(r) =>
-        now - r.fetchedAtMs < 2_000 ? 0 : now - r.fetchedAtMs < 6_000 ? 1 : undefined
-      }
-      emptyLabel={state.accounts.length === 0 ? 'no accounts yet' : 'nothing matches the filter'}
-    />
+    <div className="h-full">
+      <VirtualTable
+        ariaLabel="Holdings"
+        rows={rows}
+        columns={columns}
+        rowKey={(r) => r.key}
+        height={bodyHeight + HEADER_H}
+        density="normal"
+        selectedKey={state.ui.selectedId}
+        onRowClick={(r) => directory.reveal(r.walletId)}
+        rowAge={(r) =>
+          now - r.fetchedAtMs < 2_000 ? 0 : now - r.fetchedAtMs < 6_000 ? 1 : undefined
+        }
+        emptyLabel={state.accounts.length === 0 ? 'no accounts yet' : 'nothing matches the filter'}
+      />
+      <button
+        type="button"
+        className="sw-pressable h-8 w-full border-t border-edge px-3 text-left text-[11px] text-muted"
+        onClick={() => setReadable(true)}
+      >
+        Read full holding details
+      </button>
+    </div>
   );
 }
 

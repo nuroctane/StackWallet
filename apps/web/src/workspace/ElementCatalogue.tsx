@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Input, Popover } from '@stackwallet/ui';
 
 import { fuzzyMatch } from '../lib/format.js';
@@ -24,14 +24,19 @@ export function ElementCatalogue({
 }) {
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
+  const listId = useId();
+  const list = useRef<HTMLUListElement>(null);
   const items = useMemo(
     () =>
-      ELEMENT_KINDS.map((k) => registry[k]).filter(
-        (d) => fuzzyMatch(query, d.title) || fuzzyMatch(query, d.hint),
-      ),
+      ELEMENT_KINDS.map((k) => registry[k])
+        .filter((d) => fuzzyMatch(query, d.title) || fuzzyMatch(query, d.hint))
+        .sort((a, b) => Number(!fuzzyMatch(query, a.title)) - Number(!fuzzyMatch(query, b.title))),
     [query],
   );
   const clamped = Math.min(cursor, Math.max(0, items.length - 1));
+  useEffect(() => {
+    list.current?.children[clamped]?.scrollIntoView({ block: 'nearest' });
+  }, [clamped, query]);
 
   const add = (kind: ElementKind) => {
     const d = registry[kind];
@@ -65,7 +70,7 @@ export function ElementCatalogue({
       onClose={onClose}
       align="start"
       label="Elements"
-      width="w-[360px]"
+      width="w-[760px] max-w-[calc(100vw-16px)]"
     >
       <div className="flex flex-col">
         <div className="border-b border-edge p-1.5">
@@ -80,28 +85,43 @@ export function ElementCatalogue({
             onKeyDown={onKeyDown}
             placeholder="search elements"
             aria-label="Search elements"
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={listId}
+            aria-activedescendant={items[clamped] ? listId + '-' + items[clamped]!.kind : undefined}
             spellCheck={false}
             autoComplete="off"
           />
         </div>
-        <ul role="listbox" aria-label="Elements" className="max-h-[320px] overflow-auto p-1">
+        <ul
+          ref={list}
+          id={listId}
+          role="listbox"
+          aria-label="Elements"
+          className="max-h-[min(480px,60dvh)] overflow-auto p-1"
+        >
           {items.length === 0 && (
             <li className="px-3 py-4 text-center text-[12px] text-faint">no matches</li>
           )}
           {items.map((d, i) => (
             <li
               key={d.kind}
+              id={listId + '-' + d.kind}
               role="option"
               aria-selected={i === clamped}
               onMouseEnter={() => setCursor(i)}
               onClick={() => add(d.kind)}
-              className={`flex h-7 cursor-pointer items-center gap-2 rounded-sw-sm px-2 text-[12px] ${
+              className={`flex min-h-11 cursor-pointer items-start gap-2 rounded-sw-sm px-2 py-2 text-[12px] ${
                 i === clamped ? 'bg-hover' : ''
               }`}
             >
               <span className="w-3 shrink-0 text-faint">{'>'}</span>
-              <span className="shrink-0 text-ink">{d.title}</span>
-              <span className="min-w-0 flex-1 truncate text-[11px] text-faint">{d.hint}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-ink">{d.title}</span>
+                <span className="block text-[11px] leading-relaxed break-words text-faint">
+                  {d.hint}
+                </span>
+              </span>
               <span className="shrink-0 text-[10px] text-faint">
                 {d.defaultSize.w}×{d.defaultSize.h}
               </span>

@@ -45,22 +45,57 @@ export function toCells(days: readonly ActivityDay[]): TerrainCell[] {
   return cells;
 }
 
+export interface TerrainCamera {
+  yaw: number;
+  tilt: number;
+  zoom: number;
+  panX: number;
+  panY: number;
+}
+export const HOME_CAMERA: TerrainCamera = { yaw: Math.PI / 4, tilt: 1, zoom: 1, panX: 0, panY: 0 };
+export function moveCamera(c: TerrainCamera, dx: number, dy: number, pan = false): TerrainCamera {
+  return pan
+    ? { ...c, panX: c.panX + dx, panY: c.panY + dy }
+    : { ...c, yaw: c.yaw - dx * 0.008, tilt: Math.max(0.3, Math.min(1.6, c.tilt + dy * 0.008)) };
+}
+export function zoomCamera(c: TerrainCamera, factor: number): TerrainCamera {
+  return { ...c, zoom: Math.max(0.5, Math.min(4, c.zoom * factor)) };
+}
+export function pinchCamera(
+  c: TerrainCamera,
+  previous: { x: number; y: number },
+  next: { x: number; y: number },
+  other: { x: number; y: number },
+): TerrainCamera {
+  const before = Math.hypot(previous.x - other.x, previous.y - other.y);
+  const after = Math.hypot(next.x - other.x, next.y - other.y);
+  return zoomCamera(
+    moveCamera(c, (next.x - previous.x) / 2, (next.y - previous.y) / 2, true),
+    before > 1 ? after / before : 1,
+  );
+}
+
 interface Geometry {
   cell: number;
   ox: number;
   oy: number;
   maxH: number;
   maxCount: number;
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
 }
 
-function project(w: number, d: number, h: number, g: Geometry) {
-  return { x: g.ox + (w - d) * g.cell * 0.9, y: g.oy + (w + d) * g.cell * 0.5 - h };
+export function project(w: number, d: number, h: number, g: Geometry) {
+  return { x: g.ox + (w * g.ax + d * g.bx) * g.cell, y: g.oy + (w * g.ay + d * g.by) * g.cell - h };
 }
 
 export function computeGeometry(
   cells: readonly TerrainCell[],
   cssW: number,
   cssH: number,
+  camera: TerrainCamera = HOME_CAMERA,
 ): Geometry {
   const maxWeek = cells.reduce((m, c) => Math.max(m, c.week), 0);
   const maxDay = 6;
@@ -72,7 +107,17 @@ export function computeGeometry(
     Math.min(14, availW / (maxWeek + maxDay + 4) / 0.9, availH / (maxWeek + maxDay + 6) / 0.55),
   );
   const maxH = cell * 5.5;
-  const g: Geometry = { cell, ox: 0, oy: 0, maxH, maxCount };
+  const g: Geometry = {
+    cell,
+    ox: 0,
+    oy: 0,
+    maxH,
+    maxCount,
+    ax: Math.cos(camera.yaw) * Math.SQRT2 * 0.9,
+    bx: -Math.sin(camera.yaw) * Math.SQRT2 * 0.9,
+    ay: Math.sin(camera.yaw) * Math.SQRT2 * 0.5 * camera.tilt,
+    by: Math.cos(camera.yaw) * Math.SQRT2 * 0.5 * camera.tilt,
+  };
 
   // Measure the projected bounding box at the origin, then centre it.
   let minX = Infinity;
@@ -80,17 +125,12 @@ export function computeGeometry(
   let minY = Infinity;
   let maxY = -Infinity;
   const sample = (w: number, d: number, h: number) => {
-    const base = project(w, d, 0, g);
-    const top = project(w, d, h, g);
     const pts = [
-      base,
-      top,
-      { x: base.x + cell * 0.9, y: base.y + cell * 0.5 },
-      { x: base.x - cell * 0.9, y: base.y + cell * 0.5 },
-      { x: top.x + cell * 0.9, y: top.y + cell * 0.5 },
-      { x: top.x - cell * 0.9, y: top.y + cell * 0.5 },
-      { x: base.x, y: base.y + cell },
-    ];
+      [0, 0],
+      [1, 0],
+      [1, 1],
+      [0, 1],
+    ].flatMap(([dw, dd]) => [project(w + dw!, d + dd!, 0, g), project(w + dw!, d + dd!, h, g)]);
     for (const p of pts) {
       minX = Math.min(minX, p.x);
       maxX = Math.max(maxX, p.x);
@@ -104,8 +144,11 @@ export function computeGeometry(
   sample(maxWeek, maxDay, maxH);
   const bw = maxX - minX || 1;
   const bh = maxY - minY || 1;
-  g.ox = (cssW - bw) / 2 - minX;
-  g.oy = LABEL_TOP + (availH - bh) / 2 - minY;
+  const fit = Math.min(1, Math.max(1, availW) / bw, Math.max(1, availH) / bh) * camera.zoom;
+  g.cell *= fit;
+  g.maxH *= fit;
+  g.ox = (cssW - bw * fit) / 2 - minX * fit + camera.panX;
+  g.oy = LABEL_TOP + (availH - bh * fit) / 2 - minY * fit + camera.panY;
   return g;
 }
 
@@ -131,52 +174,43 @@ export function drawTerrain(
   todayKey: string,
 ) {
   ctx.clearRect(0, 0, cssW, cssH);
-  const sorted = cells.slice().sort((a, b) => a.week + a.day - (b.week + b.day));
+  const sorted = cells.slice().sort((a, b) => (a.week - b.week) * g.ay + (a.day - b.day) * g.by);
   for (const c of sorted) {
     const h = heightFor(c.n, g);
-    const { x, y } = project(c.week, c.day, 0, g);
-    const top = project(c.week, c.day, h, g);
-    const isHot = hovered === c || c.dayKey === todayKey;
     const levels = colors.levels ?? LEVEL_GRAYS;
-    const col = isHot ? colors.warm : (levels[levelFor(c.n, g.maxCount)] as string);
-    const half = g.cell * 0.5;
-    const wide = g.cell * 0.9;
-
-    ctx.fillStyle = shade(col, -28);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + wide, y + half);
-    ctx.lineTo(x + wide, y + half - h);
-    ctx.lineTo(x, y - h);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = shade(col, -45);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x - wide, y + half);
-    ctx.lineTo(x - wide, y + half - h);
-    ctx.lineTo(x, y - h);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = col;
-    ctx.beginPath();
-    ctx.moveTo(top.x, top.y);
-    ctx.lineTo(top.x + wide, top.y + half);
-    ctx.lineTo(top.x, top.y + g.cell);
-    ctx.lineTo(top.x - wide, top.y + half);
-    ctx.closePath();
-    ctx.fill();
+    const col =
+      hovered === c || c.dayKey === todayKey ? colors.warm : levels[levelFor(c.n, g.maxCount)]!;
+    const corners = [
+      [0, 0],
+      [1, 0],
+      [1, 1],
+      [0, 1],
+    ].map(([w, d]) => project(c.week + w!, c.day + d!, 0, g));
+    const face = (points: { x: number; y: number }[], color: string) => {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fill();
+    };
+    for (let i = 0; i < 4; i++) {
+      const a = corners[i]!;
+      const b = corners[(i + 1) % 4]!;
+      const midY = (a.y + b.y) / 2;
+      const centerY = corners.reduce((sum, p) => sum + p.y, 0) / 4;
+      // Hide far faces as the camera crosses each side of the terrain.
+      if (midY >= centerY)
+        face([a, b, { x: b.x, y: b.y - h }, { x: a.x, y: a.y - h }], shade(col, i % 2 ? -45 : -28));
+    }
+    face(
+      corners.map((p) => ({ x: p.x, y: p.y - h })),
+      col,
+    );
   }
 
   ctx.font = `500 10px ${colors.font}`;
   ctx.textBaseline = 'alphabetic';
-  const total = cells.reduce((s, c) => s + c.n, 0);
-  ctx.fillStyle = colors.faint;
-  ctx.fillText(`activity · ${cells.length} days`, MARGIN, 13);
-  const right = `${total.toLocaleString()} events`;
-  ctx.fillText(right, cssW - MARGIN - ctx.measureText(right).width, 13);
+  // Readouts live in wrapping DOM text so narrow canvases cannot clip their labels.
   if (hovered) {
     ctx.fillStyle = colors.ink;
     const label = `${hovered.dayKey} · ${hovered.n}`;
@@ -194,9 +228,9 @@ export function hitTest(
   let best: TerrainCell | null = null;
   let bestD = (g.cell * 1.2) ** 2;
   for (const c of cells) {
-    const top = project(c.week, c.day, heightFor(c.n, g), g);
+    const top = project(c.week + 0.5, c.day + 0.5, heightFor(c.n, g), g);
     const cx = top.x;
-    const cy = top.y + g.cell * 0.5;
+    const cy = top.y;
     const d = (cx - px) ** 2 + (cy - py) ** 2;
     if (d < bestD) {
       bestD = d;
@@ -220,21 +254,40 @@ export function TerrainElement({ pane, width, height }: ElementBodyProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const activity = useActivity();
   const weeks = clampWeeks(Number(pane.props['weeks'] ?? 26));
+  const [camera, setCamera] = useState<TerrainCamera>(HOME_CAMERA);
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
   const [hovered, setHovered] = useState<TerrainCell | null>(null);
+  const [focused, setFocused] = useState(false);
 
   const cells = useMemo(() => toCells(activityLog.series(weeks)), [activity, weeks]);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const zoom = (e: WheelEvent) => {
+      e.preventDefault();
+      setCamera((c) => zoomCamera(c, Math.exp(-Math.max(-200, Math.min(200, e.deltaY)) * 0.003)));
+    };
+    canvas.addEventListener('wheel', zoom, { passive: false });
+    return () => canvas.removeEventListener('wheel', zoom);
+  }, []);
   const geometry = useMemo(
-    () => (width > 0 && height > 0 ? computeGeometry(cells, width, height) : null),
-    [cells, width, height],
+    () =>
+      width > 0 && height > 0
+        ? computeGeometry(cells, width, Math.max(1, height - 64), camera)
+        : null,
+    [cells, width, height, camera],
   );
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !geometry) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+    if (
+      canvas.width !== Math.floor(width * dpr) ||
+      canvas.height !== Math.floor(Math.max(1, height - 64) * dpr)
+    ) {
       canvas.width = Math.floor(width * dpr);
-      canvas.height = Math.floor(height * dpr);
+      canvas.height = Math.floor(Math.max(1, height - 64) * dpr);
     }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -251,23 +304,106 @@ export function TerrainElement({ pane, width, height }: ElementBodyProps) {
       ),
     };
     const todayKey = cells.length > 0 ? (cells[cells.length - 1] as TerrainCell).dayKey : '';
-    drawTerrain(ctx, cells, geometry, width, height, colors, hovered, todayKey);
+    drawTerrain(ctx, cells, geometry, width, Math.max(1, height - 64), colors, hovered, todayKey);
   }, [cells, geometry, width, height, hovered, themeEpoch]);
 
+  const release = (id: number) => pointers.current.delete(id);
   return (
-    <canvas
-      ref={canvasRef}
-      style={{ width, height, display: 'block' }}
-      aria-label="Local activity terrain"
-      role="img"
-      onPointerMove={(e) => {
-        if (!geometry) return;
-        const rect = e.currentTarget.getBoundingClientRect();
-        const hit = hitTest(cells, geometry, e.clientX - rect.left, e.clientY - rect.top);
-        if (hit !== hovered) setHovered(hit);
-      }}
-      onPointerLeave={() => setHovered(null)}
-    />
+    <div className="flex h-full min-h-0 flex-col overflow-auto">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 px-2 py-1 text-[10px] text-faint">
+        <span className="flex-1">drag: turn / tilt · shift-drag: pan · pinch: zoom</span>
+        <button
+          type="button"
+          className="sw-pressable px-2 py-1"
+          onClick={() => {
+            setCamera(HOME_CAMERA);
+            setHovered(null);
+          }}
+        >
+          reset view
+        </button>
+      </div>
+      <canvas
+        ref={canvasRef}
+        style={{
+          width,
+          height: Math.max(1, height - 64),
+          display: 'block',
+          touchAction: 'none',
+          cursor: 'grab',
+        }}
+        tabIndex={0}
+        data-camera={JSON.stringify(camera)}
+        aria-label="Workspace activity terrain. Local app events, not wallet transactions. Drag to turn and tilt, shift-drag to pan, two fingers to pan and zoom. Arrow keys turn and tilt, plus and minus zoom, brackets select days, Home resets."
+        role="img"
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onDoubleClick={() => setCamera(HOME_CAMERA)}
+        onKeyDown={(e) => {
+          let next = camera;
+          if (e.key === 'Home') next = HOME_CAMERA;
+          else if (e.key === '+' || e.key === '=') next = zoomCamera(camera, 1.2);
+          else if (e.key === '-') next = zoomCamera(camera, 1 / 1.2);
+          else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+            const dx = e.key === 'ArrowLeft' ? -20 : e.key === 'ArrowRight' ? 20 : 0;
+            const dy = e.key === 'ArrowUp' ? -15 : e.key === 'ArrowDown' ? 15 : 0;
+            next = moveCamera(camera, dx, dy, e.shiftKey);
+          } else if (e.key === '[' || e.key === ']') {
+            const current = hovered ? cells.indexOf(hovered) : cells.length - 1;
+            setHovered(
+              cells[Math.max(0, Math.min(cells.length - 1, current + (e.key === '[' ? -1 : 1)))] ??
+                null,
+            );
+          } else return;
+          e.preventDefault();
+          e.stopPropagation();
+          setCamera(next);
+        }}
+        onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          e.currentTarget.focus();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          if (geometry) {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setHovered(hitTest(cells, geometry, e.clientX - rect.left, e.clientY - rect.top));
+          }
+          pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        }}
+        onPointerUp={(e) => release(e.pointerId)}
+        onPointerCancel={(e) => release(e.pointerId)}
+        onLostPointerCapture={(e) => release(e.pointerId)}
+        onPointerMove={(e) => {
+          const previous = pointers.current.get(e.pointerId);
+          if (previous) {
+            const other = [...pointers.current.entries()].find(([id]) => id !== e.pointerId)?.[1];
+            const dx = e.clientX - previous.x;
+            const dy = e.clientY - previous.y;
+            pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            if (other) {
+              setCamera((c) => pinchCamera(c, previous, { x: e.clientX, y: e.clientY }, other));
+            } else setCamera((c) => moveCamera(c, dx, dy, e.shiftKey));
+          }
+          if (!geometry) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          setHovered(hitTest(cells, geometry, e.clientX - rect.left, e.clientY - rect.top));
+        }}
+        onPointerLeave={() => {
+          if (!pointers.current.size) setHovered(null);
+        }}
+      />
+      <div
+        className="shrink-0 px-2 py-1 text-[11px] break-words text-muted"
+        aria-live={focused ? 'polite' : 'off'}
+      >
+        {hovered
+          ? hovered.dayKey + ' · ' + hovered.n + ' local events'
+          : 'Local workspace events · use brackets to inspect any day'}
+        <span className="block text-faint">
+          {cells.reduce((sum, c) => sum + c.n, 0).toLocaleString()} local events · {cells.length}{' '}
+          days
+        </span>
+      </div>
+    </div>
   );
 }
 

@@ -136,11 +136,14 @@ export function Popover({
       if (raf === 0) raf = requestAnimationFrame(place);
     };
     place();
+    const observer = new ResizeObserver(schedule);
+    observer.observe(el);
     window.addEventListener('resize', schedule);
     // Capture catches scrolling inside nested panes, not just the window.
     window.addEventListener('scroll', schedule, true);
     return () => {
       if (raf !== 0) cancelAnimationFrame(raf);
+      observer.disconnect();
       window.removeEventListener('resize', schedule);
       window.removeEventListener('scroll', schedule, true);
     };
@@ -189,7 +192,7 @@ export function Popover({
       role="dialog"
       aria-label={label}
       tabIndex={-1}
-      className={`sw-elevated sw-enter absolute top-0 left-0 z-50 p-1 text-[12px] text-ink shadow-[0_12px_40px_rgb(0_0_0/0.6)] outline-none ${width} ${className}`}
+      className={`sw-popover sw-elevated sw-enter absolute top-0 left-0 z-50 max-h-[calc(100dvh-16px)] max-w-[calc(100vw-16px)] overflow-auto p-1 text-[12px] text-ink shadow-[0_12px_40px_rgb(0_0_0/0.6)] outline-none ${width} ${className}`}
     >
       {children}
     </div>,

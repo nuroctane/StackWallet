@@ -6,6 +6,7 @@ import type { ElementKind, Pane } from '../schema.js';
 import { HoldingsElement } from './HoldingsElement.js';
 import { LedgerElement, RANGES } from './LedgerElement.js';
 import { TerrainElement } from './TerrainElement.js';
+import { TransactionsElement } from './TransactionsElement.js';
 import type { ElementDefinition, ElementRegistry } from './types.js';
 import {
   ApprovalsElement,
@@ -100,7 +101,7 @@ export const registry: ElementRegistry = {
     title: 'holdings',
     hint: 'every account, dense and live',
     defaultSize: elementDefaults.holdings,
-    minSize: { w: 320, h: 140 },
+    minSize: { w: 240, h: 140 },
     defaultProps: { hideZero: false },
     scope: (p) => (p.props['hideZero'] === true ? [{ label: 'non-zero' }] : []),
     settings: [
@@ -120,8 +121,8 @@ export const registry: ElementRegistry = {
   }),
   terrain: def({
     kind: 'terrain',
-    title: 'activity',
-    hint: 'isometric terrain of local events',
+    title: 'workspace activity',
+    hint: 'Local app events by day: wallet edits, device changes, layout edits and balance refreshes. Drag to turn and tilt; pinch to zoom. No on-chain transaction counts.',
     defaultSize: elementDefaults.terrain,
     defaultProps: { weeks: 26 },
     scope: (p) => [{ label: `${p.props['weeks'] ?? 26}w` }],
@@ -130,8 +131,8 @@ export const registry: ElementRegistry = {
   }),
   ledger: def({
     kind: 'ledger',
-    title: 'ledger',
-    hint: 'native totals over time',
+    title: 'balance history',
+    hint: 'Native asset totals over time, recorded on this device after complete balance refreshes. Choose an asset and range in settings.',
     defaultSize: elementDefaults.ledger,
     defaultProps: { range: '30d' },
     scope: (p) => [{ label: String(p.props['range'] ?? '30d'), tone: 'warm' }],
@@ -151,6 +152,25 @@ export const registry: ElementRegistry = {
       },
     ],
     body: LedgerElement,
+  }),
+  transactions: def({
+    kind: 'transactions',
+    title: 'transaction history',
+    hint: 'Wallet transactions across EVM L1s, L2s, sidechains and appchains, Bitcoin-family networks, Solana and Cosmos. Local signing records plus paginated public-chain reads; source and coverage are always shown.',
+    defaultSize: elementDefaults.transactions,
+    defaultProps: { walletId: '' },
+    settings: [
+      {
+        key: 'walletId',
+        label: 'wallet',
+        kind: 'select',
+        options: () => [
+          { value: '', label: 'all wallets' },
+          ...directory.getSnapshot().wallets.map((w) => ({ value: w.id, label: w.name })),
+        ],
+      },
+    ],
+    body: TransactionsElement,
   }),
   approvals: def({
     kind: 'approvals',

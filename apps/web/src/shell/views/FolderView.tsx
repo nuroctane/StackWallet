@@ -218,16 +218,17 @@ function WalletRow({
         if (e.key === 'Enter') directory.reveal(wallet.id);
       }}
     >
-      <td className="truncate px-4 text-ink">
+      <td data-label="Name" className="truncate px-4 text-ink">
         <WalletName wallet={wallet} className="max-w-full" />
       </td>
-      <td className="px-3">
+      <td data-label="Kind" className="px-3">
         <Badge>{kindLabel(wallet)}</Badge>
       </td>
-      <td className="px-3 text-[10px] tracking-[0.06em] text-faint uppercase">
+      <td data-label="Chains" className="px-3 text-[10px] tracking-[0.06em] text-faint uppercase">
         {families.map((f) => FAMILY_LABEL[f]).join(' · ') || '—'}
       </td>
       <td
+        data-label="Balance"
         className={`px-4 text-right tabular-nums ${entry?.error ? 'text-faint' : 'text-muted'}`}
         title={entry?.error}
       >

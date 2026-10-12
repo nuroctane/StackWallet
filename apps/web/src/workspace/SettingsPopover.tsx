@@ -28,7 +28,7 @@ export function SettingsPopover({
       onClose={onClose}
       align="end"
       label={`${def?.title ?? 'element'} settings`}
-      width="w-[320px]"
+      width="w-[480px] max-w-[calc(100vw-16px)]"
     >
       {pane && def && (
         <div className="flex flex-col">
@@ -80,16 +80,12 @@ function Row({
 }) {
   const id = `set-${paneId}-${field.key}`;
   return (
-    <div className="flex min-h-[34px] items-center gap-3 border-b border-edge/60 px-3 py-1 text-[12px] last:border-b-0">
+    <div className="flex min-h-[44px] flex-col items-stretch gap-1 border-b border-edge/60 px-3 py-2 text-[12px] last:border-b-0">
       <label htmlFor={id} className="flex min-w-0 flex-1 items-center gap-1 text-muted">
-        <span className="truncate">{field.label}</span>
-        {field.help && (
-          <span title={field.help} aria-label={field.help} className="cursor-help text-faint">
-            ⓘ
-          </span>
-        )}
+        <span className="break-words">{field.label}</span>
+        {field.help && <span className="text-[11px] text-faint">{field.help}</span>}
       </label>
-      <div className="w-[150px] shrink-0">
+      <div className="min-w-0">
         {field.kind === 'toggle' && (
           <input
             id={id}
@@ -127,6 +123,13 @@ function Row({
               </option>
             ))}
           </Select>
+        )}
+        {field.kind === 'select' && typeof value === 'string' && (
+          <p className="mt-1 select-text break-all text-[11px] text-faint">
+            {(typeof field.options === 'function' ? field.options() : field.options).find(
+              (o) => o.value === value,
+            )?.label ?? value}
+          </p>
         )}
       </div>
     </div>

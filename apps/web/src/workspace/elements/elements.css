@@ -45,3 +45,105 @@
   overflow: auto;
   overscroll-behavior: contain;
 }
+/* A pane has its own width regardless of the window or another pane's size. */
+.sw-embed-scroll,
+.sw-embed {
+  overflow-wrap: anywhere;
+}
+.sw-embed-scroll .truncate,
+.sw-embed .truncate {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.sw-embed-scroll header,
+.sw-embed-scroll header > div {
+  flex-wrap: wrap;
+}
+.sw-embed-scroll input,
+.sw-embed-scroll select,
+.sw-history select {
+  max-width: 100%;
+}
+.sw-history > div > select {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 180px;
+}
+.sw-history summary {
+  min-height: 44px;
+}
+/* Device identity and endpoints remain available between the table/card breakpoints. */
+.sw-embed-scroll td[data-label='Device ID'],
+.sw-embed-scroll td[data-label='Endpoints'] {
+  display: table-cell;
+}
+@container element (max-width: 560px) {
+  .sw-embed-scroll > .p-5 {
+    padding: 12px;
+  }
+  .sw-embed-scroll section.grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sw-embed-scroll .col-span-2 {
+    grid-column: auto;
+  }
+  .sw-embed-scroll table {
+    display: block;
+    width: 100%;
+    table-layout: auto;
+  }
+  .sw-embed-scroll colgroup {
+    display: none;
+  }
+  .sw-embed-scroll thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .sw-embed-scroll tbody {
+    display: block;
+  }
+  .sw-embed-scroll tbody tr {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    padding: 8px 0;
+  }
+  .sw-embed-scroll td[data-label] {
+    display: block;
+    width: auto;
+    max-width: none;
+    min-width: 0;
+    padding: 4px 12px;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .sw-embed-scroll td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--sw-faint);
+    font-size: 10px;
+    margin-bottom: 2px;
+  }
+  .sw-embed-scroll [class*='min-[700px]:grid-cols'],
+  .sw-embed-scroll [class*='min-[900px]:grid-cols'],
+  .sw-embed-scroll [class*='min-[560px]:grid-cols'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (pointer: coarse) {
+  .sw-embed-scroll button,
+  .sw-embed button,
+  .sw-history button,
+  .sw-history select,
+  .sw-embed-scroll select,
+  .sw-embed-scroll input {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+}

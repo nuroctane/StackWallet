@@ -29,7 +29,7 @@ export function TransactionsSection({ wallet }: { wallet: Wallet }) {
     <section className="sw-elevated flex min-w-0 flex-col overflow-hidden">
       <header className="flex items-center justify-between gap-3 border-b border-edge px-4 py-2.5">
         <h3 className="text-[11px] font-semibold tracking-[0.12em] text-muted uppercase">
-          Transactions
+          Local signing records
         </h3>
         <div className="flex items-center gap-2 text-[11px] text-faint">
           {view.ledger && <span>audit chain verified by the core · {audit.length} rows</span>}
@@ -58,12 +58,12 @@ export function TransactionsSection({ wallet }: { wallet: Wallet }) {
               <li key={t.id} className="flex flex-col gap-1 px-4 py-2">
                 <button
                   type="button"
-                  className="flex items-center gap-2 text-left"
+                  className="flex flex-wrap items-center gap-2 text-left"
                   aria-expanded={open === t.id}
                   onClick={() => setOpen((cur) => (cur === t.id ? null : t.id))}
                 >
                   <StateChip state={t.state} />
-                  <span className="min-w-0 flex-1 truncate text-ink">{headline(t)}</span>
+                  <span className="min-w-0 flex-1 break-words text-ink">{headline(t)}</span>
                   <span className="text-[11px] text-faint">{chain?.name}</span>
                   <span className="w-[48px] text-right text-[11px] text-faint">
                     {relativeTime(t.updatedAtMs, Date.now())}

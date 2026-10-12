@@ -26,7 +26,7 @@ export function TopBar({ trayOpen, onToggleTray }: TopBarProps) {
   const { locked } = useWorkspace();
 
   return (
-    <header className="flex h-10 flex-none items-center gap-2 border-b border-edge bg-paper px-3 font-mono text-[12px] lowercase">
+    <header className="sw-workspace-topbar flex h-10 flex-none items-center gap-2 border-b border-edge bg-paper px-3 font-mono text-[12px] lowercase">
       <span className="mr-1 font-semibold tracking-[-0.01em] text-ink">stackwallet</span>
 
       <LayoutLockButton locked={locked} />

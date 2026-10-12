@@ -229,7 +229,11 @@ function ChainCard({
                 <tr key={ep.url} className="h-9 hover:bg-hover">
                   {/* `w-full max-w-0` lets this cell absorb spare width yet truncate
                       instead of pushing the fixed-width columns off the pane. */}
-                  <td className="w-full max-w-0 px-4 font-mono text-muted" title={ep.url}>
+                  <td
+                    data-label="Endpoint"
+                    className="w-full max-w-0 px-4 font-mono text-muted"
+                    title={ep.url}
+                  >
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="min-w-0 truncate">{ep.url}</span>
                       {ep.custom && (
@@ -239,7 +243,7 @@ function ChainCard({
                       )}
                     </span>
                   </td>
-                  <td className="px-3 whitespace-nowrap">
+                  <td data-label="Health" className="px-3 whitespace-nowrap">
                     <span className="inline-flex items-center gap-1.5">
                       <span
                         aria-hidden
@@ -252,16 +256,16 @@ function ChainCard({
                       </span>
                     </span>
                   </td>
-                  <td className="px-3 text-right text-muted tabular-nums">
+                  <td data-label="Latency" className="px-3 text-right text-muted tabular-nums">
                     {ep.latencyMs !== undefined ? `${Math.round(ep.latencyMs)} ms` : '—'}
                   </td>
-                  <td className="px-3 text-right text-muted tabular-nums">
+                  <td data-label="Errors" className="px-3 text-right text-muted tabular-nums">
                     {ep.errorRate !== undefined ? `${Math.round(ep.errorRate * 100)}%` : '—'}
                   </td>
-                  <td className="px-3 text-right text-muted tabular-nums">
+                  <td data-label="Block" className="px-3 text-right text-muted tabular-nums">
                     {ep.lastBlock !== undefined ? ep.lastBlock.toLocaleString('en-US') : '—'}
                   </td>
-                  <td className="px-4 text-right">
+                  <td data-label="Actions" className="px-4 text-right">
                     <Button
                       size="sm"
                       variant="ghost"

@@ -13,6 +13,7 @@ export const ElementKind = z.enum([
   'holdings',
   'terrain',
   'ledger',
+  'transactions',
   'approvals',
   'devices',
   'network',

@@ -182,9 +182,6 @@ describe('EvmAdapter reads', () => {
   it('refuses to pretend unimplemented capabilities work', async () => {
     const evm = createEvmAdapter();
     const tx = { chainId: 'eip155:1', family: 'evm' as const, intentId: 'i', payload: {} };
-    await expect(evm.getHistory(EXPECTED_FOR_G, 'eip155:1')).rejects.toBeInstanceOf(
-      NotImplementedError,
-    );
     await expect(evm.simulate(tx)).rejects.toThrow(
       /chains-evm.simulate is not implemented \(phase 3\)/,
     );

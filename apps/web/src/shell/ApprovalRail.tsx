@@ -58,8 +58,9 @@ export function useHeadline(): (tx: TxRecord) => string {
     if (i.kind === 'transfer') {
       const token = erc20Of(i.asset, i.chainId);
       if (!token) {
-        const sym = chain?.nativeAsset.symbol ?? '';
-        const decimals = chain?.nativeAsset.decimals ?? 18;
+        if (!chain) return `Send ${i.amount} base units of ${i.asset}`;
+        const sym = chain.nativeAsset.symbol;
+        const decimals = chain.nativeAsset.decimals;
         return `Send ${formatUnits(i.amount, decimals, decimals)} ${sym}`;
       }
       const name = labeler(token, i.chainId).label ?? `token ${token.slice(0, 6)}…`;

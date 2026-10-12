@@ -69,7 +69,7 @@ export function OmniSearch({
     <Dialog
       open={open}
       onClose={onClose}
-      width="w-[min(92vw,640px)]"
+      width="w-[min(92vw,960px)]"
       className="mt-[10vh] mb-auto"
       aria-label="Search"
     >
@@ -380,21 +380,22 @@ function SearchBody({
             aria-selected={i === clamped}
             onMouseEnter={() => setCursor(i)}
             onClick={() => choose(item)}
-            className={`flex h-7 cursor-pointer items-center gap-2 rounded-sw-sm px-2 text-[12px] ${
+            className={`flex min-h-11 cursor-pointer items-start gap-2 rounded-sw-sm px-2 py-2 text-[12px] ${
               i === clamped ? 'bg-hover' : ''
             }`}
           >
             <span className="w-3 shrink-0 text-faint">{'>'}</span>
-            <span className="shrink-0 truncate text-ink">{item.label}</span>
-            {item.dim && (
-              <span className="min-w-0 flex-1 truncate text-[11px] text-faint">{item.dim}</span>
-            )}
-            {!item.dim && <span className="flex-1" />}
+            <span className="min-w-0 flex-1 break-words">
+              <span className="block text-ink">{item.label}</span>
+              {item.dim && (
+                <span className="block text-[11px] leading-relaxed text-faint">{item.dim}</span>
+              )}
+            </span>
             <Chip className="shrink-0">{item.type}</Chip>
           </li>
         ))}
       </ul>
-      <div className="flex items-center gap-3 border-t border-edge px-3 py-1.5 text-[11px] text-faint">
+      <div className="flex flex-wrap items-center gap-2 border-t border-edge px-3 py-1.5 text-[11px] text-faint">
         <span className="flex items-center gap-1">
           <Kbd>↑</Kbd>
           <Kbd>↓</Kbd> move

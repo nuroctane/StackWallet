@@ -145,7 +145,6 @@ describe('SolanaAdapter reads', () => {
   it('throws NotImplementedError for signing-path capabilities', async () => {
     const sol = createSolanaAdapter();
     const tx = { chainId: MAINNET, family: 'solana' as const, intentId: 'i', payload: {} };
-    await expect(sol.getHistory(WSOL_MINT, MAINNET)).rejects.toBeInstanceOf(NotImplementedError);
     expect(() => sol.attach(tx, [])).toThrow(/chains-solana.attach/);
   });
 });

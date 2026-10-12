@@ -508,7 +508,7 @@ function DeviceRow({
 
   return (
     <tr className={`h-9 hover:bg-hover ${revoked ? 'text-faint' : ''}`}>
-      <td className="w-full max-w-0 px-4">
+      <td data-label="Name" className="w-full max-w-0 px-4">
         {renaming ? (
           <RenameInput
             initial={device.name}
@@ -532,30 +532,42 @@ function DeviceRow({
           </span>
         )}
       </td>
-      <td className="px-3">
+      <td data-label="Kind" className="px-3">
         <Badge>{KIND_LABEL[device.kind]}</Badge>
       </td>
-      <td className="hidden px-3 font-mono text-muted @min-[700px]:table-cell" title={device.id}>
-        {shortId(device.id)}
+      <td
+        data-label="Device ID"
+        className="hidden px-3 font-mono text-muted @min-[700px]:table-cell"
+        title={device.id}
+      >
+        {device.id}
       </td>
-      <td className="hidden px-3 font-mono text-muted @min-[900px]:table-cell">
+      <td
+        data-label="Endpoints"
+        className="hidden px-3 font-mono text-muted @min-[900px]:table-cell"
+      >
         {device.endpoints.length === 0 ? (
           <span className="text-faint">—</span>
         ) : (
-          <span className="block truncate" title={device.endpoints.join('\n')}>
-            {device.endpoints[0]}
-            {device.endpoints.length > 1 && (
-              <span className="text-faint"> +{device.endpoints.length - 1}</span>
-            )}
-          </span>
+          <ul className="space-y-1">
+            {device.endpoints.map((endpoint) => (
+              <li key={endpoint} className="select-text break-all">
+                {endpoint}
+              </li>
+            ))}
+          </ul>
         )}
       </td>
-      <td className="px-3 text-right text-muted whitespace-nowrap tabular-nums" title={seen}>
+      <td
+        data-label="Last seen"
+        className="px-3 text-right text-muted whitespace-nowrap tabular-nums"
+        title={seen}
+      >
         {device.revokedAtMs !== null
           ? `revoked ${relativeTime(device.revokedAtMs, now)} ago`
           : seen}
       </td>
-      <td className="px-4 text-right whitespace-nowrap">
+      <td data-label="Actions" className="px-4 text-right whitespace-nowrap">
         {revoked ? (
           <Button
             size="sm"

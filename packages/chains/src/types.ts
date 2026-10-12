@@ -4,6 +4,7 @@
  * private key or a share.
  */
 import { z } from 'zod';
+import type { HistoryOptions } from './indexed-history.js';
 import type {
   Amount,
   AssetRef,
@@ -76,21 +77,27 @@ export interface Holding {
 }
 
 export interface TxRecord {
+  /** Event identity when multiple indexed transfer events share a transaction hash. */
+  entryId?: string | undefined;
+  description?: string | undefined;
   hash: TxHash;
   chainId: ChainId;
-  blockNumber?: number;
-  timestampMs?: number;
+  blockNumber?: number | undefined;
+  timestampMs?: number | undefined;
   from: Address;
-  to?: Address;
+  to?: Address | undefined;
   assetDeltas: AssetDelta[];
   feeAssetRef: AssetRef;
-  fee: Amount;
+  /** Null when an endpoint cannot supply fee details; never substitute zero. */
+  fee: Amount | null;
   status: 'pending' | 'confirmed' | 'failed';
 }
 
 export interface Page<T> {
   items: T[];
-  nextCursor?: string;
+  nextCursor?: string | undefined;
+  coverage?: string | undefined;
+  source?: string | undefined;
 }
 
 /** Signed base-unit amount as a decimal string with optional leading `-`. */
@@ -162,7 +169,12 @@ export interface ChainAdapter {
   /** Syntactic + checksum validation only; never touches the network. */
   validateAddress(addr: string, chainId: ChainId): boolean;
   getBalances(addr: Address, chainId: ChainId): Promise<Holding[]>;
-  getHistory(addr: Address, chainId: ChainId, cursor?: string): Promise<Page<TxRecord>>;
+  getHistory(
+    addr: Address,
+    chainId: ChainId,
+    cursor?: string,
+    options?: HistoryOptions,
+  ): Promise<Page<TxRecord>>;
   build(intent: TxIntent, chainId: ChainId): Promise<UnsignedTx>;
   simulate(tx: UnsignedTx): Promise<Simulation>;
   sighashes(tx: UnsignedTx): SignRequest[];

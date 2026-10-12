@@ -143,3 +143,22 @@ floating elements on an infinite dark canvas.
 - Policy headroom bars are neutral; the only colored element on the screen is the destructive
   confirm when the intent is irreversible and the destination is unknown.
 - Ceremony progress is a row of party chips (online, committed, signed), never a spinner alone.
+
+### Element readability and history naming
+
+- **Workspace activity** counts local directory/device/layout/balance-refresh events.
+  Its terrain supports pointer turn/tilt, shift-drag pan, two-finger pan/pinch,
+  wheel zoom, reset and keyboard navigation/day selection. It does not count wallet transactions.
+- **Balance history** graphs locally recorded native-asset totals; expandable timestamp/value
+  snapshots make chart data readable without hover.
+- **Transaction history** has separate local-signing and public-chain sources. Each record expands
+  into full hash, address, chain, time, fee and net-change details; local records expose the
+  core-verified audit trail. Source and decoding coverage remain visible.
+- Element search prioritises name matches and uses a wide, viewport-capped picker. Descriptions
+  wrap in full; keyboard selection scrolls into view as the results change.
+- Each pane body establishes a named inline-size container. Narrow tables become labelled
+  vertical rows retaining every column; holdings use expandable account cards. Long identity
+  strings and endpoint URLs wrap rather than disappearing behind a tooltip. Scrollable bodies
+  retain information when height shrinks. Settings and fullscreen are available in stack mode.
+  Touch controls use larger targets. Saved element kinds remain compatible: terrain and
+  ledger keep their storage identities, while transactions is additive.

@@ -17,6 +17,7 @@ export function StackMode() {
   const state = useWorkspace();
   const layout = state.layouts.find((l) => l.id === state.activeId) ?? (state.layouts[0] as Layout);
   const panes = layout.panes.slice().sort((a, b) => b.z - a.z);
+  const fullscreen = panes.find((pane) => pane.fullscreen);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto bg-paper p-2">
@@ -25,7 +26,7 @@ export function StackMode() {
           no elements · press /
         </div>
       )}
-      {panes.map((pane) => (
+      {(fullscreen ? [fullscreen] : panes).map((pane) => (
         <StackPane key={pane.id} pane={pane} def={api.registry[pane.kind]} />
       ))}
     </div>
@@ -38,6 +39,7 @@ interface StackPaneProps {
 }
 
 const StackPane = memo(function StackPane({ pane, def }: StackPaneProps) {
+  const api = useWorkspaceApi();
   const [bodyRef, size] = useElementSize<HTMLDivElement>();
   const setProps = useCallback((props: PaneProps) => workspace.setProps(pane.id, props), [pane.id]);
   const title = def.titleFor?.(pane) ?? def.title;
@@ -47,7 +49,11 @@ const StackPane = memo(function StackPane({ pane, def }: StackPaneProps) {
     <section
       aria-label={title}
       className="sw-pane sw-pane-stacked sw-pane-enter flex-none"
-      style={{ height: Math.max(260, pane.h) + 28 }}
+      style={
+        pane.fullscreen
+          ? { height: '100%', minHeight: 0, flex: '1 1 0' }
+          : { height: Math.max(260, pane.h) + 44 }
+      }
     >
       <div className="sw-pane-title">
         <span aria-hidden className="text-faint">
@@ -59,6 +65,43 @@ const StackPane = memo(function StackPane({ pane, def }: StackPaneProps) {
             {s.label}
           </Chip>
         ))}
+        {(def.settings?.length ?? 0) > 0 && (
+          <button
+            type="button"
+            className="sw-pressable sw-pane-icon-btn"
+            aria-label="settings"
+            onClick={(e) => api.openSettings(pane.id, e.currentTarget)}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              aria-hidden
+            >
+              <circle cx="6" cy="6" r="4" strokeDasharray="2 1.2" />
+              <circle cx="6" cy="6" r="1.5" />
+            </svg>
+          </button>
+        )}
+        <button
+          type="button"
+          className="sw-pressable sw-pane-icon-btn"
+          aria-label={pane.fullscreen ? 'exit fullscreen' : 'fullscreen'}
+          onClick={() => workspace.toggleFullscreen(pane.id)}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            fill="none"
+            stroke="currentColor"
+            aria-hidden
+          >
+            <path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8" />
+          </svg>
+        </button>
         <button
           type="button"
           className="sw-pressable sw-pane-icon-btn ml-auto"
@@ -80,7 +123,7 @@ const StackPane = memo(function StackPane({ pane, def }: StackPaneProps) {
           </svg>
         </button>
       </div>
-      <div ref={bodyRef} className="sw-pane-body min-h-[260px]">
+      <div ref={bodyRef} className="sw-pane-body">
         {createElement(def.body, { pane, width: size.width, height: size.height, setProps })}
       </div>
     </section>

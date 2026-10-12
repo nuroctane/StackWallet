@@ -84,7 +84,7 @@ which supplies `chains()` from the catalog, the default `MemoryRpcPool`, `requir
 signing path. Each family implements `deriveAddress`, `validateAddress`, native-asset
 `getBalances` and `status` with `@noble/hashes` and `@scure/base` only, through the shared
 `fetchJson` / `fetchJsonRpc` helpers, `withFailover` and `withCrossCheck` over the `RpcPool`.
-The remaining methods (`getHistory`, `build`, `simulate`, `sighashes`, `attach`, `broadcast`)
+The generic signing methods (`build`, `simulate`, `sighashes`, `attach`, `broadcast`)
 throw `NotImplementedError` until the family SDKs named below are added; they never return a
 fake success. Public keys arrive as `{ curve, hex }`; compressed secp256k1 keys are decompressed with
 field arithmetic in `packages/chains/src/keys.ts`, so no curve library is needed for addresses.
@@ -235,3 +235,33 @@ reason instead of an empty grid.
 2. Register curve requirements so DKG for a new curve can be added to existing `tss` wallets.
 3. Add registry data and a testnet.
 4. Pass the chain-adapter support gate in `SECURITY.md` section 6.
+
+## Read-only transaction history
+
+Every family adapter implements getHistory through the bounded readers in
+packages/chains/src/history.ts. Each read validates the address and endpoint network identity,
+uses the shared whole-body timeout/body-size limit, and reports its source and coverage.
+A caller can cancel reads; failures never become an empty successful history.
+
+| Family                                                        | Public history                                                                                                                                                                                                                                                                                 | Pagination and limits                                                                                                                  |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| EVM, including L1, L2, sidechain and appchain catalog entries | Any compatible RPC can scan external transactions and execution fees. Optional keyless Blockscout v2 indexers supply indexed external transactions or individual token-transfer events. Common hosted instances are bundled; a pane can specify another HTTPS instance for the selected chain. | RPC scans 12 blocks per page; Blockscout pages by its validated cursor. ERC-20 transfer events retain their log identity across pages. |
+| Bitcoin family                                                | Esplora-compatible address transaction history, including mempool records, input/output net changes and whole-transaction fees.                                                                                                                                                                | 25 confirmed records per page; confirmed hash cursor. Dogecoin needs a user-supplied compatible endpoint.                              |
+| Solana                                                        | Confirmed signatures referencing the address, including program calls; transaction details provide SOL net changes and fees.                                                                                                                                                                   | 20 signatures per page; signature cursor. Pruned details are unknown; SPL deltas are not decoded.                                      |
+| Cosmos SDK                                                    | Indexed sender and recipient events, deduplicated by transaction hash; bank transfer events and native-denom fees.                                                                                                                                                                             | Two 20-record queries per page; modern page/limit plus legacy pagination. A node must expose transaction indexing and the LCD service. |
+
+These are unverified endpoint observations, not cryptographic inclusion proofs. EVM RPC scans
+are not indexed lifetime history and omit internal calls, token logs and additional rollup fees.
+Blockscout external transactions and token transfers have separate coverage; neither promises
+complete internal-call or bridge decoding. Cosmos bank events do not fully decode staking,
+contracts or the IBC lifecycle. Net balance changes must not be labelled transfer amounts:
+Bitcoin and Solana changes can include fees/rent, and EVM execution fees are included where known.
+Unavailable fees/details remain unknown instead of becoming zero.
+
+The transaction-history element separates public observations from the encrypted core's local
+signing records. Denied, rejected and awaiting requests remain local records; they are never
+presented as completed on-chain transfers. Public reads are requested for one selected account,
+including watch accounts, and the UI shows source, scope, coverage, filters, full details and
+older-page controls. Changing account/address/method cancels the old request and clears its
+cursor. The view retains at most 1,000 rows. Read-only history does not change signing eligibility,
+policy decisions, threshold rules or audit transitions.

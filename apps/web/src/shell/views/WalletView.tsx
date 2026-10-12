@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { Account, Wallet } from '@stackwallet/core-client';
-import { shortAddress, type ChainInfo, type Holding } from '@stackwallet/chains';
+import { type ChainInfo, type Holding } from '@stackwallet/chains';
 import { Badge, Button, Kbd, useToasts } from '@stackwallet/ui';
 
 import { explorerAddressUrl, FAMILY_LABEL, findChain } from '../../lib/chains.js';
@@ -319,20 +319,21 @@ function HoldingRow({
   return (
     <tr className="h-9 hover:bg-hover">
       <td
+        data-label="Chain"
         className="max-w-[16ch] truncate px-4 whitespace-nowrap"
         title={`${info?.name ?? account.chainId} · ${FAMILY_LABEL[account.family]}`}
       >
         <span className="text-ink">{info?.name ?? account.chainId}</span>
         {info?.testnet && <Badge className="ml-2">testnet</Badge>}
       </td>
-      <td className="px-2 whitespace-nowrap">
+      <td data-label="Address" className="px-2 whitespace-nowrap">
         <button
           type="button"
           onClick={onCopy}
           title={`${account.address} (click to copy)`}
           className="sw-pressable -mx-1 rounded-sw-sm px-1 font-mono text-muted"
         >
-          {shortAddress(account.address)}
+          {account.address}
         </button>
         {explorer && (
           <a
@@ -348,12 +349,14 @@ function HoldingRow({
         )}
       </td>
       <td
+        data-label="Asset"
         className={`max-w-[18ch] truncate px-2 ${row.native ? 'text-muted' : 'font-mono text-[11px] text-faint'}`}
         title={holding?.assetRef ?? asset}
       >
         {asset}
       </td>
       <td
+        data-label="Balance"
         className={`px-2 text-right font-mono tabular-nums ${balanceClass}`}
         title={holding?.error ?? entry?.error}
       >
@@ -362,10 +365,10 @@ function HoldingRow({
           <span className="ml-1 text-[10px] text-faint">base</span>
         )}
       </td>
-      <td className="px-2 whitespace-nowrap">
+      <td data-label="Source" className="px-2 whitespace-nowrap">
         <Verified holding={holding} info={info} native={row.native} />
       </td>
-      <td className="px-4 text-right whitespace-nowrap text-faint tabular-nums">
+      <td data-label="Age" className="px-4 text-right whitespace-nowrap text-faint tabular-nums">
         {holding ? relativeTime(holding.updatedAtMs, now) : entry?.error ? 'failed' : ''}
       </td>
     </tr>
