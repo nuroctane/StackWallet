@@ -41,13 +41,16 @@ fn number(text: &str) -> Result<u64> {
     }
     Ok(n)
 }
-fn script(address: &str) -> Result<ScriptBuf> {
+fn script(address: &str, recipient: bool) -> Result<ScriptBuf> {
     let checked = Address::from_str(address)
         .map_err(|_| invalid("invalid address"))?
         .require_network(Network::Signet)
         .map_err(|_| invalid("wrong address network"))?;
-    if checked.to_string() != address || !checked.script_pubkey().is_p2wpkh() {
-        return Err(invalid("only canonical tb1 P2WPKH addresses are enabled"));
+    let script = checked.script_pubkey();
+    if checked.to_string() != address
+        || !(script.is_p2wpkh() || (recipient && (script.is_p2wsh() || script.is_p2tr())))
+    {
+        return Err(invalid("unsupported or non-canonical Signet address"));
     }
     Ok(checked.script_pubkey())
 }
@@ -76,8 +79,8 @@ pub struct BitcoinTx {
 impl BitcoinTx {
     pub fn psbt(&self) -> Result<Psbt> {
         check_chain(&self.chain_id)?;
-        let from = script(&self.from)?;
-        let to = script(&self.to)?;
+        let from = script(&self.from, false)?;
+        let to = script(&self.to, true)?;
         if from == to {
             return Err(invalid("sender and recipient must differ"));
         }
@@ -86,8 +89,10 @@ impl BitcoinTx {
         }
         let amount = number(&self.amount)?;
         let fee = number(&self.fee)?;
-        let max_size = 11 + 69 * self.inputs.len() as u64 + 62;
-        if amount < 294 || fee == 0 || fee > 100_000 || fee > max_size * 100 {
+        let recipient_bytes = 9 + to.len() as u64;
+        let dust = 3 * (recipient_bytes + 67);
+        let max_size = 11 + 69 * self.inputs.len() as u64 + 31 + recipient_bytes;
+        if amount < dust || fee == 0 || fee > 100_000 || fee > max_size * 100 {
             return Err(invalid("dust amount or excessive fee"));
         }
         let mut seen = HashSet::new();
@@ -237,7 +242,7 @@ pub(crate) fn fixture(public: &[u8]) -> BitcoinTx {
         }],
         output: vec![TxOut {
             value: Amount::from_sat(100000),
-            script_pubkey: script(&from).unwrap(),
+            script_pubkey: script(&from, false).unwrap(),
         }],
     };
     BitcoinTx {
@@ -256,6 +261,46 @@ pub(crate) fn fixture(public: &[u8]) -> BitcoinTx {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recipient_scripts_have_independent_dust_and_fee_bounds() {
+        let key = k256::ecdsa::SigningKey::from_bytes((&[1u8; 32]).into()).unwrap();
+        for prefix in [0x00, 0x51] {
+            let mut bytes = vec![prefix, 0x20];
+            bytes.extend([2; 32]);
+            let destination = ScriptBuf::from_bytes(bytes);
+            let mut tx = fixture(key.verifying_key().to_encoded_point(true).as_bytes());
+            tx.to = Address::from_script(&destination, Network::Signet)
+                .unwrap()
+                .to_string();
+            tx.amount = "330".into();
+            tx.fee = "15400".into();
+            assert_eq!(
+                tx.psbt().unwrap().unsigned_tx.output[0].script_pubkey,
+                destination
+            );
+            let (raw, _) = tx.sign(&[1; 32]).unwrap();
+            let signed: Transaction = deserialize(&hex::decode(&raw[2..]).unwrap()).unwrap();
+            assert_eq!(signed.output[0].value.to_sat(), 330);
+            assert_eq!(signed.output[0].script_pubkey, destination);
+            tx.amount = "329".into();
+            assert!(tx.psbt().is_err());
+            tx.amount = "330".into();
+            tx.fee = "15401".into();
+            assert!(tx.psbt().is_err());
+            tx.fee = "154".into();
+            tx.from = tx.to.clone();
+            assert!(tx.psbt().is_err());
+        }
+        for prefix in [0x52, 0x60] {
+            let mut bytes = vec![prefix, 0x20];
+            bytes.extend([2; 32]);
+            let mut tx = fixture(key.verifying_key().to_encoded_point(true).as_bytes());
+            tx.to = Address::from_script(&ScriptBuf::from_bytes(bytes), Network::Signet)
+                .unwrap()
+                .to_string();
+            assert!(tx.psbt().is_err());
+        }
+    }
     #[test]
     fn wire_and_bip143_signature_match_independent_verifier() {
         let secret = [1u8; 32];

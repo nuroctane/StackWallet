@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   readBitcoinCoins,
+  signetRecipient,
   type BitcoinAdapter,
   type BitcoinCoin,
   type BitcoinPrepareOptions,
@@ -10,11 +11,13 @@ import { Button, Input } from '@stackwallet/ui';
 export function BitcoinCoinControl({
   adapter,
   from,
+  to,
   disabled,
   onChange,
 }: {
   adapter: BitcoinAdapter;
   from: string;
+  to?: string;
   disabled: boolean;
   onChange: (options: BitcoinPrepareOptions, valid: boolean) => void;
 }) {
@@ -73,6 +76,7 @@ export function BitcoinCoinControl({
   const total = coins
     .filter((c) => selected.includes(`${c.txid}:${c.vout}`))
     .reduce((n, c) => n + BigInt(c.value), 0n);
+  const recipient = signetRecipient(to ?? '');
   return (
     <details className="min-w-0 rounded-sw-sm border border-edge p-3 text-[12px]">
       <summary className="min-h-11 cursor-pointer py-3 text-muted">
@@ -126,8 +130,9 @@ export function BitcoinCoinControl({
               /^[0-9]+$/.test(fee) &&
               Number(fee) >= 1 &&
               Number(fee) <= 100 &&
-              selected.length > 0
-                ? ` · estimated fee ${(BigInt(73 + 69 * selected.length) * BigInt(fee)).toString()} sats`
+              selected.length > 0 &&
+              recipient
+                ? ` · estimated fee ${(BigInt(42 + recipient.outputBytes + 69 * selected.length) * BigInt(fee)).toString()} sats`
                 : ''}
             </p>
             {loaded && coins.length === 0 && (

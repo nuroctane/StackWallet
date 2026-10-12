@@ -178,7 +178,10 @@ input use; they do not authenticate chain state. Network
 simulation is unavailable and simulation policies fail closed. Broadcast uncertainty remains
 pending indefinitely until a matching indexed result reaches six observed confirmations.
 There is no timeout-based release or automatic resend. No funded Signet confirmation has been
-verified; mainnet, Taproot and threshold Bitcoin sends remain disabled.
+verified; mainnet, Taproot input signing and threshold Bitcoin sends remain disabled. Recipient
+outputs may be canonical Signet P2WPKH, P2WSH or P2TR; the core enforces script-specific dust
+bounds and fee limits. Sender inputs and change remain P2WPKH. Unknown witness versions,
+legacy recipients and non-canonical addresses are refused.
 
 ## 7. Reporting
 

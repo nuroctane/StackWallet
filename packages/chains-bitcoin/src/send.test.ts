@@ -15,6 +15,7 @@ import {
   BITCOIN_SIGNET,
   prepareBitcoin,
   readBitcoinCoins,
+  signetRecipient,
   bitcoinInputsUnspent,
   broadcastBitcoin,
   bitcoinTransferStatus,
@@ -117,6 +118,39 @@ function adapter(
     },
   });
 }
+describe('Signet recipient boundaries', () => {
+  it('sizes supported output scripts and refuses unknown witness versions and networks', async () => {
+    expect(signetRecipient(to)).toEqual({ kind: 'P2WPKH', dustSats: 294, outputBytes: 31 });
+    for (const version of [0, 1]) {
+      const recipient = encodeSegwit('tb', version, new Uint8Array(32).fill(2));
+      expect(signetRecipient(recipient)).toEqual({
+        kind: version === 0 ? 'P2WSH' : 'P2TR',
+        dustSats: 330,
+        outputBytes: 43,
+      });
+      const prepared = await prepareBitcoin(
+        adapter(),
+        { ...intent, to: recipient, amount: '330' },
+        from,
+      );
+      expect(prepared.unsigned).toMatchObject({ to: recipient, amount: '330', fee: '154' });
+      await expect(
+        prepareBitcoin(adapter(), { ...intent, to: recipient, amount: '329' }, from),
+      ).rejects.toThrow(/dust/);
+      await expect(readBitcoinCoins(adapter(), recipient)).rejects.toThrow(/senders/);
+      await expect(prepareBitcoin(adapter(), intent, recipient)).rejects.toThrow(/senders/);
+    }
+    for (const recipient of [
+      encodeSegwit('bc', 1, new Uint8Array(32).fill(2)),
+      encodeSegwit('tb', 2, new Uint8Array(32).fill(2)),
+      to.toUpperCase(),
+      'invalid',
+    ]) {
+      expect(signetRecipient(recipient)).toBeNull();
+      await expect(prepareBitcoin(adapter(), { ...intent, to: recipient }, from)).rejects.toThrow();
+    }
+  });
+});
 describe('Signet native send boundaries', () => {
   it('verifies funding bytes and previews exact fees without claiming network simulation', async () => {
     const prepared = await prepareBitcoin(adapter(), intent, from);
@@ -149,7 +183,7 @@ describe('Signet native send boundaries', () => {
     await expect(
       prepareBitcoin(
         adapter(),
-        { ...intent, to: encodeSegwit('tb', 1, new Uint8Array(32).fill(1)) },
+        { ...intent, to: encodeSegwit('tb', 2, new Uint8Array(32).fill(1)) },
         from,
       ),
     ).rejects.toThrow();
@@ -252,120 +286,128 @@ describe('explicit Signet coin control', () => {
 describe.skipIf(!existsSync(resolve(wasmDir, 'stackwallet_wasm_bg.wasm')))(
   'core Bitcoin wire interoperability',
   () => {
-    it('independently verifies every BIP143 signature, output, policy gate and sealed ledger', async () => {
-      const module = (await import(
-        pathToFileURL(resolve(wasmDir, 'stackwallet_wasm.js')).href
-      )) as WasmModule;
-      await module.default?.({
-        module_or_path: readFileSync(resolve(wasmDir, 'stackwallet_wasm_bg.wasm')),
-      });
-      const core = new WasmCoreClient(module);
-      const pass = 'disposable Bitcoin interoperability fixture';
-      const vault = await core.createVault(pass);
-      try {
-        await vault.importPhrase(
-          'w',
-          'test test test test test test test test test test test junk',
-          1,
-        );
-        const path = "m/84'/1'/0'/0/0";
-        const pub = await vault.singlePublicKey('w', 'secp256k1', path);
-        const sender = encodeSegwit('tb', 0, hash160(Buffer.from(pub, 'hex')));
-        const funds = [funding(sender, 60000n, 1), funding(sender, 50000n, 2)];
-        const tx = {
-          ...unsigned,
-          from: sender,
-          amount: '80000',
-          fee: '500',
-          inputs: funds.map((f) => ({ txid: f.getId(), vout: 0, previousTxHex: f.toHex() })),
-        };
-        const proposal = { ...intent, amount: tx.amount };
-        await vault.txPropose(proposal, 'd', 2);
-        const attach = {
-          txId: 't',
-          signer: { walletId: 'w', path, address: sender },
-          unsigned: tx,
-          simulation: { ok: false },
-          simulationOk: false,
-          deviceId: 'd',
-          nowMs: 3,
-        };
-        await expect(
-          vault.txAttach({ ...attach, unsigned: { ...tx, amount: '80001' } }),
-        ).rejects.toThrow(/intent/);
-        await vault.txAttach(attach);
-        await vault.txEvaluate('t', 'd', 4);
-        await vault.txPropose({ ...proposal, id: 'conflict' }, 'd', 5);
-        await expect(vault.txAttach({ ...attach, txId: 'conflict', nowMs: 6 })).rejects.toThrow(
-          /reserved/,
-        );
-        await expect(vault.txApprove('t', 'wrong', 'd', 7)).rejects.toThrow();
-        await vault.setPolicies(
-          [
-            {
-              id: 'simulation',
-              name: 'Require network simulation',
-              mode: 'enforce',
-              rules: [{ rule: 'requireSimulationPass' }],
-            },
-          ],
-          'd',
-          8,
-        );
-        expect((await vault.txApprove('t', pass, 'd', 9)).state).toBe('rejected');
-        await vault.setPolicies([], 'd', 10);
-        await vault.txPropose({ ...proposal, id: 'signed' }, 'd', 11);
-        await vault.txAttach({ ...attach, txId: 'signed', nowMs: 12 });
-        await vault.txEvaluate('signed', 'd', 13);
-        const signed = await vault.txApprove('signed', pass, 'd', 14);
-        const decoded = Transaction.fromHex(signed.rawSignedHex!.slice(2));
-        expect(decoded.getId()).toBe(signed.hash);
-        expect(decoded.version).toBe(2);
-        expect(decoded.locktime).toBe(0);
-        expect(decoded.outs).toEqual([
-          { script: address.toOutputScript(to, networks.testnet), value: 80000n },
-          { script: address.toOutputScript(sender, networks.testnet), value: 29500n },
-        ]);
-        expect(decoded.ins).toHaveLength(2);
-        const h = hash160(Buffer.from(pub, 'hex'));
-        const scriptCode = script.compile([
-          script.OPS.OP_DUP!,
-          script.OPS.OP_HASH160!,
-          h,
-          script.OPS.OP_EQUALVERIFY!,
-          script.OPS.OP_CHECKSIG!,
-        ]);
-        for (let i = 0; i < decoded.ins.length; i++) {
-          const input = decoded.ins[i]!;
-          expect(input.sequence).toBe(0xfffffffd);
-          expect(input.script).toHaveLength(0);
-          expect(input.witness).toHaveLength(2);
-          expect(Buffer.from(input.witness[1]!).toString('hex')).toBe(pub);
-          const sig = script.signature.decode(input.witness[0]!);
-          expect(sig.hashType).toBe(Transaction.SIGHASH_ALL);
-          expect(
-            Secp256k1.verifySignature(
-              Secp256k1Signature.fromFixedLength(sig.signature),
-              decoded.hashForWitnessV0(i, scriptCode, funds[i]!.outs[0]!.value, sig.hashType),
-              Buffer.from(pub, 'hex'),
-            ),
-          ).toBe(true);
-        }
-        await vault.txReport('signed', 'broadcast', null, 'd', 15);
-        await vault.txReport('signed', 'pending', null, 'd', 16);
-        await expect(vault.txReport('signed', 'expired', null, 'd', 17)).rejects.toThrow();
-        await vault.txReport('signed', 'confirmed', null, 'd', 18);
-        const history = await vault.ledger();
-        const reopened = await core.openVault(await vault.toBytes());
+    it.each([
+      to,
+      encodeSegwit('tb', 0, new Uint8Array(32).fill(2)),
+      encodeSegwit('tb', 1, new Uint8Array(32).fill(2)),
+    ])(
+      'independently verifies BIP143 signatures, policy and sealed recipient %s',
+      async (recipient) => {
+        const module = (await import(
+          pathToFileURL(resolve(wasmDir, 'stackwallet_wasm.js')).href
+        )) as WasmModule;
+        await module.default?.({
+          module_or_path: readFileSync(resolve(wasmDir, 'stackwallet_wasm_bg.wasm')),
+        });
+        const core = new WasmCoreClient(module);
+        const pass = 'disposable Bitcoin interoperability fixture';
+        const vault = await core.createVault(pass);
         try {
-          await reopened.unlock(pass);
-          expect(await reopened.ledger()).toEqual(history);
+          await vault.importPhrase(
+            'w',
+            'test test test test test test test test test test test junk',
+            1,
+          );
+          const path = "m/84'/1'/0'/0/0";
+          const pub = await vault.singlePublicKey('w', 'secp256k1', path);
+          const sender = encodeSegwit('tb', 0, hash160(Buffer.from(pub, 'hex')));
+          const funds = [funding(sender, 60000n, 1), funding(sender, 50000n, 2)];
+          const tx = {
+            ...unsigned,
+            to: recipient,
+            from: sender,
+            amount: '80000',
+            fee: '500',
+            inputs: funds.map((f) => ({ txid: f.getId(), vout: 0, previousTxHex: f.toHex() })),
+          };
+          const proposal = { ...intent, to: recipient, amount: tx.amount };
+          await vault.txPropose(proposal, 'd', 2);
+          const attach = {
+            txId: 't',
+            signer: { walletId: 'w', path, address: sender },
+            unsigned: tx,
+            simulation: { ok: false },
+            simulationOk: false,
+            deviceId: 'd',
+            nowMs: 3,
+          };
+          await expect(
+            vault.txAttach({ ...attach, unsigned: { ...tx, amount: '80001' } }),
+          ).rejects.toThrow(/intent/);
+          await vault.txAttach(attach);
+          await vault.txEvaluate('t', 'd', 4);
+          await vault.txPropose({ ...proposal, id: 'conflict' }, 'd', 5);
+          await expect(vault.txAttach({ ...attach, txId: 'conflict', nowMs: 6 })).rejects.toThrow(
+            /reserved/,
+          );
+          await expect(vault.txApprove('t', 'wrong', 'd', 7)).rejects.toThrow();
+          await vault.setPolicies(
+            [
+              {
+                id: 'simulation',
+                name: 'Require network simulation',
+                mode: 'enforce',
+                rules: [{ rule: 'requireSimulationPass' }],
+              },
+            ],
+            'd',
+            8,
+          );
+          expect((await vault.txApprove('t', pass, 'd', 9)).state).toBe('rejected');
+          await vault.setPolicies([], 'd', 10);
+          await vault.txPropose({ ...proposal, id: 'signed' }, 'd', 11);
+          await vault.txAttach({ ...attach, txId: 'signed', nowMs: 12 });
+          await vault.txEvaluate('signed', 'd', 13);
+          const signed = await vault.txApprove('signed', pass, 'd', 14);
+          const decoded = Transaction.fromHex(signed.rawSignedHex!.slice(2));
+          expect(decoded.getId()).toBe(signed.hash);
+          expect(decoded.version).toBe(2);
+          expect(decoded.locktime).toBe(0);
+          expect(decoded.outs).toEqual([
+            { script: address.toOutputScript(recipient, networks.testnet), value: 80000n },
+            { script: address.toOutputScript(sender, networks.testnet), value: 29500n },
+          ]);
+          expect(decoded.ins).toHaveLength(2);
+          const h = hash160(Buffer.from(pub, 'hex'));
+          const scriptCode = script.compile([
+            script.OPS.OP_DUP!,
+            script.OPS.OP_HASH160!,
+            h,
+            script.OPS.OP_EQUALVERIFY!,
+            script.OPS.OP_CHECKSIG!,
+          ]);
+          for (let i = 0; i < decoded.ins.length; i++) {
+            const input = decoded.ins[i]!;
+            expect(input.sequence).toBe(0xfffffffd);
+            expect(input.script).toHaveLength(0);
+            expect(input.witness).toHaveLength(2);
+            expect(Buffer.from(input.witness[1]!).toString('hex')).toBe(pub);
+            const sig = script.signature.decode(input.witness[0]!);
+            expect(sig.hashType).toBe(Transaction.SIGHASH_ALL);
+            expect(
+              Secp256k1.verifySignature(
+                Secp256k1Signature.fromFixedLength(sig.signature),
+                decoded.hashForWitnessV0(i, scriptCode, funds[i]!.outs[0]!.value, sig.hashType),
+                Buffer.from(pub, 'hex'),
+              ),
+            ).toBe(true);
+          }
+          await vault.txReport('signed', 'broadcast', null, 'd', 15);
+          await vault.txReport('signed', 'pending', null, 'd', 16);
+          await expect(vault.txReport('signed', 'expired', null, 'd', 17)).rejects.toThrow();
+          await vault.txReport('signed', 'confirmed', null, 'd', 18);
+          const history = await vault.ledger();
+          const reopened = await core.openVault(await vault.toBytes());
+          try {
+            await reopened.unlock(pass);
+            expect(await reopened.ledger()).toEqual(history);
+          } finally {
+            reopened.free();
+          }
         } finally {
-          reopened.free();
+          vault.free();
         }
-      } finally {
-        vault.free();
-      }
-    });
+      },
+    );
   },
 );

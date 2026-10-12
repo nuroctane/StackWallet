@@ -125,7 +125,8 @@ field arithmetic in `packages/chains/src/keys.ts`, so no curve library is needed
   the FROST implementation applies the taproot tweak to the group key.
 - Status via Electrum subscriptions or mempool.space polling.
 
-Current Bitcoin send coverage is single-key native P2WPKH on Signet only. The endpoint's full
+Current Bitcoin send coverage uses single-key P2WPKH inputs on Signet only, with canonical
+P2WPKH, P2WSH or P2TR recipient outputs. The endpoint's full
 genesis hash is checked before dependent reads. Preparation selects up to eight confirmed UTXOs
 automatically or uses the exact confirmed outpoints chosen in coin control. Manual selection
 never adds or substitutes an input; stale, spent, insufficient or dust-producing selections fail.
@@ -134,8 +135,11 @@ checks outspend status and fetches each complete funding transaction. Rust indep
 its transaction ID, output script and value, rejects coinbase funding, duplicate inputs, dust
 and excessive fees, and constructs a PSBT with SIGHASH_ALL. Only one recipient and optional
 change to the same sender are produced. The fee rate preview accepts 1–100 sat/vbyte and total
-fees are capped at 100,000 sats. Recipient and change must be canonical `tb1` P2WPKH addresses;
-minimum output value is 294 sats. Keys remain in the vault.
+fees are capped at 100,000 sats. The estimate includes the recipient script's actual output size.
+Sender and change remain canonical `tb1` P2WPKH addresses (294 sats minimum); P2WSH and P2TR
+recipients require 330 sats. Unknown witness versions and legacy outputs are refused.
+These dust bounds follow [Bitcoin Core's default dust policy](https://github.com/bitcoin/bitcoin/blob/master/src/policy/policy.cpp).
+Keys remain in the vault.
 
 Local funding validation is not network simulation. The simulation flag is false, and
 `RequireSimulationPass` refuses these proposals. Before approval each selected input must still
@@ -143,7 +147,7 @@ be observed unspent; active proposals reserve inputs in the core. Broadcast erro
 index entries remain pending under the core transaction ID, with no automatic resend, expiry
 or release of spend reservations. Restart resumes tracking. Six observed confirmations are
 required; RPC observations are not chain proofs. RBF is signaled but replacement is not
-implemented. Funded Signet confirmation, Taproot, threshold signing,
+implemented. Funded Signet confirmation, Taproot input signing, threshold signing,
 mainnet and other Bitcoin-family sends remain outside this increment.
 
 ### Solana (`chains-solana`, @solana/kit)

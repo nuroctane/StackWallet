@@ -658,6 +658,9 @@ an approval screen reads as names, not hex:
    remains pending under the core transaction ID, and confirmation waits for six blocks.
    Network simulation is unavailable and is never marked successful: a policy requiring
    simulation refuses these sends. Funded Signet confirmation remains unverified.
+   Recipient coverage includes canonical Signet P2WPKH, P2WSH and P2TR outputs. The core and
+   adapter enforce script-specific dust bounds (294/330 sats) and output sizes in fee estimates;
+   sender inputs and change remain P2WPKH. Unknown witness versions and legacy recipients fail.
    Remaining in this phase: Bitcoin Taproot/threshold signing and RBF
    replacement, Solana FROST and Cosmos threshold ceremonies,
    SPL/Token-2022 and versioned transactions, IBC and other Cosmos messages, and swaps per family.

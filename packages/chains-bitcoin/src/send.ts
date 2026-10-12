@@ -53,7 +53,7 @@ export async function readBitcoinCoins(
   adapter: BitcoinAdapter,
   from: string,
 ): Promise<BitcoinCoin[]> {
-  if (!isSignetRecipient(from)) throw new Error('Only Signet P2WPKH senders are enabled');
+  if (!isSignetSender(from)) throw new Error('Only Signet P2WPKH senders are enabled');
   return adapter.withSignet(BITCOIN_SIGNET, async (query) => {
     const coins = await query(`/address/${from}/utxo`, Utxos);
     if (!coins) throw new Error('UTXO endpoint unavailable');
@@ -62,6 +62,22 @@ export async function readBitcoinCoins(
 }
 
 export function isSignetRecipient(text: string): boolean {
+  return signetRecipient(text) !== null;
+}
+export function signetRecipient(text: string): {
+  kind: 'P2WPKH' | 'P2WSH' | 'P2TR';
+  dustSats: number;
+  outputBytes: number;
+} | null {
+  const d = decodeSegwit(text);
+  if (text !== text.toLowerCase() || d?.hrp !== 'tb') return null;
+  if (d.version === 0 && d.program.length === 20)
+    return { kind: 'P2WPKH', dustSats: 294, outputBytes: 31 };
+  if (d.program.length === 32 && (d.version === 0 || d.version === 1))
+    return { kind: d.version === 0 ? 'P2WSH' : 'P2TR', dustSats: 330, outputBytes: 43 };
+  return null;
+}
+function isSignetSender(text: string): boolean {
   const d = decodeSegwit(text);
   return (
     text === text.toLowerCase() && d?.hrp === 'tb' && d.version === 0 && d.program.length === 20
@@ -94,14 +110,15 @@ export async function prepareBitcoin(
     intent.chainId !== BITCOIN_SIGNET ||
     intent.kind !== 'transfer' ||
     intent.asset !== `${BITCOIN_SIGNET}:native` ||
-    !isSignetRecipient(from) ||
+    !isSignetSender(from) ||
     !isSignetRecipient(intent.to) ||
     intent.to === from
   )
-    throw new Error('Only Signet native P2WPKH transfers are enabled');
+    throw new Error('Only Signet P2WPKH senders and native SegWit/Taproot recipients are enabled');
+  const recipient = signetRecipient(intent.to)!;
   if (
     !/^[1-9][0-9]*$/.test(intent.amount) ||
-    BigInt(intent.amount) < 294n ||
+    BigInt(intent.amount) < BigInt(recipient.dustSats) ||
     BigInt(intent.amount) > 2_100_000_000_000_000n
   )
     throw new Error('Invalid or dust satoshi amount');
@@ -146,7 +163,8 @@ export async function prepareBitcoin(
         throw new Error('UTXO amount differs from funding transaction');
       selected.push(input);
       total += value;
-      fee = BigInt(11 + 69 * selected.length + 62) * BigInt(fees.halfHourFee);
+      fee =
+        BigInt(11 + 69 * selected.length + 31 + recipient.outputBytes) * BigInt(fees.halfHourFee);
       const change = total - BigInt(intent.amount) - fee;
       if (!requestedKeys && (change === 0n || change >= 294n)) break;
     }

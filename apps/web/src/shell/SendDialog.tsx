@@ -5,6 +5,7 @@ import { COSMOS_TESTNET, isValidCosmosAddress } from '@stackwallet/chains-cosmos
 import {
   BITCOIN_SIGNET,
   isSignetRecipient,
+  signetRecipient,
   type BitcoinAdapter,
   type BitcoinPrepareOptions,
 } from '@stackwallet/chains-bitcoin';
@@ -304,9 +305,10 @@ function SendForm({
       )}
       {account?.family === 'bitcoin' && (
         <p className="text-[11px] text-faint">
-          Signet native P2WPKH only. Automatic or manual confirmed input selection; minimum 294
-          sats. Change returns to this sender. Network simulation is unavailable; policies requiring
-          it refuse this transfer.
+          Signet P2WPKH sender; native SegWit or Taproot recipient. Automatic or manual confirmed
+          input selection; {signetRecipient(to.trim())?.dustSats ?? '294–330'} sats minimum
+          recipient output. Change returns to this sender. Network simulation is unavailable;
+          policies requiring it refuse this transfer.
         </p>
       )}
       {account?.family === 'bitcoin' && (
@@ -314,6 +316,7 @@ function SendForm({
           key={account.id}
           adapter={registry.adapterFor(account.chainId) as unknown as BitcoinAdapter}
           from={account.address}
+          to={to.trim()}
           disabled={working}
           onChange={(options, valid) => {
             setBitcoin(options);
