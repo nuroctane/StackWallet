@@ -363,8 +363,13 @@ describe.skipIf(!existsSync(resolve(wasmDir, 'stackwallet_wasm_bg.wasm')))(
           expect(decoded.getId()).toBe(signed.hash);
           expect(decoded.version).toBe(2);
           expect(decoded.locktime).toBe(0);
+          const destination = address.fromBech32(recipient);
+          const recipientScript = script.compile([
+            destination.version === 0 ? script.OPS.OP_0! : script.OPS.OP_1!,
+            destination.data,
+          ]);
           expect(decoded.outs).toEqual([
-            { script: address.toOutputScript(recipient, networks.testnet), value: 80000n },
+            { script: recipientScript, value: 80000n },
             { script: address.toOutputScript(sender, networks.testnet), value: 29500n },
           ]);
           expect(decoded.ins).toHaveLength(2);
