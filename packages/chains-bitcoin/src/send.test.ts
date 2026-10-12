@@ -14,6 +14,7 @@ import { createBitcoinAdapter, encodeSegwit, hash160 } from './bitcoin.js';
 import {
   BITCOIN_SIGNET,
   prepareBitcoin,
+  readBitcoinCoins,
   bitcoinInputsUnspent,
   broadcastBitcoin,
   bitcoinTransferStatus,
@@ -64,6 +65,13 @@ interface Options {
   raw?: string;
   duplicate?: boolean;
   rejectBroadcast?: boolean;
+  coins?: {
+    txid: string;
+    vout: number;
+    value: number;
+    status: { confirmed: boolean; block_height?: number };
+  }[];
+  transactions?: Record<string, string>;
 }
 function adapter(
   options: Options = {},
@@ -81,7 +89,10 @@ function adapter(
         return new Response(
           options.genesis ?? '00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6',
         );
-      if (path.endsWith('/hex')) return new Response(options.raw ?? previous.toHex());
+      if (path.endsWith('/hex'))
+        return new Response(
+          options.transactions?.[path.split('/').at(-2)!] ?? options.raw ?? previous.toHex(),
+        );
       if (path.endsWith('/blocks/tip/height')) return new Response(options.height ?? '105');
       if (path.endsWith('/tx') && init?.method === 'POST')
         return new Response(options.rejectBroadcast ? 'rejected' : hash, {
@@ -95,7 +106,7 @@ function adapter(
           value: options.value ?? 100000,
           status: { confirmed: true, block_height: 80 },
         };
-        result = options.duplicate ? [u, u] : [u];
+        result = options.coins ?? (options.duplicate ? [u, u] : [u]);
       } else if (path.endsWith('/recommended')) result = { halfHourFee: options.fee ?? 1 };
       else if (path.includes('/outspend/')) result = { spent: options.spent ?? false };
       else if (path.endsWith('/status')) {
@@ -180,6 +191,64 @@ describe('Signet native send boundaries', () => {
   });
 });
 const wasmDir = resolve(import.meta.dirname, '../../../apps/web/public/wasm');
+describe('explicit Signet coin control', () => {
+  const second = funding(from, 120000n, 2);
+  const coins = [previous, second].map((tx) => ({
+    txid: tx.getId(),
+    vout: 0,
+    value: Number(tx.outs[0]!.value),
+    status: { confirmed: true, block_height: 80 },
+  }));
+  const options = {
+    coins,
+    transactions: { [previous.getId()]: previous.toHex(), [second.getId()]: second.toHex() },
+  };
+  it('uses exactly the requested inputs and bounded custom fee, without early stopping', async () => {
+    const inputs = coins.map(({ txid, vout }) => ({ txid, vout }));
+    const result = await prepareBitcoin(adapter(options), intent, from, { inputs, feeRate: 3 });
+    expect(result.unsigned.inputs.map(({ txid, vout }) => ({ txid, vout }))).toEqual(inputs);
+    expect(result.unsigned.fee).toBe('633');
+    const single = await prepareBitcoin(adapter(options), intent, from, {
+      inputs: [inputs[1]!],
+      feeRate: 2,
+    });
+    expect(single.unsigned.inputs[0]?.txid).toBe(second.getId());
+    expect(single.unsigned.fee).toBe('284');
+  });
+  it('never substitutes missing, unconfirmed, spent or insufficient selected outputs', async () => {
+    const input = { txid: previous.getId(), vout: 0 };
+    for (const endpoint of [
+      adapter({ ...options, coins: [coins[1]!] }),
+      adapter({ ...options, coins: [{ ...coins[0]!, status: { confirmed: false } }] }),
+      adapter({ ...options, spent: true }),
+    ])
+      await expect(prepareBitcoin(endpoint, intent, from, { inputs: [input] })).rejects.toThrow(
+        /Selected input/,
+      );
+    await expect(
+      prepareBitcoin(adapter(options), { ...intent, amount: '150000' }, from, { inputs: [input] }),
+    ).rejects.toThrow(/cannot cover/);
+  });
+  it('rejects duplicate selections, oversized selections and invalid fees before querying', async () => {
+    const calls: Parameters<typeof adapter>[1] = [];
+    const input = { txid: previous.getId(), vout: 0 };
+    for (const selection of [
+      { inputs: [] },
+      { inputs: [input, input] },
+      { inputs: Array(9).fill(input) },
+      { feeRate: 0 },
+      { feeRate: 101 },
+      { feeRate: 1.5 },
+    ])
+      await expect(prepareBitcoin(adapter({}, calls), intent, from, selection)).rejects.toThrow();
+    expect(calls).toHaveLength(0);
+  });
+  it('returns bounded observed coins and refuses malformed duplicate lists', async () => {
+    expect(await readBitcoinCoins(adapter(options), from)).toHaveLength(2);
+    await expect(readBitcoinCoins(adapter({ duplicate: true }), from)).rejects.toThrow(/Duplicate/);
+    await expect(readBitcoinCoins(adapter(), 'invalid')).rejects.toThrow(/Signet/);
+  });
+});
 describe.skipIf(!existsSync(resolve(wasmDir, 'stackwallet_wasm_bg.wasm')))(
   'core Bitcoin wire interoperability',
   () => {

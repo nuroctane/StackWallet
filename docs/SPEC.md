@@ -650,12 +650,15 @@ an approval screen reads as names, not hex:
    Third increment: single-key Bitcoin Signet native P2WPKH transfers. The core verifies each
    previous transaction's ID, output script and value, constructs a PSBT, computes BIP143
    SIGHASH_ALL digests and signs within the vault. One to eight confirmed inputs are selected
-   automatically; fees are bounded and non-dust change returns to the same sender. Active
+   automatically or chosen explicitly in coin control; manual selections are never supplemented
+   or substituted. An optional integer fee rate of 1–100 sats/vB overrides the endpoint estimate.
+   Approval exposes the exact sealed outpoints. Fees are bounded and non-dust change returns to
+   the same sender. Active
    transfers reserve their inputs in the core. Approval rechecks spend status, uncertainty
    remains pending under the core transaction ID, and confirmation waits for six blocks.
    Network simulation is unavailable and is never marked successful: a policy requiring
    simulation refuses these sends. Funded Signet confirmation remains unverified.
-   Remaining in this phase: Bitcoin Taproot/threshold signing, explicit coin control and RBF
+   Remaining in this phase: Bitcoin Taproot/threshold signing and RBF
    replacement, Solana FROST and Cosmos threshold ceremonies,
    SPL/Token-2022 and versioned transactions, IBC and other Cosmos messages, and swaps per family.
 5. **Agent runtime**: providers, tools, run loop, grants, agent party.

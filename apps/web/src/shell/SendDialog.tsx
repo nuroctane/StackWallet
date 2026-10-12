@@ -2,7 +2,12 @@ import { useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { isValidEvmAddress, tokenInfo, type EvmAdapter } from '@stackwallet/chains-evm';
 import { SOLANA_DEVNET, isValidSolanaAddress } from '@stackwallet/chains-solana';
 import { COSMOS_TESTNET, isValidCosmosAddress } from '@stackwallet/chains-cosmos';
-import { BITCOIN_SIGNET, isSignetRecipient } from '@stackwallet/chains-bitcoin';
+import {
+  BITCOIN_SIGNET,
+  isSignetRecipient,
+  type BitcoinAdapter,
+  type BitcoinPrepareOptions,
+} from '@stackwallet/chains-bitcoin';
 import type { TxRecord } from '@stackwallet/core-client';
 import { Button, Dialog, Field, Input, LoadingWord, Select } from '@stackwallet/ui';
 
@@ -15,6 +20,7 @@ import { useRegistry } from '../store/RegistryContext.js';
 import { proposeSend } from '../store/txs.js';
 import { tokenStore } from '../store/tokens.js';
 import { AddressLabel } from './AddressLabel.js';
+import { BitcoinCoinControl } from './BitcoinCoinControl.js';
 import { useShell } from './ShellContext.js';
 import { useWalletLabel } from './WalletName.js';
 
@@ -96,6 +102,8 @@ function SendForm({
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [result, setResult] = useState<TxRecord | null>(null);
+  const [bitcoin, setBitcoin] = useState<BitcoinPrepareOptions>({});
+  const [bitcoinReady, setBitcoinReady] = useState(true);
 
   if (accounts.length === 0) {
     return (
@@ -124,6 +132,7 @@ function SendForm({
     BigInt(units) > 0xffffffffffffffffn;
   const canSubmit =
     !working &&
+    (account?.family !== 'bitcoin' || bitcoinReady) &&
     toValid &&
     units !== null &&
     units !== '0' &&
@@ -155,7 +164,13 @@ function SendForm({
       assetKind === 'native'
         ? `${account.chainId}:native`
         : `${account.chainId}:erc20:${token.trim()}`;
-    const r = await proposeSend(registry, { account, to: to.trim(), asset, amount: units });
+    const r = await proposeSend(registry, {
+      account,
+      to: to.trim(),
+      asset,
+      amount: units,
+      ...(account.family === 'bitcoin' ? { bitcoin } : {}),
+    });
     setWorking(false);
     if (!r.ok) setError(r.error);
     else setResult(r.value);
@@ -205,6 +220,8 @@ function SendForm({
             ++tokenLookup.current;
             setTokenMeta(null);
             setAssetKind('native');
+            setBitcoin({});
+            setBitcoinReady(true);
             setAccountId(e.target.value);
           }}
         >
@@ -287,10 +304,22 @@ function SendForm({
       )}
       {account?.family === 'bitcoin' && (
         <p className="text-[11px] text-faint">
-          Signet native P2WPKH only. Confirmed inputs are selected automatically; minimum 294 sats.
-          Change returns to this sender. Network simulation is unavailable; policies requiring it
-          refuse this transfer.
+          Signet native P2WPKH only. Automatic or manual confirmed input selection; minimum 294
+          sats. Change returns to this sender. Network simulation is unavailable; policies requiring
+          it refuse this transfer.
         </p>
+      )}
+      {account?.family === 'bitcoin' && (
+        <BitcoinCoinControl
+          key={account.id}
+          adapter={registry.adapterFor(account.chainId) as unknown as BitcoinAdapter}
+          from={account.address}
+          disabled={working}
+          onChange={(options, valid) => {
+            setBitcoin(options);
+            setBitcoinReady(valid);
+          }}
+        />
       )}
       {assetKind === 'token' && (
         <Field

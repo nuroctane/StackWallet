@@ -109,6 +109,40 @@ describe('Bitcoin core lifecycle orchestration', () => {
     },
   };
   const bitcoinRegistry = { adapterFor: () => ({ family: 'bitcoin' }) } as unknown as ChainRegistry;
+  it('preserves exact coin control through preparation and core attachment', async () => {
+    mocks.txPropose.mockResolvedValue({ ok: true, value: bitcoinTx });
+    mocks.prepareBitcoin.mockResolvedValue({
+      unsigned: bitcoinTx.unsigned,
+      simulation: { ok: false },
+    });
+    mocks.txAttach.mockResolvedValue({ ok: true, value: bitcoinTx });
+    mocks.txEvaluate.mockResolvedValue({ ok: true, value: bitcoinTx });
+    const bitcoin = { inputs: [{ txid: 'a'.repeat(64), vout: 0 }], feeRate: 3 };
+    const account = {
+      id: 'a',
+      walletId: 'w',
+      family: 'bitcoin',
+      chainId,
+      address: 'from',
+      derivationPath: "m/84'/1'/0'/0/0",
+    } as Account;
+    expect(
+      (
+        await proposeSend(bitcoinRegistry, {
+          account,
+          to: 'to',
+          asset: `${chainId}:native`,
+          amount: '1000',
+          bitcoin,
+        })
+      ).ok,
+    ).toBe(true);
+    expect(mocks.prepareBitcoin.mock.calls[0]!.slice(2)).toEqual(['from', bitcoin]);
+    expect(mocks.txAttach).toHaveBeenCalledWith(
+      expect.objectContaining({ unsigned: bitcoinTx.unsigned, simulationOk: false }),
+    );
+    expect(mocks.txApprove).not.toHaveBeenCalled();
+  });
   it('refuses spent or unavailable inputs before invoking the core signer', async () => {
     mocks.bitcoinInputsUnspent.mockResolvedValue(false);
     expect((await approveAndSend(bitcoinRegistry, bitcoinTx, 'pw')).ok).toBe(false);

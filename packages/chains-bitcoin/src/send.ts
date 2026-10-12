@@ -25,6 +25,42 @@ const Hex = z
   .regex(/^(?:[0-9a-f]{2})+$/)
   .max(400000);
 
+export const BitcoinPrepareOptions = z
+  .object({
+    inputs: z
+      .array(z.object({ txid: Hash, vout: z.number().int().min(0).max(0xffffffff) }).strict())
+      .min(1)
+      .max(8)
+      .optional(),
+    feeRate: z.number().int().min(1).max(100).optional(),
+  })
+  .strict();
+export type BitcoinPrepareOptions = z.infer<typeof BitcoinPrepareOptions>;
+export type BitcoinCoin = z.infer<typeof Utxos>[number];
+
+function uniqueCoins(coins: BitcoinCoin[]): BitcoinCoin[] {
+  const seen = new Set<string>();
+  for (const coin of coins) {
+    const key = `${coin.txid}:${coin.vout}`;
+    if (seen.has(key)) throw new Error('Duplicate UTXO response');
+    seen.add(key);
+  }
+  return coins.sort((a, b) => b.value - a.value || a.txid.localeCompare(b.txid) || a.vout - b.vout);
+}
+
+/** Public endpoint observations are refreshed and fully validated again during preparation. */
+export async function readBitcoinCoins(
+  adapter: BitcoinAdapter,
+  from: string,
+): Promise<BitcoinCoin[]> {
+  if (!isSignetRecipient(from)) throw new Error('Only Signet P2WPKH senders are enabled');
+  return adapter.withSignet(BITCOIN_SIGNET, async (query) => {
+    const coins = await query(`/address/${from}/utxo`, Utxos);
+    if (!coins) throw new Error('UTXO endpoint unavailable');
+    return uniqueCoins(coins);
+  });
+}
+
 export function isSignetRecipient(text: string): boolean {
   const d = decodeSegwit(text);
   return (
@@ -48,7 +84,12 @@ export async function prepareBitcoin(
   adapter: BitcoinAdapter,
   intent: TxIntent,
   from: string,
+  options: BitcoinPrepareOptions = {},
 ): Promise<{ unsigned: BitcoinTx; simulation: Simulation }> {
+  const requested = BitcoinPrepareOptions.parse(options);
+  const requestedKeys = requested.inputs?.map((u) => `${u.txid}:${u.vout}`);
+  if (requestedKeys && new Set(requestedKeys).size !== requestedKeys.length)
+    throw new Error('Duplicate selected input');
   if (
     intent.chainId !== BITCOIN_SIGNET ||
     intent.kind !== 'transfer' ||
@@ -66,14 +107,23 @@ export async function prepareBitcoin(
     throw new Error('Invalid or dust satoshi amount');
   return adapter.withSignet(intent.chainId, async (query) => {
     const utxos = await query(`/address/${from}/utxo`, Utxos);
-    const fees = await query(
-      '/v1/fees/recommended',
-      z.object({ halfHourFee: z.number().int().min(1).max(100) }),
-    );
+    const fees =
+      requested.feeRate === undefined
+        ? await query(
+            '/v1/fees/recommended',
+            z.object({ halfHourFee: z.number().int().min(1).max(100) }),
+          )
+        : { halfHourFee: requested.feeRate };
     if (!utxos || !fees) throw new Error('UTXO or fee endpoint unavailable');
-    const candidates = utxos
-      .filter((u) => u.status.confirmed)
-      .sort((a, b) => b.value - a.value || a.txid.localeCompare(b.txid) || a.vout - b.vout);
+    const available = uniqueCoins(utxos).filter((u) => u.status.confirmed);
+    const candidates = requestedKeys
+      ? requestedKeys.map((key) => {
+          const coin = available.find((u) => `${u.txid}:${u.vout}` === key);
+          if (!coin)
+            throw new Error('Selected input is missing or unconfirmed; refresh coin control');
+          return coin;
+        })
+      : available;
     const selected: BitcoinTx['inputs'] = [];
     const seen = new Set<string>();
     let total = 0n;
@@ -86,7 +136,10 @@ export async function prepareBitcoin(
       const previousTxHex = await query(`/tx/${u.txid}/hex`, Hex, true);
       const spent = await query(`/tx/${u.txid}/outspend/${u.vout}`, Outspend);
       if (!previousTxHex || !spent) throw new Error('Cannot validate funding output');
-      if (spent.spent) continue;
+      if (spent.spent) {
+        if (requestedKeys) throw new Error('Selected input has been spent; refresh coin control');
+        continue;
+      }
       const input = { txid: u.txid, vout: u.vout, previousTxHex };
       const value = funding(input, from);
       if (value !== BigInt(u.value))
@@ -95,7 +148,7 @@ export async function prepareBitcoin(
       total += value;
       fee = BigInt(11 + 69 * selected.length + 62) * BigInt(fees.halfHourFee);
       const change = total - BigInt(intent.amount) - fee;
-      if (change === 0n || change >= 294n) break;
+      if (!requestedKeys && (change === 0n || change >= 294n)) break;
     }
     const change = total - BigInt(intent.amount) - fee;
     if (!selected.length || change < 0n || (change > 0n && change < 294n) || fee > 100000n)
@@ -122,7 +175,7 @@ export async function prepareBitcoin(
         warnings: [
           {
             kind: 'other',
-            message: `Local funding validation only; no network simulation. ${selected.length} input(s), ${change} sats change to the sender. RBF signaled; replacement is not implemented.`,
+            message: `Local funding validation only; no network simulation. ${selected.length} ${requestedKeys ? 'manually selected' : 'automatically selected'} input(s), ${fees.halfHourFee} sats/vB estimated fee rate, ${change} sats change to the sender. RBF signaled; replacement is not implemented.`,
           },
         ],
         error: 'Bitcoin network simulation is unavailable',

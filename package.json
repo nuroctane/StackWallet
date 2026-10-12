@@ -5,9 +5,9 @@
   "type": "module",
   "packageManager": "pnpm@11.10.0",
   "scripts": {
-    "build": "pnpm -r build",
-    "check": "pnpm -r check && tsc -p scripts/tsconfig.json",
-    "test": "pnpm -r test",
+    "build": "pnpm -r --workspace-concurrency=1 build",
+    "check": "pnpm -r --workspace-concurrency=1 check && tsc -p scripts/tsconfig.json",
+    "test": "pnpm -r --workspace-concurrency=1 test --maxWorkers=1 --minWorkers=1 --no-file-parallelism",
     "dev": "pnpm --filter @stackwallet/web dev",
     "desktop": "pnpm --filter @stackwallet/desktop desktop",
     "format": "prettier --write \"**/*.{ts,tsx,json,md,yml,css}\" --ignore-path .gitignore --ignore-path .prettierignore",

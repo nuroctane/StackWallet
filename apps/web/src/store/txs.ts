@@ -5,6 +5,7 @@ import {
   broadcastBitcoin,
   bitcoinTransferStatus,
   type BitcoinAdapter,
+  type BitcoinPrepareOptions,
 } from '@stackwallet/chains-bitcoin';
 import { broadcastEvm, nodeMessage, prepareEvm, type EvmAdapter } from '@stackwallet/chains-evm';
 import {
@@ -48,6 +49,7 @@ export interface SendRequest {
   asset: string;
   /** Base units. */
   amount: string;
+  bitcoin?: BitcoinPrepareOptions;
 }
 function cosmosAdapter(registry: ChainRegistry, chainId: string): CosmosAdapter {
   const a = registry.adapterFor(chainId);
@@ -95,6 +97,7 @@ export async function proposeSend(
             bitcoinAdapter(registry, account.chainId),
             proposed.value.intent,
             account.address,
+            req.bitcoin,
           )
         : account.family === 'solana'
           ? await prepareSolana(

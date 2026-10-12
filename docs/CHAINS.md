@@ -126,7 +126,10 @@ field arithmetic in `packages/chains/src/keys.ts`, so no curve library is needed
 - Status via Electrum subscriptions or mempool.space polling.
 
 Current Bitcoin send coverage is single-key native P2WPKH on Signet only. The endpoint's full
-genesis hash is checked before dependent reads. Preparation selects up to eight confirmed UTXOs,
+genesis hash is checked before dependent reads. Preparation selects up to eight confirmed UTXOs
+automatically or uses the exact confirmed outpoints chosen in coin control. Manual selection
+never adds or substitutes an input; stale, spent, insufficient or dust-producing selections fail.
+The coin list is an endpoint observation and is refreshed and validated again at preparation. It
 checks outspend status and fetches each complete funding transaction. Rust independently checks
 its transaction ID, output script and value, rejects coinbase funding, duplicate inputs, dust
 and excessive fees, and constructs a PSBT with SIGHASH_ALL. Only one recipient and optional
@@ -140,7 +143,7 @@ be observed unspent; active proposals reserve inputs in the core. Broadcast erro
 index entries remain pending under the core transaction ID, with no automatic resend, expiry
 or release of spend reservations. Restart resumes tracking. Six observed confirmations are
 required; RPC observations are not chain proofs. RBF is signaled but replacement is not
-implemented. Funded Signet confirmation, explicit coin control, Taproot, threshold signing,
+implemented. Funded Signet confirmation, Taproot, threshold signing,
 mainnet and other Bitcoin-family sends remain outside this increment.
 
 ### Solana (`chains-solana`, @solana/kit)

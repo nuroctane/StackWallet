@@ -189,6 +189,18 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
           </span>
         </Row>
       )}
+      {bitcoin && (
+        <details className="text-[11px] text-muted">
+          <summary className="min-h-11 cursor-pointer py-3">Review exact Bitcoin inputs</summary>
+          <ul className="space-y-2">
+            {bitcoin.inputs.map((input) => (
+              <li key={`${input.txid}:${input.vout}`} className="break-all font-mono">
+                {input.txid}:{input.vout}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       {cosmos && (
         <p className="text-[11px] text-muted">
           One native bank transfer · expires after block {cosmos.timeoutHeight}. If the sequence

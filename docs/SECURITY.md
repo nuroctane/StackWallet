@@ -168,8 +168,13 @@ are refused. Complete funding transactions bind input
 values and scripts to their IDs; the core constructs the PSBT, recipient/change outputs and
 BIP143 SIGHASH_ALL digests. Inputs from coinbase transactions, duplicates, unsupported scripts,
 non-canonical addresses, dust and excessive fees are refused. The core prevents competing active
-proposals from using the same input. Endpoint genesis and pre-signing outspend checks prevent
-accidental network mismatch and stale input use; they do not authenticate chain state. Network
+proposals from using the same input.
+Manual coin control is an exact outpoint request, not a trusted source of funding values:
+preparation refreshes endpoint observations and checks the complete funding bytes, and the
+core independently validates and seals those inputs. Missing or spent selected inputs fail
+without substitution. Custom fee rates are bounded to integer values of 1–100 sats/vB.
+Endpoint genesis and pre-signing outspend checks prevent accidental network mismatch and stale
+input use; they do not authenticate chain state. Network
 simulation is unavailable and simulation policies fail closed. Broadcast uncertainty remains
 pending indefinitely until a matching indexed result reaches six observed confirmations.
 There is no timeout-based release or automatic resend. No funded Signet confirmation has been
