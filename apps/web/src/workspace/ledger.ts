@@ -54,6 +54,17 @@ export function toUnits(amount: string, decimals: number): number {
   return Number(whole) + Number(frac) / Number(base);
 }
 
+/** Text readouts must retain base-unit precision independently of the plotting approximation. */
+export function formatLedgerAmount(amount: string, decimals: number): string {
+  if (!/^\d+$/.test(amount) || !Number.isInteger(decimals) || decimals < 0 || decimals > 77)
+    return 'unavailable';
+  const digits = amount.replace(/^0+(?=\d)/, '').padStart(decimals + 1, '0');
+  if (decimals === 0) return digits;
+  const whole = digits.slice(0, -decimals);
+  const fraction = digits.slice(-decimals).replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : whole;
+}
+
 export function loadLedger(storage: StorageLike | null): LedgerState {
   if (!storage) return emptyLedger();
   let raw: string | null = null;

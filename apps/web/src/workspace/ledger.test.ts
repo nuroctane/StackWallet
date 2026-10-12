@@ -6,6 +6,7 @@ import {
   LEDGER_MAX_POINTS,
   LEDGER_STORAGE_KEY,
   LedgerState,
+  formatLedgerAmount,
   loadLedger,
   TotalsLedger,
   toUnits,
@@ -44,6 +45,24 @@ describe('toUnits', () => {
     expect(toUnits('0', 18)).toBe(0);
     expect(toUnits('12345678', 8)).toBe(0.12345678);
     expect(toUnits('abc', 18)).toBeNaN();
+  });
+});
+
+describe('exact ledger readouts', () => {
+  it('retains fractional base units lost by the plotting approximation', () => {
+    expect(toUnits('1000000000000000001', 18)).toBe(1);
+    expect(formatLedgerAmount('1000000000000000001', 18)).toBe('1.000000000000000001');
+    expect(formatLedgerAmount('9007199254740993', 0)).toBe('9007199254740993');
+    expect(formatLedgerAmount('1', 77)).toBe(`0.${'0'.repeat(76)}1`);
+  });
+
+  it('normalizes zeros without rounding and rejects malformed quantities', () => {
+    expect(formatLedgerAmount('0000', 18)).toBe('0');
+    expect(formatLedgerAmount('000123400', 6)).toBe('0.1234');
+    expect(formatLedgerAmount('12345678', 8)).toBe('0.12345678');
+    expect(formatLedgerAmount('abc', 18)).toBe('unavailable');
+    expect(formatLedgerAmount('1', -1)).toBe('unavailable');
+    expect(formatLedgerAmount('1', 1.5)).toBe('unavailable');
   });
 });
 

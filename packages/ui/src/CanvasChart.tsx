@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type PointerEvent } from 'react';
+import { useCallback, useEffect, useRef, type PointerEvent, type KeyboardEvent } from 'react';
 
 import { useThemeEpoch } from './theme/apply.js';
 
@@ -40,6 +40,8 @@ export interface CanvasChartProps {
   className?: string;
   ariaLabel: string;
   onHover?: (t: number | null) => void;
+  /** Balance quantities cannot go below zero; generic signed charts retain their domain. */
+  nonnegative?: boolean;
 }
 
 export const SERIES_RAMP: readonly string[] = ['#d8d8d8', '#a0a0a0', '#777777', '#555555'];
@@ -262,6 +264,7 @@ export function CanvasChart({
   className = '',
   ariaLabel,
   onHover,
+  nonnegative = false,
 }: CanvasChartProps) {
   const dataRef = useRef<HTMLCanvasElement>(null);
   const themeEpoch = useThemeEpoch();
@@ -329,7 +332,8 @@ export function CanvasChart({
 
       const vText = fmt.current.yFormat(p.v);
       const vy = Math.max(0, Math.min(height - CHIP_H, y - CHIP_H / 2));
-      drawChip(ctx, vText, L.right + 2, vy, P.surface, P.edgeStrong, P.ink);
+      const vx = Math.max(0, Math.min(width - chipWidth(ctx, vText), L.right + 2));
+      drawChip(ctx, vText, vx, vy, P.surface, P.edgeStrong, P.ink);
     },
     [width, height],
   );
@@ -355,7 +359,6 @@ export function CanvasChart({
     palette.current = P;
 
     const left = padLeft;
-    const right = width - padRight;
     const top = padTop;
     const bottom = height - padBottom;
 
@@ -384,10 +387,24 @@ export function CanvasChart({
       vMin -= bump;
       vMax += bump;
     }
+    if (nonnegative && hasData) vMin = Math.max(0, vMin);
+    ctx.font = P.font;
+    const yTicks = niceTicks(vMin, vMax, Math.max(2, Math.min(5, Math.floor(height / 45))));
+    const labelWidth = Math.max(
+      0,
+      ...yTicks.map((v) => ctx.measureText(fmt.current.yFormat(v)).width),
+    );
+    const right = Math.max(
+      left + 1,
+      width - Math.min(width * 0.45, Math.max(padRight, labelWidth + 12)),
+    );
     // Breathing room so extremes never sit on the plot edge.
     const vPad = hasData ? (vMax - vMin) * 0.06 : 0;
     const x = scaleLinear([tMin, tMax], [left, right]);
-    const y = scaleLinear([vMin - vPad, vMax + vPad], [bottom, top]);
+    const y = scaleLinear(
+      [nonnegative ? Math.max(0, vMin - vPad) : vMin - vPad, vMax + vPad],
+      [bottom, top],
+    );
     const primary = series[0];
     const primaryColor = resolveColor(primary?.color, 0, cs);
     layout.current = { left, right, top, bottom, x, y, tMin, tMax, hasData, primaryColor };
@@ -406,17 +423,16 @@ export function CanvasChart({
 
     if (!hasData) return;
 
-    const yTicks = niceTicks(vMin, vMax, 5);
     ctx.fillStyle = P.faint;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     for (const v of yTicks) {
       const yy = Math.round(y(v)) + 0.5;
-      ctx.fillText(fmt.current.yFormat(v), right + 6, yy);
+      ctx.fillText(fmt.current.yFormat(v), right + 6, yy, Math.max(1, width - right - 8));
     }
 
     const span = tMax - tMin;
-    const xCount = Math.max(4, Math.min(8, Math.floor((right - left) / 90)));
+    const xCount = Math.max(2, Math.min(8, Math.floor((right - left) / 90)));
     const af = fmt.current.axisFormat ?? (span < 2 * DAY ? fmtHM : fmtMD);
     ctx.textBaseline = 'top';
     for (let i = 0; i < xCount; i++) {
@@ -519,7 +535,16 @@ export function CanvasChart({
       const last = primary.points[primary.points.length - 1] as Point;
       const py = Math.max(0, Math.min(height - CHIP_H, Math.round(y(last.v)) - CHIP_H / 2));
       ctx.font = P.font;
-      drawChip(ctx, fmt.current.yFormat(last.v), right + 2, py, primaryColor, null, P.paper);
+      const text = fmt.current.yFormat(last.v);
+      drawChip(
+        ctx,
+        text,
+        Math.max(0, Math.min(width - chipWidth(ctx, text), right + 2)),
+        py,
+        primaryColor,
+        null,
+        P.paper,
+      );
     }
 
     // Keep the crosshair aligned to the fresh data if the pointer is still over the chart.
@@ -537,6 +562,7 @@ export function CanvasChart({
     padLeft,
     gridlines,
     lastValuePill,
+    nonnegative,
     drawOverlay,
   ]);
 
@@ -564,28 +590,48 @@ export function CanvasChart({
     [drawOverlay],
   );
 
-  const onPointerLeave = useCallback(() => {
-    if (hoverT.current === null) return;
-    hoverT.current = null;
-    drawOverlay(null);
-    fmt.current.onHover?.(null);
-  }, [drawOverlay]);
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const points = seriesRef.current[0]?.points ?? [];
+    if (!points.length) return;
+    const current =
+      hoverT.current === null ? points.length - 1 : nearestPoint(points, hoverT.current);
+    let next = current;
+    const step = e.shiftKey ? 10 : 1;
+    if (e.key === 'ArrowLeft') next -= step;
+    else if (e.key === 'ArrowRight') next += step;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = points.length - 1;
+    else return;
+    e.preventDefault();
+    const point = points[Math.max(0, Math.min(points.length - 1, next))];
+    if (!point) return;
+    hoverT.current = point.t;
+    drawOverlay(point.t);
+    fmt.current.onHover?.(point.t);
+  };
 
   return (
     <div
-      role="img"
-      aria-label={ariaLabel}
+      role="group"
+      tabIndex={0}
+      aria-label={`${ariaLabel}. Tap or move to inspect. Left and right arrows select observations; Home and End select first and latest.`}
+      onKeyDown={onKeyDown}
       className={`relative block select-none ${className}`}
       style={{ width, height }}
     >
-      <canvas ref={dataRef} className="absolute inset-0 block" style={{ width, height }} />
+      <canvas
+        aria-hidden
+        ref={dataRef}
+        className="absolute inset-0 block"
+        style={{ width, height }}
+      />
       <canvas
         ref={overlayRef}
-        className="absolute inset-0 block touch-none"
+        aria-hidden
+        className="absolute inset-0 block touch-pan-y"
         style={{ width, height }}
         onPointerMove={onPointerMove}
-        onPointerLeave={onPointerLeave}
-        onPointerCancel={onPointerLeave}
+        onPointerDown={onPointerMove}
       />
     </div>
   );

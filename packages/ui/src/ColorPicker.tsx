@@ -70,8 +70,31 @@ export function ColorPicker({
   const Dropper = eyeDropper();
 
   return (
-    <div className="flex w-[232px] flex-col gap-2 p-2" role="group" aria-label={label}>
+    <div
+      className="sw-colour-picker flex w-[232px] max-w-full flex-col gap-2 p-2"
+      role="group"
+      aria-label={label}
+    >
       <Field2D hue={hueColor} s={hsv.s} v={hsv.v} onChange={(s, v) => emit({ ...hsv, s, v })} />
+      {(['s', 'v'] as const).map((axis) => (
+        <label
+          key={axis}
+          className="flex min-h-11 flex-wrap items-center gap-2 text-[11px] text-muted"
+        >
+          <span>
+            {axis === 's' ? 'saturation' : 'brightness'} {Math.round(hsv[axis] * 100)}%
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(hsv[axis] * 100)}
+            aria-label={axis === 's' ? 'saturation' : 'brightness'}
+            className="h-11 min-w-0 flex-1 accent-[var(--sw-warm)]"
+            onChange={(e) => emit({ ...hsv, [axis]: Number(e.target.value) / 100 })}
+          />
+        </label>
+      ))}
       <Rail
         label="hue"
         value={hsv.h / 360}
@@ -96,7 +119,7 @@ export function ColorPicker({
           style={{ ['--swatch' as string]: formatHex(hsvToRgb(hsv)) }}
         />
         <input
-          className="h-6 min-w-0 flex-1 rounded-sw-sm border border-edge bg-paper px-1.5 font-mono text-[11px] text-ink outline-none focus:border-edge-strong"
+          className="h-11 min-w-0 flex-1 rounded-sw-sm border border-edge bg-paper px-1.5 font-mono text-[16px] text-ink outline-none focus:border-edge-strong"
           value={text}
           spellCheck={false}
           aria-label={`${label} hex`}
@@ -116,7 +139,7 @@ export function ColorPicker({
         {Dropper && (
           <button
             type="button"
-            className="sw-pressable inline-flex h-6 w-6 flex-none items-center justify-center rounded-sw-sm border border-edge text-muted"
+            className="sw-pressable inline-flex h-11 w-11 flex-none items-center justify-center rounded-sw-sm border border-edge text-muted"
             title="pick from screen"
             aria-label="pick from screen"
             onClick={() => {
@@ -146,7 +169,7 @@ export function ColorPicker({
             <button
               key={`${s}-${i}`}
               type="button"
-              className="sw-checker sw-pressable h-4 w-4 rounded-[3px] border border-edge"
+              className="sw-checker sw-pressable h-11 w-11 rounded-[3px] border border-edge"
               style={{ ['--swatch' as string]: s }}
               title={s}
               aria-label={`use ${s}`}
@@ -210,10 +233,9 @@ function Field2D({
   return (
     <div
       {...drag}
-      role="slider"
+      role="group"
       tabIndex={0}
-      aria-label="saturation and brightness"
-      aria-valuetext={`saturation ${Math.round(s * 100)}%, brightness ${Math.round(v * 100)}%`}
+      aria-label={`saturation ${Math.round(s * 100)}%, brightness ${Math.round(v * 100)}%. Arrow keys adjust; individual sliders follow.`}
       onKeyDown={onKey}
       className="relative h-[140px] w-full cursor-crosshair touch-none rounded-sw-sm border border-edge outline-none focus-visible:border-edge-strong"
       style={{
@@ -255,24 +277,34 @@ function Rail({
     e.preventDefault();
   };
   return (
-    <div
-      {...drag}
-      role="slider"
-      tabIndex={0}
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(value * 100)}
-      aria-valuetext={valueText}
-      onKeyDown={onKey}
-      className={`relative h-3 w-full cursor-pointer touch-none rounded-full border border-edge outline-none focus-visible:border-edge-strong ${checker ? 'sw-checker' : ''}`}
-    >
-      <span aria-hidden className="absolute inset-0 rounded-full" style={{ background }} />
-      <span
-        aria-hidden
-        className="pointer-events-none absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgb(0_0_0/0.6)]"
-        style={{ left: `${value * 100}%` }}
-      />
+    <div>
+      <p className="text-[11px] text-muted">
+        {label} · {valueText}
+      </p>
+      <div
+        {...drag}
+        role="slider"
+        tabIndex={0}
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(value * 100)}
+        aria-valuetext={valueText}
+        onKeyDown={onKey}
+        className="relative h-11 w-full cursor-pointer touch-none rounded-sw-sm outline-none focus-visible:border-edge-strong"
+      >
+        <span
+          aria-hidden
+          className={`absolute inset-x-0 top-1/2 h-3 -translate-y-1/2 rounded-full border border-edge ${checker ? 'sw-checker' : ''}`}
+        >
+          <span className="absolute inset-0 rounded-full" style={{ background }} />
+        </span>
+        <span
+          aria-hidden
+          className="pointer-events-none absolute top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgb(0_0_0/0.6)]"
+          style={{ left: `${value * 100}%` }}
+        />
+      </div>
     </div>
   );
 }
