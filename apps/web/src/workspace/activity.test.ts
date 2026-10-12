@@ -136,9 +136,37 @@ describe('ActivityLog', () => {
     ]) {
       const storage = new MemoryStorage();
       storage.setItem(ACTIVITY_STORAGE_KEY, bad);
-      expect(loadActivity(storage)).toEqual({ version: 1, days: {} });
+      expect(loadActivity(storage)).toEqual({ version: 1, days: {}, events: [] });
       expect([...storage.map.keys()]).toEqual([ACTIVITY_STORAGE_KEY]);
     }
-    expect(loadActivity(null)).toEqual({ version: 1, days: {} });
+    expect(loadActivity(null)).toEqual({ version: 1, days: {}, events: [] });
+  });
+});
+describe('individual event history', () => {
+  it('preserves legacy terrain totals without fabricating old timestamps', () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      ACTIVITY_STORAGE_KEY,
+      JSON.stringify({ version: 1, days: { '2024-03-05': { n: 3, kinds: { directory: 3 } } } }),
+    );
+    const loaded = new ActivityLog(storage, () => local(2024, 3, 6));
+    expect(loaded.getSnapshot().events).toEqual([]);
+    expect(loaded.getSnapshot().days['2024-03-05']?.n).toBe(3);
+    loaded.record('layout');
+    loaded.flush();
+    expect(new ActivityLog(storage).getSnapshot().events).toEqual([
+      { atMs: local(2024, 3, 6), kind: 'layout', count: 1 },
+    ]);
+  });
+  it('retains bounded timestamped entries while keeping aggregate counts in parity', () => {
+    const log = new ActivityLog(null, () => local(2024, 3, 6));
+    for (let i = 0; i < 1005; i++) log.record('directory', 2);
+    expect(log.getSnapshot().events).toHaveLength(1000);
+    expect(log.getSnapshot().days['2024-03-06']?.n).toBe(2010);
+    log.record('transaction', 4);
+    expect(log.getSnapshot().events[0]).toMatchObject({ kind: 'transaction', count: 4 });
+    log.record('layout', 1.5);
+    expect(log.getSnapshot().days['2024-03-06']?.n).toBe(2014);
+    log.flush();
   });
 });

@@ -390,6 +390,8 @@ export async function withCrossCheck<T>(
 }
 
 export interface FetchOptions {
+  /** Larger indexed pages may opt in; never above 8 MiB. */
+  maxBodyBytes?: number;
   signal?: AbortSignal;
   timeoutMs?: number;
   fetch?: typeof fetch;
@@ -484,7 +486,10 @@ async function fetchJsonBody(
   }, timeoutMs);
   try {
     const res = await doFetch(url, { ...init, signal: controller.signal });
-    const text = await readBody(url, res);
+    const limit = opts.maxBodyBytes ?? MAX_BODY_BYTES;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 8 * MAX_BODY_BYTES)
+      throw new Error('Invalid response body limit');
+    const text = await readBody(url, res, limit);
     if (!res.ok) throw new HttpError(url, res.status, text.slice(0, 512));
     if (rawText) return text;
     try {
@@ -501,9 +506,12 @@ async function fetchJsonBody(
   }
 }
 
-async function readBody(url: string, res: Response): Promise<string> {
+async function readBody(url: string, res: Response, limit: number): Promise<string> {
   const declared = Number(res.headers.get('content-length') ?? '0');
-  if (declared > MAX_BODY_BYTES) throw new MalformedResponseError(url, 'body too large');
+  if (declared > limit) {
+    await res.body?.cancel();
+    throw new MalformedResponseError(url, 'body too large');
+  }
   if (!res.body) return res.text();
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -512,7 +520,7 @@ async function readBody(url: string, res: Response): Promise<string> {
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
-    if (total > MAX_BODY_BYTES) {
+    if (total > limit) {
       await reader.cancel();
       throw new MalformedResponseError(url, 'body too large');
     }

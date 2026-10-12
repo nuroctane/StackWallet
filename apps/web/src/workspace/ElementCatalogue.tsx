@@ -24,8 +24,15 @@ export function ElementCatalogue({
 }) {
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
+  const searching = query.trim().length > 0;
   const listId = useId();
   const list = useRef<HTMLUListElement>(null);
+  useEffect(() => {
+    if (!open) {
+      setQuery('');
+      setCursor(0);
+    }
+  }, [open]);
   const items = useMemo(
     () =>
       ELEMENT_KINDS.map((k) => registry[k])
@@ -70,7 +77,7 @@ export function ElementCatalogue({
       onClose={onClose}
       align="start"
       label="Elements"
-      width="w-[760px] max-w-[calc(100vw-16px)]"
+      width={searching ? 'w-[760px]' : 'w-[360px]'}
     >
       <div className="flex flex-col">
         <div className="border-b border-edge p-1.5">
@@ -111,14 +118,24 @@ export function ElementCatalogue({
               aria-selected={i === clamped}
               onMouseEnter={() => setCursor(i)}
               onClick={() => add(d.kind)}
-              className={`flex min-h-11 cursor-pointer items-start gap-2 rounded-sw-sm px-2 py-2 text-[12px] ${
+              className={`flex cursor-pointer gap-2 rounded-sw-sm px-2 text-[12px] ${searching ? 'min-h-11 items-start py-2' : 'min-h-7 items-center py-1'} ${
                 i === clamped ? 'bg-hover' : ''
               }`}
             >
               <span className="w-3 shrink-0 text-faint">{'>'}</span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-ink">{d.title}</span>
-                <span className="block text-[11px] leading-relaxed break-words text-faint">
+              <span
+                className={searching ? 'min-w-0 flex-1' : 'flex min-w-0 flex-1 items-center gap-2'}
+              >
+                <span className={searching ? 'block text-ink' : 'shrink-0 text-ink'}>
+                  {d.title}
+                </span>
+                <span
+                  className={
+                    searching
+                      ? 'block text-[11px] leading-relaxed break-words text-faint'
+                      : 'min-w-0 flex-1 truncate text-[11px] text-faint'
+                  }
+                >
                   {d.hint}
                 </span>
               </span>

@@ -5,6 +5,7 @@ import { totalsLedger } from '../ledger.js';
 import type { ElementKind, Pane } from '../schema.js';
 import { HoldingsElement } from './HoldingsElement.js';
 import { LedgerElement, RANGES } from './LedgerElement.js';
+import { ActivityLogElement } from './ActivityLogElement.js';
 import { TerrainElement } from './TerrainElement.js';
 import { TransactionsElement } from './TransactionsElement.js';
 import type { ElementDefinition, ElementRegistry } from './types.js';
@@ -124,10 +125,28 @@ export const registry: ElementRegistry = {
     title: 'workspace activity',
     hint: 'Local app events by day: wallet edits, device changes, layout edits and balance refreshes. Drag to turn and tilt; pinch to zoom. No on-chain transaction counts.',
     defaultSize: elementDefaults.terrain,
-    defaultProps: { weeks: 26 },
+    defaultProps: { weeks: 26, view: 'terrain' },
     scope: (p) => [{ label: `${p.props['weeks'] ?? 26}w` }],
-    settings: [{ key: 'weeks', label: 'weeks', kind: 'number', min: 4, max: 57, step: 1 }],
+    settings: [
+      { key: 'weeks', label: 'weeks', kind: 'number', min: 4, max: 57, step: 1 },
+      {
+        key: 'view',
+        label: 'view',
+        kind: 'select',
+        options: [
+          { value: 'terrain', label: 'Terrain' },
+          { value: 'log', label: 'Event log' },
+        ],
+      },
+    ],
     body: TerrainElement,
+  }),
+  activityLog: def({
+    kind: 'activityLog',
+    title: 'workspace event log',
+    hint: 'Timestamped local instance events matching the workspace activity terrain: wallet directory, balances, devices, layouts, ceremonies and signing-request events. Includes readable daily totals for older history.',
+    defaultSize: elementDefaults.activityLog,
+    body: ActivityLogElement,
   }),
   ledger: def({
     kind: 'ledger',

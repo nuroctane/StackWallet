@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import { findChain } from '../lib/chains.js';
 import { useBalances } from '../store/balances.js';
@@ -62,6 +62,20 @@ export function Recorders() {
 
   // Pending transactions are asked about until the chain gives a final answer.
   const { ledger } = useVaultView(vault);
+  const lastAudit = useRef<number | null>(null);
+  useEffect(() => {
+    if (!ledger) {
+      lastAudit.current = null;
+      return;
+    }
+    const latest = ledger.audit.at(-1)?.index ?? -1;
+    const previous = lastAudit.current;
+    lastAudit.current = latest;
+    // Unlocking an existing vault establishes a baseline; it is not fresh instance activity.
+    if (previous === null || latest < previous) return;
+    const count = ledger.audit.filter((row) => row.index > previous && row.txId !== null).length;
+    if (count) activityLog.record('transaction', count);
+  }, [ledger]);
   const pending =
     ledger?.txs.filter(
       (t) =>

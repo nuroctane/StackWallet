@@ -7,7 +7,14 @@ export const ACTIVITY_STORAGE_KEY = 'stackwallet.activity.v1';
 export const ACTIVITY_SAVE_DEBOUNCE_MS = 500;
 export const ACTIVITY_MAX_DAYS = 400;
 
-export const ActivityKind = z.enum(['directory', 'balance', 'device', 'layout', 'ceremony']);
+export const ActivityKind = z.enum([
+  'directory',
+  'balance',
+  'device',
+  'layout',
+  'ceremony',
+  'transaction',
+]);
 export type ActivityKind = z.infer<typeof ActivityKind>;
 
 const DayKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -18,9 +25,18 @@ export const ActivityDayRecord = z.object({
 });
 export type ActivityDayRecord = z.infer<typeof ActivityDayRecord>;
 
+export const ACTIVITY_MAX_EVENTS = 1000;
+export const ActivityEvent = z.object({
+  atMs: z.number().int().nonnegative().safe(),
+  kind: ActivityKind,
+  count: z.number().int().positive().safe(),
+});
+export type ActivityEvent = z.infer<typeof ActivityEvent>;
+
 export const ActivityState = z.object({
   version: z.literal(1),
   days: z.record(DayKey, ActivityDayRecord),
+  events: z.array(ActivityEvent).max(ACTIVITY_MAX_EVENTS).default([]),
 });
 export type ActivityState = z.infer<typeof ActivityState>;
 
@@ -32,7 +48,7 @@ export interface ActivityDay {
 }
 export type ActivityPoint = ActivityDay;
 
-export const emptyActivity = (): ActivityState => ({ version: 1, days: {} });
+export const emptyActivity = (): ActivityState => ({ version: 1, days: {}, events: [] });
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
@@ -107,14 +123,19 @@ export class ActivityLog {
   readonly getSnapshot = (): ActivityState => this.state;
 
   record(kind: ActivityKind, count = 1): void {
-    if (!Number.isFinite(count) || count <= 0) return;
-    const key = dayKey(this.now());
+    if (!Number.isSafeInteger(count) || count <= 0) return;
+    const atMs = this.now();
+    const key = dayKey(atMs);
     const day = this.state.days[key] ?? { n: 0, kinds: {} };
     const next: ActivityDayRecord = {
       n: day.n + count,
       kinds: { ...day.kinds, [kind]: (day.kinds[kind] ?? 0) + count },
     };
-    this.state = { ...this.state, days: capDays({ ...this.state.days, [key]: next }) };
+    this.state = {
+      ...this.state,
+      days: capDays({ ...this.state.days, [key]: next }),
+      events: [{ atMs, kind, count }, ...this.state.events].slice(0, ACTIVITY_MAX_EVENTS),
+    };
     this.scheduleSave();
     for (const l of this.listeners) l();
   }

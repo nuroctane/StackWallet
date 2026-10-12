@@ -201,3 +201,21 @@ describe('public transaction history', () => {
     ).toBe(false);
   });
 });
+it('does not retry an indexer failure on healthy RPC endpoints', async () => {
+  let indexed = 0;
+  const f = fixture('eip155:1', (url, method) => {
+    if (method === 'eth_chainId') return '0x1';
+    if (url.startsWith('https://indexer.example')) {
+      indexed++;
+      return new Response('too large', { status: 503 });
+    }
+    throw new Error('unexpected request');
+  });
+  await expect(
+    readHistory(f.chain, address, f.pool, f.options, undefined, {
+      indexerUrl: 'https://indexer.example',
+    }),
+  ).rejects.toThrow('HTTP 503');
+  expect(indexed).toBe(1);
+  expect(f.pool.endpoints(f.chain.chainId)[0]?.healthy).toBe(true);
+});

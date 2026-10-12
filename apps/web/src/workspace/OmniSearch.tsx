@@ -65,25 +65,31 @@ export function OmniSearch({
   onClose: () => void;
   viewport: () => { x: number; y: number; w: number; h: number };
 }) {
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    if (!open) setSearching(false);
+  }, [open]);
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      width="w-[min(92vw,960px)]"
+      width={searching ? 'w-[min(92vw,960px)]' : 'w-[min(92vw,640px)]'}
       className="mt-[10vh] mb-auto"
       aria-label="Search"
     >
-      {open && <SearchBody onClose={onClose} viewport={viewport} />}
+      {open && <SearchBody onClose={onClose} viewport={viewport} onSearchChange={setSearching} />}
     </Dialog>
   );
 }
 
 function SearchBody({
+  onSearchChange,
   onClose,
   viewport,
 }: {
   onClose: () => void;
   viewport: () => { x: number; y: number; w: number; h: number };
+  onSearchChange: (searching: boolean) => void;
 }) {
   const state = useDirectory();
   const ws = useWorkspace();
@@ -94,6 +100,7 @@ function SearchBody({
   const theme = useThemeState();
   const names = useNames();
   const [query, setQuery] = useState('');
+  const searching = query.trim().length > 0;
   const [cursor, setCursor] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
 
@@ -357,6 +364,7 @@ function SearchBody({
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
+            onSearchChange(e.target.value.trim().length > 0);
             setCursor(0);
           }}
           onKeyDown={onKeyDown}
@@ -380,15 +388,29 @@ function SearchBody({
             aria-selected={i === clamped}
             onMouseEnter={() => setCursor(i)}
             onClick={() => choose(item)}
-            className={`flex min-h-11 cursor-pointer items-start gap-2 rounded-sw-sm px-2 py-2 text-[12px] ${
+            className={`flex cursor-pointer gap-2 rounded-sw-sm px-2 text-[12px] ${searching ? 'min-h-11 items-start py-2' : 'min-h-7 items-center py-1'} ${
               i === clamped ? 'bg-hover' : ''
             }`}
           >
             <span className="w-3 shrink-0 text-faint">{'>'}</span>
-            <span className="min-w-0 flex-1 break-words">
-              <span className="block text-ink">{item.label}</span>
+            <span
+              className={
+                searching ? 'min-w-0 flex-1 break-words' : 'flex min-w-0 flex-1 items-center gap-2'
+              }
+            >
+              <span className={searching ? 'block text-ink' : 'min-w-0 truncate text-ink'}>
+                {item.label}
+              </span>
               {item.dim && (
-                <span className="block text-[11px] leading-relaxed text-faint">{item.dim}</span>
+                <span
+                  className={
+                    searching
+                      ? 'block text-[11px] leading-relaxed text-faint'
+                      : 'min-w-0 flex-1 truncate text-[11px] text-faint'
+                  }
+                >
+                  {item.dim}
+                </span>
               )}
             </span>
             <Chip className="shrink-0">{item.type}</Chip>

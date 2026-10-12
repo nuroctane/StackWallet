@@ -265,3 +265,9 @@ including watch accounts, and the UI shows source, scope, coverage, filters, ful
 older-page controls. Changing account/address/method cancels the old request and clears its
 cursor. The view retains at most 1,000 rows. Read-only history does not change signing eligibility,
 policy decisions, threshold rules or audit transitions.
+
+Indexed Blockscout pages use an 8 MiB response limit because 50-record pages include rich
+metadata even when the UI only needs transaction fields. Ordinary RPC responses retain their
+1 MiB limit. Streaming and declared-size checks enforce both limits under the whole-body timeout.
+Network identity is checked through RPC failover first; indexer failures are reported directly
+and do not penalize healthy RPC endpoints or retry the same indexer on another RPC node.

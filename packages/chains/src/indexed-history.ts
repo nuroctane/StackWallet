@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { fetchJson, type FetchOptions } from './rpc.js';
+import { fetchJson, MAX_BODY_BYTES, type FetchOptions } from './rpc.js';
 import type { ChainInfo, Page, TxRecord } from './types.js';
 
 // Bundled from Blockscout's chain directory; no registry is fetched at runtime.
@@ -66,7 +66,7 @@ export async function readIndexedHistory(
   if (query)
     for (const [key, value] of Object.entries(query)) base.searchParams.set(key, String(value));
   opts.signal?.throwIfAborted();
-  const payload = await fetchJson(base.toString(), opts);
+  const payload = await fetchJson(base.toString(), { ...opts, maxBodyBytes: 8 * MAX_BODY_BYTES });
   opts.signal?.throwIfAborted();
   let items: TxRecord[];
   let cursorParams: z.infer<typeof next>;

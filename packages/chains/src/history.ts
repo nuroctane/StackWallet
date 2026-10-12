@@ -36,6 +36,26 @@ export async function readHistory(
     .regex(/^[A-Za-z0-9]{1,128}$/)
     .parse(address);
   opts.signal?.throwIfAborted();
+  if (chain.family === 'evm' && options?.indexerUrl !== undefined) {
+    await withFailover(
+      pool,
+      chain.chainId,
+      async (url) => {
+        const identity = hex.parse(await fetchJsonRpc(url, 'eth_chainId', [], opts));
+        if (BigInt(identity) !== BigInt(chain.chainId.slice(7)))
+          throw new Error('History endpoint is on a different EVM chain');
+      },
+      { maxAttempts: 2, ...(opts.signal ? { signal: opts.signal } : {}) },
+    );
+    return readIndexedHistory(
+      chain,
+      address,
+      options.indexerUrl,
+      opts,
+      cursor,
+      options.tokenTransfers,
+    );
+  }
   return withFailover(
     pool,
     chain.chainId,
@@ -308,15 +328,6 @@ export async function readHistory(
         const identity = await rpc('eth_chainId', [], hex);
         if (BigInt(identity) !== BigInt(chain.chainId.slice(7)))
           throw new Error('History endpoint is on a different EVM chain');
-        if (options?.indexerUrl !== undefined)
-          return readIndexedHistory(
-            chain,
-            address,
-            options.indexerUrl,
-            opts,
-            cursor,
-            options.tokenTransfers,
-          );
         const head =
           cursor === undefined
             ? numericHex(await rpc('eth_blockNumber', [], hex))

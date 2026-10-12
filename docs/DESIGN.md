@@ -162,3 +162,18 @@ floating elements on an infinite dark canvas.
   retain information when height shrinks. Settings and fullscreen are available in stack mode.
   Touch controls use larger targets. Saved element kinds remain compatible: terrain and
   ledger keep their storage identities, while transactions is additive.
+
+### Activity readouts, text log and conditional search
+
+The terrain reserves space for its actual controls and wrapping readout using grid rows.
+Only the remaining stage is measured for canvas drawing; footer text is always visible without
+scrolling the terrain. The terrain/event-log switch uses the same local activity store.
+A separate workspace event log element provides the same timestamped entries and daily totals,
+with kind/date filters. New versions retain the latest 1,000 individual event records; existing
+daily counts are preserved without inventing historical event timestamps. Observed new signing
+audit events count as instance activity; reopening a vault establishes a baseline, not new events.
+
+The element catalogue starts at its compact 360px width with single-line rows. Entering a
+nonblank search expands it to the viewport-capped reading width with full wrapped descriptions.
+Clearing or dismissing the search restores compact browsing. Omni search follows the same
+conditional expansion from its original 640px width.

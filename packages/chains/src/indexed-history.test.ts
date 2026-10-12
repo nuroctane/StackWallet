@@ -152,3 +152,26 @@ describe('indexed EVM history', () => {
     ).rejects.toThrow();
   });
 });
+it('accepts a large indexed page without relaxing ordinary RPC response limits', async () => {
+  const payload = JSON.stringify({
+    items: [tx],
+    next_page_params: null,
+    metadata: 'x'.repeat(2 * 1024 * 1024),
+  });
+  const page = await readIndexedHistory(chain, account, 'https://indexer.example', {
+    fetch: async () => new Response(payload),
+  });
+  expect(page.items).toHaveLength(1);
+  const { fetchJson } = await import('./rpc.js');
+  await expect(
+    fetchJson('https://rpc.example', { fetch: async () => new Response(payload) }),
+  ).rejects.toThrow('body too large');
+});
+it('still rejects oversized indexed bodies under the larger bounded limit', async () => {
+  await expect(
+    readIndexedHistory(chain, account, 'https://indexer.example', {
+      fetch: async () =>
+        new Response('{}', { headers: { 'content-length': String(9 * 1024 * 1024) } }),
+    }),
+  ).rejects.toThrow('body too large');
+});

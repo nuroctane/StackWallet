@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useThemeEpoch } from '@stackwallet/ui';
 
 import { useActivity, activityLog, type ActivityDay } from '../activity.js';
+import { useElementSize } from '../useElementSize.js';
+import { ActivityLogBody } from './ActivityLogElement.js';
 import type { ElementBodyProps } from './types.js';
 
 /** Night-glass ramp: five grays from the panel colour up to the neutral success ink. */
@@ -249,17 +251,21 @@ function shade(hex: string, delta: number): string {
   return `rgb(${r},${gch},${b})`;
 }
 
-export function TerrainElement({ pane, width, height }: ElementBodyProps) {
+export function TerrainElement({ pane, setProps }: ElementBodyProps) {
+  const [stageRef, size] = useElementSize<HTMLDivElement>();
+  const { width, height } = size;
+  const showLog = pane.props['view'] === 'log';
   const themeEpoch = useThemeEpoch();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const activity = useActivity();
   const weeks = clampWeeks(Number(pane.props['weeks'] ?? 26));
   const [camera, setCamera] = useState<TerrainCamera>(HOME_CAMERA);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const [hovered, setHovered] = useState<TerrainCell | null>(null);
+  const [selection, setHovered] = useState<TerrainCell | null>(null);
   const [focused, setFocused] = useState(false);
 
   const cells = useMemo(() => toCells(activityLog.series(weeks)), [activity, weeks]);
+  const hovered = selection ? (cells.find((c) => c.dayKey === selection.dayKey) ?? null) : null;
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -272,9 +278,7 @@ export function TerrainElement({ pane, width, height }: ElementBodyProps) {
   }, []);
   const geometry = useMemo(
     () =>
-      width > 0 && height > 0
-        ? computeGeometry(cells, width, Math.max(1, height - 64), camera)
-        : null,
+      width > 0 && height > 0 ? computeGeometry(cells, width, Math.max(1, height), camera) : null,
     [cells, width, height, camera],
   );
 
@@ -284,10 +288,10 @@ export function TerrainElement({ pane, width, height }: ElementBodyProps) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     if (
       canvas.width !== Math.floor(width * dpr) ||
-      canvas.height !== Math.floor(Math.max(1, height - 64) * dpr)
+      canvas.height !== Math.floor(Math.max(1, height) * dpr)
     ) {
       canvas.width = Math.floor(width * dpr);
-      canvas.height = Math.floor(Math.max(1, height - 64) * dpr);
+      canvas.height = Math.floor(Math.max(1, height) * dpr);
     }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -304,14 +308,29 @@ export function TerrainElement({ pane, width, height }: ElementBodyProps) {
       ),
     };
     const todayKey = cells.length > 0 ? (cells[cells.length - 1] as TerrainCell).dayKey : '';
-    drawTerrain(ctx, cells, geometry, width, Math.max(1, height - 64), colors, hovered, todayKey);
+    drawTerrain(ctx, cells, geometry, width, Math.max(1, height), colors, hovered, todayKey);
   }, [cells, geometry, width, height, hovered, themeEpoch]);
 
   const release = (id: number) => pointers.current.delete(id);
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-auto">
+    <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
       <div className="flex shrink-0 flex-wrap items-center gap-2 px-2 py-1 text-[10px] text-faint">
-        <span className="flex-1">drag: turn / tilt · shift-drag: pan · pinch: zoom</span>
+        <button
+          type="button"
+          className="sw-pressable px-2 py-1"
+          aria-pressed={!showLog}
+          onClick={() => setProps({ view: 'terrain' })}
+        >
+          terrain
+        </button>
+        <button
+          type="button"
+          className="sw-pressable px-2 py-1"
+          aria-pressed={showLog}
+          onClick={() => setProps({ view: 'log' })}
+        >
+          event log
+        </button>
         <button
           type="button"
           className="sw-pressable px-2 py-1"
@@ -323,81 +342,95 @@ export function TerrainElement({ pane, width, height }: ElementBodyProps) {
           reset view
         </button>
       </div>
-      <canvas
-        ref={canvasRef}
-        style={{
-          width,
-          height: Math.max(1, height - 64),
-          display: 'block',
-          touchAction: 'none',
-          cursor: 'grab',
-        }}
-        tabIndex={0}
-        data-camera={JSON.stringify(camera)}
-        aria-label="Workspace activity terrain. Local app events, not wallet transactions. Drag to turn and tilt, shift-drag to pan, two fingers to pan and zoom. Arrow keys turn and tilt, plus and minus zoom, brackets select days, Home resets."
-        role="img"
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        onDoubleClick={() => setCamera(HOME_CAMERA)}
-        onKeyDown={(e) => {
-          let next = camera;
-          if (e.key === 'Home') next = HOME_CAMERA;
-          else if (e.key === '+' || e.key === '=') next = zoomCamera(camera, 1.2);
-          else if (e.key === '-') next = zoomCamera(camera, 1 / 1.2);
-          else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
-            const dx = e.key === 'ArrowLeft' ? -20 : e.key === 'ArrowRight' ? 20 : 0;
-            const dy = e.key === 'ArrowUp' ? -15 : e.key === 'ArrowDown' ? 15 : 0;
-            next = moveCamera(camera, dx, dy, e.shiftKey);
-          } else if (e.key === '[' || e.key === ']') {
-            const current = hovered ? cells.indexOf(hovered) : cells.length - 1;
-            setHovered(
-              cells[Math.max(0, Math.min(cells.length - 1, current + (e.key === '[' ? -1 : 1)))] ??
-                null,
-            );
-          } else return;
-          e.preventDefault();
-          e.stopPropagation();
-          setCamera(next);
-        }}
-        onPointerDown={(e) => {
-          if (e.button !== 0) return;
-          e.currentTarget.focus();
-          e.currentTarget.setPointerCapture(e.pointerId);
-          if (geometry) {
+      <div ref={stageRef} className="relative min-h-0 min-w-0 overflow-hidden">
+        <canvas
+          ref={canvasRef}
+          style={{
+            width,
+            height: Math.max(1, height),
+            display: showLog ? 'none' : 'block',
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            touchAction: 'none',
+            cursor: 'grab',
+          }}
+          tabIndex={showLog ? -1 : 0}
+          aria-hidden={showLog}
+          data-camera={JSON.stringify(camera)}
+          aria-label="Workspace activity terrain. Local app events, not wallet transactions. Drag to turn and tilt, shift-drag to pan, two fingers to pan and zoom. Arrow keys turn and tilt, plus and minus zoom, brackets select days, Home resets."
+          role="img"
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          onDoubleClick={() => setCamera(HOME_CAMERA)}
+          onKeyDown={(e) => {
+            let next = camera;
+            if (e.key === 'Home') next = HOME_CAMERA;
+            else if (e.key === '+' || e.key === '=') next = zoomCamera(camera, 1.2);
+            else if (e.key === '-') next = zoomCamera(camera, 1 / 1.2);
+            else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+              const dx = e.key === 'ArrowLeft' ? -20 : e.key === 'ArrowRight' ? 20 : 0;
+              const dy = e.key === 'ArrowUp' ? -15 : e.key === 'ArrowDown' ? 15 : 0;
+              next = moveCamera(camera, dx, dy, e.shiftKey);
+            } else if (e.key === '[' || e.key === ']') {
+              const current = hovered ? cells.indexOf(hovered) : cells.length - 1;
+              setHovered(
+                cells[
+                  Math.max(0, Math.min(cells.length - 1, current + (e.key === '[' ? -1 : 1)))
+                ] ?? null,
+              );
+            } else return;
+            e.preventDefault();
+            e.stopPropagation();
+            setCamera(next);
+          }}
+          onPointerDown={(e) => {
+            if (e.button !== 0 || pointers.current.size >= 2) return;
+            e.currentTarget.focus();
+            e.currentTarget.setPointerCapture(e.pointerId);
+            if (geometry) {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setHovered(hitTest(cells, geometry, e.clientX - rect.left, e.clientY - rect.top));
+            }
+            pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          }}
+          onPointerUp={(e) => release(e.pointerId)}
+          onPointerCancel={(e) => release(e.pointerId)}
+          onLostPointerCapture={(e) => release(e.pointerId)}
+          onPointerMove={(e) => {
+            const previous = pointers.current.get(e.pointerId);
+            if (previous) {
+              const other = [...pointers.current.entries()].find(([id]) => id !== e.pointerId)?.[1];
+              const dx = e.clientX - previous.x;
+              const dy = e.clientY - previous.y;
+              pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+              if (other) {
+                setCamera((c) => pinchCamera(c, previous, { x: e.clientX, y: e.clientY }, other));
+              } else setCamera((c) => moveCamera(c, dx, dy, e.shiftKey));
+            }
+            if (!geometry) return;
             const rect = e.currentTarget.getBoundingClientRect();
             setHovered(hitTest(cells, geometry, e.clientX - rect.left, e.clientY - rect.top));
-          }
-          pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        }}
-        onPointerUp={(e) => release(e.pointerId)}
-        onPointerCancel={(e) => release(e.pointerId)}
-        onLostPointerCapture={(e) => release(e.pointerId)}
-        onPointerMove={(e) => {
-          const previous = pointers.current.get(e.pointerId);
-          if (previous) {
-            const other = [...pointers.current.entries()].find(([id]) => id !== e.pointerId)?.[1];
-            const dx = e.clientX - previous.x;
-            const dy = e.clientY - previous.y;
-            pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-            if (other) {
-              setCamera((c) => pinchCamera(c, previous, { x: e.clientX, y: e.clientY }, other));
-            } else setCamera((c) => moveCamera(c, dx, dy, e.shiftKey));
-          }
-          if (!geometry) return;
-          const rect = e.currentTarget.getBoundingClientRect();
-          setHovered(hitTest(cells, geometry, e.clientX - rect.left, e.clientY - rect.top));
-        }}
-        onPointerLeave={() => {
-          if (!pointers.current.size) setHovered(null);
-        }}
-      />
+          }}
+          onPointerLeave={() => {
+            if (!pointers.current.size) setHovered(null);
+          }}
+        />
+        {showLog && (
+          <div className="absolute inset-0">
+            <ActivityLogBody />
+          </div>
+        )}
+      </div>
       <div
         className="shrink-0 px-2 py-1 text-[11px] break-words text-muted"
         aria-live={focused ? 'polite' : 'off'}
       >
-        {hovered
-          ? hovered.dayKey + ' · ' + hovered.n + ' local events'
-          : 'Local workspace events · use brackets to inspect any day'}
+        {showLog
+          ? 'Local workspace event log'
+          : hovered
+            ? hovered.dayKey + ' · ' + hovered.n + ' local events'
+            : 'Drag to turn · shift-drag to pan · pinch / wheel to zoom'}
         <span className="block text-faint">
           {cells.reduce((sum, c) => sum + c.n, 0).toLocaleString()} local events · {cells.length}{' '}
           days

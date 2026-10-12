@@ -12,6 +12,7 @@ export const ElementKind = z.enum([
   'folder',
   'holdings',
   'terrain',
+  'activityLog',
   'ledger',
   'transactions',
   'approvals',
