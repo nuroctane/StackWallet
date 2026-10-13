@@ -36,3 +36,23 @@ describe('calldata decoding', () => {
     expect(decodeCalldata(`0xa22cb465${addr(TO)}${num(2n)}`).kind).toBe('unknown');
   });
 });
+
+describe('erc-1155 transfers', () => {
+  it('decode only with empty data', async () => {
+    const { encodeNftTransfer } = await import('./nftCalls.js');
+    const a = '0x1111111111111111111111111111111111111111';
+    const b = '0x2222222222222222222222222222222222222222';
+    const call = decodeCalldata(encodeNftTransfer('erc1155', a, b, '9', '2')!);
+    expect(call.kind === 'call' && call.args.map((x) => x.value)).toEqual([
+      a,
+      b,
+      '9',
+      '2',
+      '160',
+      '0',
+    ]);
+    expect(
+      decodeCalldata(encodeNftTransfer('erc1155', a, b, '9', '2')! + '00'.repeat(32)).kind,
+    ).toBe('unknown');
+  });
+});

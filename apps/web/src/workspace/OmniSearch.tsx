@@ -170,6 +170,13 @@ function SearchBody({
         run: () => shell.openDialog({ kind: 'tokens' }),
       },
       {
+        id: 'a:contacts',
+        type: 'action',
+        label: 'contacts',
+        dim: 'address book',
+        run: () => shell.openDialog({ kind: 'contacts' }),
+      },
+      {
         id: 'a:importset',
         type: 'action',
         label: 'import directory or wallet',

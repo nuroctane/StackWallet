@@ -48,6 +48,7 @@ export function emptyState(ctx: ReducerContext): DirectoryState {
     wallets: [],
     accounts: [],
     tagDefs: [],
+    contacts: [],
     ui: { expandedFolderIds: [], selectedId: null },
   };
 }
@@ -483,4 +484,57 @@ export function expandTo(state: DirectoryState, id: string): DirectoryState {
     ...state,
     ui: { ...state.ui, expandedFolderIds: [...state.ui.expandedFolderIds, ...missing] },
   };
+}
+
+const EVM_ADDR = /^0x[0-9a-fA-F]{40}$/;
+
+/** Add or edit one address-book entry. */
+export function upsertContact(
+  state: DirectoryState,
+  input: { id?: string; name: string; chainId: string | null; address: string; note?: string },
+  ctx: ReducerContext,
+): Outcome<string> {
+  const name = input.name.trim();
+  const address = input.address.trim();
+  if (name === '' || name.length > 60) return fail('Contact names are 1–60 characters');
+  if (!/^[A-Za-z0-9]{1,128}$/.test(address)) return fail('That is not an address');
+  if (input.chainId === null) {
+    if (!EVM_ADDR.test(address)) return fail('An all-EVM contact needs a 0x address');
+  } else {
+    const chain = ChainId.safeParse(input.chainId);
+    if (!chain.success || !chainFamilyOf(chain.data)) return fail('Unknown chain');
+    if (chainFamilyOf(chain.data) === 'evm' && !EVM_ADDR.test(address))
+      return fail('Not an EVM address');
+  }
+  const key = (c: { chainId: string | null; address: string }) =>
+    `${c.chainId ?? 'evm'}|${EVM_ADDR.test(c.address) ? c.address.toLowerCase() : c.address}`;
+  const id = input.id ?? ctx.newId();
+  const clash = state.contacts.find(
+    (c) => c.id !== id && key(c) === key({ chainId: input.chainId, address }),
+  );
+  if (clash) return fail(`This address is already saved as ${clash.name}`);
+  const note = input.note?.trim().slice(0, 200);
+  const existing = state.contacts.find((c) => c.id === id);
+  const contact = {
+    id,
+    name,
+    chainId: input.chainId,
+    address,
+    ...(note ? { note } : {}),
+    createdAtMs: existing?.createdAtMs ?? ctx.now(),
+  };
+  return ok(
+    {
+      ...state,
+      contacts: existing
+        ? state.contacts.map((c) => (c.id === id ? contact : c))
+        : [...state.contacts, contact],
+    },
+    id,
+  );
+}
+
+export function removeContact(state: DirectoryState, id: string): Outcome {
+  if (!state.contacts.some((c) => c.id === id)) return fail('Contact not found');
+  return ok({ ...state, contacts: state.contacts.filter((c) => c.id !== id) }, undefined);
 }

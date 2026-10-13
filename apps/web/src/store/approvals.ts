@@ -113,9 +113,8 @@ export class ApprovalsStore {
       }
     })();
     if (!evm) return;
-    this.chains = Object.keys(BLOCKSCOUT_HOSTS).filter(
-      (id) => registry.chainInfo(id) && !registry.chainInfo(id)?.testnet,
-    );
+    // Testnets too: they are where the core can sign a revoke today.
+    this.chains = Object.keys(BLOCKSCOUT_HOSTS).filter((id) => registry.chainInfo(id));
     const Hex = z.string().regex(/^0x[0-9a-fA-F]*$/);
     this.setScanner((chainId, owner) =>
       scanApprovals({
@@ -157,12 +156,14 @@ export class ApprovalsStore {
     ];
   }
 
-  /** Every open approval known for these accounts, on every scanned chain. */
-  openFor(accounts: readonly Pick<Account, 'family' | 'address'>[]): ApprovalScan['open'] {
-    const out: ApprovalScan['open'] = [];
+  /** Every open approval known for these accounts, on every scanned chain, with its owner. */
+  openFor(
+    accounts: readonly Pick<Account, 'family' | 'address'>[],
+  ): (ApprovalScan['open'][number] & { owner: string })[] {
+    const out: (ApprovalScan['open'][number] & { owner: string })[] = [];
     for (const owner of ApprovalsStore.owners(accounts))
       for (const [key, scan] of Object.entries(this.cache))
-        if (key.endsWith(`:${owner}`)) out.push(...scan.open);
+        if (key.endsWith(`:${owner}`)) out.push(...scan.open.map((o) => ({ ...o, owner })));
     return out;
   }
 

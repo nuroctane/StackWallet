@@ -139,6 +139,20 @@ export class DirectoryStore {
     return this.apply(r.upsertTagDef(this.state, input, this.ctx));
   }
 
+  upsertContact(input: {
+    id?: string;
+    name: string;
+    chainId: string | null;
+    address: string;
+    note?: string;
+  }): ActionResult<string> {
+    return this.apply(r.upsertContact(this.state, input, this.ctx));
+  }
+
+  removeContact(id: string): ActionResult {
+    return this.apply(r.removeContact(this.state, id));
+  }
+
   resetTagDef(id: string): ActionResult {
     return this.apply(r.resetTagDef(this.state, id));
   }

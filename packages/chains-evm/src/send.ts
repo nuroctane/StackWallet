@@ -117,10 +117,25 @@ export interface Prepared {
  * the node's tip), gas from `eth_estimateGas`. A failed estimate does not stop
  * the proposal: it is recorded as a failed simulation for the approver to see.
  */
+export interface ReplaceOptions {
+  /** Nonce of the stuck transaction this one replaces. */
+  nonce: number;
+  /** Its fees; nodes accept a replacement only when both rise by at least 10%. */
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+}
+
+/** Fee of a replacement: the current market or the old fee plus 12.5%, whichever is higher. */
+export function bumpFee(current: bigint, previous: bigint): bigint {
+  const bumped = previous + (previous + 7n) / 8n;
+  return current > bumped ? current : bumped;
+}
+
 export async function prepareEvm(
   adapter: EvmAdapter,
   intent: TxIntent,
   from: string,
+  replace?: ReplaceOptions,
 ): Promise<Prepared> {
   const chainId = intent.chainId;
   const chainNum = Number(chainId.split(':')[1]);
@@ -138,7 +153,10 @@ export async function prepareEvm(
     .then((h) => BigInt(h))
     .catch(() => FALLBACK_PRIORITY_FEE);
   const base = block?.baseFeePerGas ? BigInt(block.baseFeePerGas) : 0n;
-  const maxFee = base * 2n + tip;
+  const marketTip = tip;
+  const priority = replace ? bumpFee(marketTip, replace.maxPriorityFeePerGas) : marketTip;
+  const marketMax = base * 2n + priority;
+  const maxFee = replace ? bumpFee(marketMax, replace.maxFeePerGas) : marketMax;
 
   const warnings: SimulationWarning[] = [];
   let error: string | undefined;
@@ -163,12 +181,12 @@ export async function prepareEvm(
   if (balance < call.value + worstFee) {
     error ??= `balance ${balance} wei does not cover ${call.value + worstFee} wei (value + max fee)`;
   }
-  const expectedFee = gas * (base + tip);
+  const expectedFee = gas * (base + priority);
   return {
     unsigned: {
       chainId: chainNum,
-      nonce: Number(BigInt(nonceHex)),
-      maxPriorityFeePerGas: tip.toString(),
+      nonce: replace ? replace.nonce : Number(BigInt(nonceHex)),
+      maxPriorityFeePerGas: priority.toString(),
       maxFeePerGas: maxFee.toString(),
       gasLimit: Number(gas),
       to: call.to,

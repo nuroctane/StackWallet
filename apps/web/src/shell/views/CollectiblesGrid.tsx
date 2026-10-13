@@ -3,7 +3,8 @@ import { UNSUPPORTED_REASON, type Collectible } from '@stackwallet/collectibles'
 import type { Account } from '@stackwallet/core-client';
 import { Button, LoadingWord } from '@stackwallet/ui';
 
-import { findChain } from '../../lib/chains.js';
+import { EVM_SIGNING_CHAINS, findChain } from '../../lib/chains.js';
+import { useShell } from '../ShellContext.js';
 import {
   collectiblesStore,
   setMediaMode,
@@ -28,6 +29,7 @@ export function CollectiblesGrid({
 }) {
   useCollectiblesVersion();
   const registry = useRegistry();
+  const shell = useShell();
   const [showSuspicious, setShowSuspicious] = useState(false);
   const mode = useMediaMode();
   const accountKey = accounts.map((a) => a.id).join('|');
@@ -112,9 +114,34 @@ export function CollectiblesGrid({
         <ul
           className={`grid gap-2 px-3 pb-3 ${dense ? 'grid-cols-[repeat(auto-fill,minmax(112px,1fr))]' : 'grid-cols-[repeat(auto-fill,minmax(148px,1fr))]'}`}
         >
-          {visible.map(({ item }) => (
-            <Card key={item.key} item={item} chain={findChain(registry, item.chainId)?.name} />
-          ))}
+          {visible.map(({ item, account }) => {
+            const canSend =
+              !item.suspicious &&
+              (item.standard === 'erc721' || item.standard === 'erc1155') &&
+              Boolean(account.derivationPath) &&
+              EVM_SIGNING_CHAINS.has(account.chainId);
+            return (
+              <Card
+                key={item.key}
+                item={item}
+                chain={findChain(registry, item.chainId)?.name}
+                {...(canSend
+                  ? {
+                      onSend: () =>
+                        shell.openDialog({
+                          kind: 'sendNft',
+                          accountId: account.id,
+                          contract: item.contract,
+                          tokenId: item.tokenId,
+                          standard: item.standard,
+                          name: item.name,
+                          held: item.amount,
+                        }),
+                    }
+                  : {})}
+              />
+            );
+          })}
         </ul>
       )}
       {more.length > 0 && (
@@ -155,7 +182,15 @@ function useInView<T extends Element>(): [RefObject<T | null>, boolean] {
   return [ref, seen];
 }
 
-function Card({ item, chain }: { item: Collectible; chain: string | undefined }) {
+function Card({
+  item,
+  chain,
+  onSend,
+}: {
+  item: Collectible;
+  chain: string | undefined;
+  onSend?: () => void;
+}) {
   const [ref, inView] = useInView<HTMLLIElement>();
   // Spam-flagged items never touch the network for media: their images are tracking beacons.
   const media = useMedia(inView && !item.suspicious ? item.image : null);
@@ -200,6 +235,15 @@ function Card({ item, chain }: { item: Collectible; chain: string | undefined })
           {item.collection}
           {chain ? ` · ${chain}` : ''}
         </span>
+        {onSend && (
+          <button
+            type="button"
+            onClick={onSend}
+            className="sw-pressable mt-1 self-start rounded-sw-sm border border-edge px-1.5 text-[10px] text-muted hover:text-ink"
+          >
+            Send…
+          </button>
+        )}
       </div>
     </li>
   );

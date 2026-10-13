@@ -25,6 +25,7 @@ export function useLabeler(): (address: string, chainId: string) => Label {
       accounts: state.accounts,
       names: byAddress,
       ledger,
+      contacts: state.contacts,
       walletText: (id: string) => {
         const w = state.wallets.find((x) => x.id === id);
         return w ? walletLabel(names, w, state.accounts).text : id;
@@ -36,6 +37,7 @@ export function useLabeler(): (address: string, chainId: string) => Label {
 
 const SOURCE_TONE: Record<Label['source'], string> = {
   wallet: 'text-ink',
+  contact: 'text-ink',
   name: 'text-accent-2',
   known: 'text-muted',
   none: 'text-faint',

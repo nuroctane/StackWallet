@@ -61,6 +61,18 @@ export const KNOWN_SELECTORS: Readonly<Record<string, Signature>> = {
       { name: 'approved', type: 'bool' },
     ],
   },
+  // ERC-1155 with empty `data`: the bytes offset and length are the last two words.
+  '0xf242432a': {
+    name: 'safeTransferFrom',
+    args: [
+      { name: 'from', type: 'address' },
+      { name: 'to', type: 'address' },
+      { name: 'id', type: 'uint256' },
+      { name: 'amount', type: 'uint256' },
+      { name: 'dataOffset', type: 'uint256' },
+      { name: 'dataLength', type: 'uint256' },
+    ],
+  },
   '0xd0e30db0': { name: 'deposit', args: [] },
   '0x2e1a7d4d': { name: 'withdraw', args: [{ name: 'amount', type: 'uint256' }] },
 };

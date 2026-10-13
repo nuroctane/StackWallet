@@ -277,7 +277,23 @@ function SendForm({
           }
           spellCheck={false}
           autoComplete="off"
+          list={`contacts-${ids.to}`}
         />
+        <datalist id={`contacts-${ids.to}`}>
+          {state.contacts
+            .filter((c) =>
+              account
+                ? c.chainId === null
+                  ? account.family === 'evm'
+                  : c.chainId === account.chainId
+                : false,
+            )
+            .map((c) => (
+              <option key={c.id} value={c.address}>
+                {c.name}
+              </option>
+            ))}
+        </datalist>
       </Field>
       {toValid && account && (
         <div className="-mt-2 text-[12px]">

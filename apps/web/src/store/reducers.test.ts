@@ -284,6 +284,36 @@ describe('user tag definitions', () => {
   });
 });
 
+describe('contacts', () => {
+  it('adds, edits and removes, refusing duplicates and bad addresses', () => {
+    const { s, ctx } = seeded();
+    const evm = '0x1111111111111111111111111111111111111111';
+    const a = expectOk(r.upsertContact(s, { name: 'Alice', chainId: null, address: evm }, ctx));
+    expect(a.state.contacts).toMatchObject([{ name: 'Alice', chainId: null, address: evm }]);
+    expect(
+      expectFail(
+        r.upsertContact(
+          a.state,
+          { name: 'A2', chainId: null, address: evm.toUpperCase().replace('0X', '0x') },
+          ctx,
+        ),
+      ),
+    ).toMatch(/already saved as Alice/);
+    expect(
+      expectFail(r.upsertContact(s, { name: 'x', chainId: null, address: 'bc1qxyz' }, ctx)),
+    ).toMatch(/0x/);
+    expect(expectFail(r.upsertContact(s, { name: '', chainId: null, address: evm }, ctx))).toMatch(
+      /1–60/,
+    );
+    const edited = expectOk(
+      r.upsertContact(a.state, { id: a.value, name: 'Alice B', chainId: null, address: evm }, ctx),
+    );
+    expect(edited.state.contacts).toHaveLength(1);
+    expect(edited.state.contacts[0]!.name).toBe('Alice B');
+    expect(expectOk(r.removeContact(edited.state, a.value)).state.contacts).toEqual([]);
+  });
+});
+
 describe('ui reducers', () => {
   it('toggles expansion only for real folders', () => {
     const seed = seeded();

@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import type { Account } from '@stackwallet/core-client';
-import { Button, SecurityGlyph } from '@stackwallet/ui';
+import { revokeCalldata } from '@stackwallet/chains-evm';
+import { Button, SecurityGlyph, useToasts } from '@stackwallet/ui';
 
-import { explorerTxUrl, findChain } from '../../lib/chains.js';
+import { EVM_SIGNING_CHAINS, explorerTxUrl, findChain } from '../../lib/chains.js';
+import { proposeContractCall } from '../../store/txs.js';
 import { relativeTime } from '../../lib/format.js';
 import { ApprovalsStore, approvalsStore, useApprovalsVersion } from '../../store/approvals.js';
 import { useRegistry } from '../../store/RegistryContext.js';
@@ -18,6 +21,7 @@ const KIND_LABEL = { erc20: 'token allowance', nft: 'collectible', operator: 'al
 export function ApprovalsSection({ accounts }: { accounts: Account[] }) {
   useApprovalsVersion();
   const registry = useRegistry();
+  const toasts = useToasts();
   const owners = ApprovalsStore.owners(accounts);
   if (owners.length === 0) return null;
   const chains = approvalsStore.scanChains();
@@ -103,6 +107,11 @@ export function ApprovalsSection({ accounts }: { accounts: Account[] }) {
                       unverified
                     </span>
                   )}
+                  <RevokeButton
+                    approval={a}
+                    accounts={accounts}
+                    onDone={(m, bad) => toasts.push(m, bad ? 'danger' : undefined)}
+                  />
                   {tx && (
                     <a
                       href={tx}
@@ -133,5 +142,59 @@ export function ApprovalsSection({ accounts }: { accounts: Account[] }) {
         )}
       </div>
     </section>
+  );
+}
+
+type Approval = ReturnType<typeof approvalsStore.openFor>[number];
+
+/**
+ * Revoke through the approval queue: allowance to zero, operator to false,
+ * or the token's approved address to nobody. Only where this wallet holds
+ * the owner's key on that chain and the core signs there.
+ */
+function RevokeButton({
+  approval,
+  accounts,
+  onDone,
+}: {
+  approval: Approval;
+  accounts: Account[];
+  onDone: (message: string, bad?: boolean) => void;
+}) {
+  const registry = useRegistry();
+  const [busy, setBusy] = useState(false);
+  const signer = accounts.find(
+    (acc) =>
+      acc.chainId === approval.chainId &&
+      Boolean(acc.derivationPath) &&
+      acc.address.toLowerCase() === approval.owner,
+  );
+  if (!signer || !EVM_SIGNING_CHAINS.has(approval.chainId)) return null;
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      disabled={busy}
+      onClick={() => {
+        setBusy(true);
+        void proposeContractCall(registry, {
+          account: signer,
+          to: approval.token,
+          dataHex: revokeCalldata(approval),
+        }).then((r) => {
+          setBusy(false);
+          if (!r.ok) onDone(r.error, true);
+          else
+            onDone(
+              r.value.state === 'awaiting'
+                ? 'Revoke proposed; approve it in the approval queue'
+                : 'The revoke was denied by policy',
+              r.value.state !== 'awaiting',
+            );
+        });
+      }}
+    >
+      {busy ? 'preparing…' : 'Revoke'}
+    </Button>
   );
 }

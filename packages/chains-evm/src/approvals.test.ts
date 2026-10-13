@@ -175,3 +175,12 @@ describe('approval verification', () => {
     );
   });
 });
+
+describe('replacement fees', () => {
+  it('rise by at least 12.5% over the stuck transaction, or to the market if higher', async () => {
+    const { bumpFee } = await import('./send.js');
+    expect(bumpFee(100n, 100n)).toBe(113n);
+    expect(bumpFee(500n, 100n)).toBe(500n);
+    expect(bumpFee(0n, 8n)).toBe(9n);
+  });
+});

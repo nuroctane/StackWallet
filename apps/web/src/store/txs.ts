@@ -7,7 +7,13 @@ import {
   type BitcoinAdapter,
   type BitcoinPrepareOptions,
 } from '@stackwallet/chains-bitcoin';
-import { broadcastEvm, nodeMessage, prepareEvm, type EvmAdapter } from '@stackwallet/chains-evm';
+import {
+  broadcastEvm,
+  nodeMessage,
+  prepareEvm,
+  type EvmAdapter,
+  type ReplaceOptions,
+} from '@stackwallet/chains-evm';
 import {
   broadcastSolana,
   prepareSolana,
@@ -45,6 +51,8 @@ function solanaAdapter(registry: ChainRegistry, chainId: string): SolanaAdapter 
 
 export interface SendRequest {
   account: Account;
+  /** EVM only: replace the stuck transaction with this nonce and fees. */
+  replace?: ReplaceOptions;
   to: string;
   /** `${chainId}:native` or `${chainId}:erc20:0x…` */
   asset: string;
@@ -74,6 +82,37 @@ export async function proposeSend(
   registry: ChainRegistry,
   req: SendRequest,
 ): Promise<Result<TxRecord>> {
+  return proposeIntent(registry, req, {
+    kind: 'transfer',
+    to: req.to,
+    asset: req.asset,
+    amount: req.amount,
+  });
+}
+
+/**
+ * Propose an EVM contract call (a revoke, an NFT transfer). The core checks
+ * the unsigned transaction's destination, value and calldata byte for byte.
+ */
+export async function proposeContractCall(
+  registry: ChainRegistry,
+  req: { account: Account; to: string; dataHex: string; value?: string; replace?: ReplaceOptions },
+): Promise<Result<TxRecord>> {
+  if (req.account.family !== 'evm') return { ok: false, error: 'Contract calls are EVM only' };
+  return proposeIntent(
+    registry,
+    { account: req.account, ...(req.replace ? { replace: req.replace } : {}) },
+    { kind: 'contractCall', to: req.to, dataHex: req.dataHex, value: req.value ?? '0' },
+  );
+}
+
+async function proposeIntent(
+  registry: ChainRegistry,
+  req: Pick<SendRequest, 'account' | 'bitcoin' | 'solana' | 'replace'>,
+  kind:
+    | { kind: 'transfer'; to: string; asset: string; amount: string }
+    | { kind: 'contractCall'; to: string; dataHex: string; value: string },
+): Promise<Result<TxRecord>> {
   const { account } = req;
   if (!account.derivationPath) return { ok: false, error: 'This account has no key in the vault' };
   const id = crypto.randomUUID();
@@ -82,10 +121,7 @@ export async function proposeSend(
     walletId: account.walletId,
     accountId: account.id,
     chainId: account.chainId,
-    kind: 'transfer',
-    to: req.to,
-    asset: req.asset,
-    amount: req.amount,
+    ...kind,
     usdMicros: null,
     untrustedDestinations: [],
   } as Omit<TxIntent, 'proposer' | 'createdAtMs'>;
@@ -119,6 +155,7 @@ export async function proposeSend(
                 evmAdapter(registry, account.chainId),
                 proposed.value.intent,
                 account.address,
+                req.replace,
               );
   } catch (err) {
     return {

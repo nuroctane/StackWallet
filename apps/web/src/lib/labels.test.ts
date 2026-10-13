@@ -69,3 +69,20 @@ describe('address labels', () => {
     for (const k of Object.keys(KNOWN_CONTRACTS)) expect(k).toMatch(/^0x[0-9a-f]{40}$/);
   });
 });
+
+describe('contact labels', () => {
+  it("names an address after the user's wallets and before name services", () => {
+    const addr = '0x2222222222222222222222222222222222222222';
+    const inputs = {
+      wallets: [],
+      accounts: [],
+      names: new Map(),
+      walletText: (id: string) => id,
+      ledger: null,
+      contacts: [{ name: 'Bob', chainId: null, address: addr }],
+    };
+    const l = labelFor(addr.toUpperCase().replace('0X', '0x'), 'eip155:1', inputs);
+    expect(l).toMatchObject({ label: 'Bob', source: 'contact' });
+    expect(labelFor(addr, 'solana:x', inputs).source).toBe('none');
+  });
+});

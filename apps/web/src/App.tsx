@@ -30,6 +30,8 @@ import {
 } from './shell/SetTransferDialogs.js';
 import { ReceiveDialog } from './shell/ReceiveDialog.js';
 import { AddAccountDialog } from './shell/AddAccountDialog.js';
+import { ContactsDialog } from './shell/ContactsDialog.js';
+import { NftSendDialog } from './shell/NftSendDialog.js';
 import { StatusBar } from './shell/StatusBar.js';
 import { ThemeStudio } from './shell/ThemeStudio.js';
 import { VaultDialog } from './shell/VaultDialog.js';
@@ -323,6 +325,12 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
         onClose={closeDialog}
       />
       <ImportSetDialog open={dialog?.kind === 'importSet'} onClose={closeDialog} />
+      <NftSendDialog
+        open={dialog?.kind === 'sendNft'}
+        target={dialog?.kind === 'sendNft' ? dialog : undefined}
+        onClose={closeDialog}
+      />
+      <ContactsDialog open={dialog?.kind === 'contacts'} onClose={closeDialog} />
       <AddAccountDialog
         open={dialog?.kind === 'addAccount'}
         walletId={dialog?.kind === 'addAccount' ? dialog.walletId : undefined}

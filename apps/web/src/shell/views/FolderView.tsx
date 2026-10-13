@@ -81,6 +81,16 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
                 Import…
               </Button>
             )}
+            {folder.parentId === null && (
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Your names for addresses; they label history and signing screens"
+                onClick={() => shell.openDialog({ kind: 'contacts' })}
+              >
+                Contacts…
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"

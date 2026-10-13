@@ -6,7 +6,7 @@ import { SERVICE_LABEL, type NameRecord } from '@stackwallet/names';
  * user's own wallets first, then names that were verified both ways, then
  * the bundled registry. Nothing else ever names an address.
  */
-export type LabelSource = 'wallet' | 'name' | 'known' | 'none';
+export type LabelSource = 'wallet' | 'contact' | 'name' | 'known' | 'none';
 
 export interface AddressLabel {
   address: string;
@@ -57,6 +57,8 @@ export interface LabelInputs {
   names: ReadonlyMap<string, NameRecord>;
   walletText: (walletId: string) => string;
   ledger: Ledger | null;
+  /** The user's address book. */
+  contacts?: readonly { name: string; chainId: string | null; address: string }[];
 }
 
 const norm = (a: string) => (a.startsWith('0x') ? a.toLowerCase() : a);
@@ -88,6 +90,14 @@ export function labelFor(address: string, chainId: string, inputs: LabelInputs):
       // A watched address is in the directory but holds no key here: not "yours".
       sourceText: wallet.kind === 'watch' ? 'watched' : 'your wallet',
     };
+  }
+  const contact = inputs.contacts?.find(
+    (c) =>
+      norm(c.address) === a &&
+      (c.chainId === null ? chainId.startsWith('eip155:') : c.chainId === chainId),
+  );
+  if (contact) {
+    return { ...base, label: contact.name, source: 'contact', sourceText: 'contact' };
   }
   const name = inputs.names.get(a);
   if (name) {
