@@ -170,6 +170,13 @@ function SearchBody({
         run: () => shell.openDialog({ kind: 'tokens' }),
       },
       {
+        id: 'a:ledger',
+        type: 'action',
+        label: 'connect ledger',
+        dim: 'hardware wallet',
+        run: () => shell.openDialog({ kind: 'hardwareWallet' }),
+      },
+      {
         id: 'a:contacts',
         type: 'action',
         label: 'contacts',

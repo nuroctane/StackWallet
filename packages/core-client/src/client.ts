@@ -152,6 +152,30 @@ export interface VaultHandle {
     deviceId: string;
     nowMs: number;
   }): Promise<SignedMessage>;
+  /** Register the address a hardware device showed for `path` (EVM). */
+  hardwareRegister(req: {
+    session: SessionProof;
+    walletId: string;
+    path: string;
+    address: string;
+  }): Promise<void>;
+  /** Hardware approval, first half: the record (now Signing) and the bytes the device signs. */
+  txBeginExternal(
+    txId: string,
+    session: SessionProof,
+    deviceId: string,
+    nowMs: number,
+  ): Promise<{ record: TxRecord; payloadHex: string }>;
+  /** Hardware approval, second half; the core checks the signature recovers to the signer. */
+  txCompleteExternal(req: {
+    txId: string;
+    v: number;
+    r: string;
+    s: string;
+    deviceId: string;
+    nowMs: number;
+  }): Promise<TxRecord>;
+  txAbortExternal(txId: string, reason: string, deviceId: string, nowMs: number): Promise<TxRecord>;
   /** An app record the page sealed itself (`agent-session:<id>`); nothing else is readable. */
   appRecord(label: string): Promise<string | null>;
   /** A model provider's API key sealed under `provider-key:<id>`; nothing else is readable. */
@@ -344,6 +368,31 @@ export interface WasmVaultObject {
     nowMs: number,
   ): string;
   provider_key(provider: string): string | undefined;
+  hardware_register(
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    walletId: string,
+    path: string,
+    address: string,
+  ): string;
+  tx_begin_external(
+    txId: string,
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    deviceId: string,
+    nowMs: number,
+  ): string;
+  tx_complete_external(
+    txId: string,
+    v: number,
+    rHex: string,
+    sHex: string,
+    deviceId: string,
+    nowMs: number,
+  ): string;
+  tx_abort_external(txId: string, reason: string, deviceId: string, nowMs: number): string;
   app_record(label: string): string | undefined;
   sign_message(
     walletId: string,
@@ -631,6 +680,39 @@ class WasmVaultHandle implements VaultHandle {
         ),
       ),
     );
+  }
+  async hardwareRegister(req: {
+    session: SessionProof;
+    walletId: string;
+    path: string;
+    address: string;
+  }) {
+    const [slot, secret, device] = sessionArgs(req.session);
+    this.raw.hardware_register(slot, secret, device, req.walletId, req.path, req.address);
+  }
+  async txBeginExternal(txId: string, session: SessionProof, deviceId: string, nowMs: number) {
+    const [slot, secret, device] = sessionArgs(session);
+    const out = z
+      .object({ record: TxRecord, payloadHex: z.string() })
+      .parse(JSON.parse(this.raw.tx_begin_external(txId, slot, secret, device, deviceId, nowMs)));
+    return out;
+  }
+  async txCompleteExternal(req: {
+    txId: string;
+    v: number;
+    r: string;
+    s: string;
+    deviceId: string;
+    nowMs: number;
+  }) {
+    return TxRecord.parse(
+      JSON.parse(
+        this.raw.tx_complete_external(req.txId, req.v, req.r, req.s, req.deviceId, req.nowMs),
+      ),
+    );
+  }
+  async txAbortExternal(txId: string, reason: string, deviceId: string, nowMs: number) {
+    return TxRecord.parse(JSON.parse(this.raw.tx_abort_external(txId, reason, deviceId, nowMs)));
   }
   async appRecord(label: string) {
     return this.raw.app_record(label) ?? null;

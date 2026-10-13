@@ -75,6 +75,7 @@ export class DirectoryStore {
     name: string;
     folderId: string;
     accounts: sets.KeyedAccountInput[];
+    kind?: 'single' | 'hardware';
   }): ActionResult<string> {
     return this.apply(sets.createKeyedWallet(this.state, input, this.ctx));
   }

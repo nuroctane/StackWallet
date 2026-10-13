@@ -470,6 +470,44 @@ export class VaultStore {
     return this.ledgerOp((v, device, now) => v.txApprove(txId, passphrase, device, now));
   }
 
+  hardwareRegister(req: {
+    session: SessionProof;
+    walletId: string;
+    path: string;
+    address: string;
+  }) {
+    return this.guarded(async () => {
+      await this.unlockedVault().hardwareRegister(req);
+      await this.persist();
+      await this.refreshUnlocked();
+    });
+  }
+
+  /** Hardware approval, first half; returns the bytes the device must sign. */
+  txBeginExternal(txId: string, session: SessionProof) {
+    return this.guardedValue(async () => {
+      const out = await this.unlockedVault().txBeginExternal(
+        txId,
+        session,
+        this.deviceId(),
+        this.now(),
+      );
+      await this.persist();
+      await this.refreshLedger();
+      return out;
+    });
+  }
+
+  txCompleteExternal(txId: string, sig: { v: number; r: string; s: string }) {
+    return this.ledgerOp((v, deviceId, nowMs) =>
+      v.txCompleteExternal({ txId, ...sig, deviceId, nowMs }),
+    );
+  }
+
+  txAbortExternal(txId: string, reason: string) {
+    return this.ledgerOp((v, device, now) => v.txAbortExternal(txId, reason, device, now));
+  }
+
   txReject(txId: string) {
     return this.ledgerOp((v, device, now) => v.txReject(txId, device, now));
   }

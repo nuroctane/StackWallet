@@ -304,7 +304,8 @@ export function addKeyedAccount(
 ): Outcome<string> {
   const wallet = state.wallets.find((w) => w.id === input.walletId);
   if (!wallet) return fail('Wallet not found');
-  if (wallet.kind !== 'single') return fail('Only single-key wallets derive more accounts');
+  if (wallet.kind !== 'single' && wallet.kind !== 'hardware')
+    return fail('Only single-key and hardware wallets derive more accounts');
   const chain = ChainId.safeParse(input.chainId);
   const family = chain.success ? chainFamilyOf(chain.data) : null;
   if (!chain.success || !family) return fail(`Unsupported chain ${input.chainId}`);
@@ -344,7 +345,14 @@ export function addKeyedAccount(
 /** A `single` wallet whose key the core already sealed under `walletId`. */
 export function createKeyedWallet(
   state: DirectoryState,
-  input: { walletId: string; name: string; folderId: string; accounts: KeyedAccountInput[] },
+  input: {
+    walletId: string;
+    name: string;
+    folderId: string;
+    accounts: KeyedAccountInput[];
+    /** `hardware`: the key is on a device the core registered for these paths. */
+    kind?: 'single' | 'hardware';
+  },
   ctx: ReducerContext,
 ): Outcome<string> {
   const name = input.name.trim().slice(0, 80) || 'Wallet';
@@ -372,7 +380,7 @@ export function createKeyedWallet(
     id: input.walletId,
     folderId: input.folderId,
     name,
-    kind: 'single',
+    kind: input.kind ?? 'single',
     keyGroupId: null,
     tags: [],
     createdAtMs: t,

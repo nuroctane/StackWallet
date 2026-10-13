@@ -22,6 +22,7 @@ pub mod bitcoin;
 pub mod cosmos;
 pub mod evm;
 pub mod export_gate;
+pub mod hardware;
 pub mod hd;
 pub mod identity;
 pub mod intent;

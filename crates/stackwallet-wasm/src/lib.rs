@@ -478,6 +478,86 @@ impl WasmVault {
         Ok(Some(text))
     }
 
+    /// Register the address a hardware device showed for `path` (EVM).
+    pub fn hardware_register(
+        &mut self,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        wallet_id: &str,
+        path: &str,
+        address: &str,
+    ) -> Result<String, JsError> {
+        let session = session_from(session_slot, session_secret, session_device);
+        let acc = stackwallet_core::hardware::register(
+            &mut self.inner,
+            &session,
+            wallet_id,
+            path,
+            address,
+        )
+        .map_err(core_err)?;
+        Ok(serde_json::to_string(&acc)?)
+    }
+
+    /// Hardware approval, first half: `{ record, payloadHex }` (the bytes the device signs).
+    pub fn tx_begin_external(
+        &mut self,
+        tx_id: &str,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let session = session_from(session_slot, session_secret, session_device);
+        let (record, payload) =
+            ledger::begin_external(&mut self.inner, tx_id, &session, device_id, now_ms as i64)
+                .map_err(core_err)?;
+        Ok(serde_json::json!({ "record": record, "payloadHex": payload }).to_string())
+    }
+
+    /// Hardware approval, second half: the device's (v, r, s); returns the record.
+    pub fn tx_complete_external(
+        &mut self,
+        tx_id: &str,
+        v: u8,
+        r_hex: &str,
+        s_hex: &str,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let word = |h: &str| -> Result<[u8; 32], JsError> {
+            hex::decode(h.trim_start_matches("0x"))
+                .ok()
+                .and_then(|b| b.try_into().ok())
+                .ok_or_else(|| JsError::new("signature words must be 32 bytes"))
+        };
+        let rec = ledger::complete_external(
+            &mut self.inner,
+            tx_id,
+            v,
+            &word(r_hex)?,
+            &word(s_hex)?,
+            device_id,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(serde_json::to_string(&rec)?)
+    }
+
+    pub fn tx_abort_external(
+        &mut self,
+        tx_id: &str,
+        reason: &str,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let rec = ledger::abort_external(&mut self.inner, tx_id, reason, device_id, now_ms as i64)
+            .map_err(core_err)?;
+        Ok(serde_json::to_string(&rec)?)
+    }
+
     /// Device-local unlock methods (`SlotInfo[]` JSON). Readable while locked.
     pub fn slots_json(&self) -> Result<String, JsError> {
         Ok(serde_json::to_string(&self.inner.slots())?)

@@ -17,12 +17,14 @@ use crate::audit::{Actor, AuditChain, AuditEntry, AuditEvent};
 use crate::bitcoin::{self, BitcoinTx};
 use crate::cosmos::{self, CosmosTx};
 use crate::evm::{self, EvmTx};
+use crate::hardware;
 use crate::intent::TxIntent;
 use crate::lifecycle::TxState;
 use crate::model::Curve;
 use crate::policy::{self, Decision, Policy, PolicyContext, Window};
 use crate::provenance;
 use crate::solana::{self, SolanaTx};
+use crate::vault::SessionProof;
 use crate::vault::{EncryptedVault, Secret, Vault};
 use crate::{CoreError, Result};
 
@@ -406,7 +408,23 @@ pub fn attach(
     }
     unsigned.check_matches_intent(&ledger.txs[i].intent)?;
     check_bitcoin_reservations(&ledger, tx_id, &unsigned)?;
-    let derived = signer_address(vault, &signer, &unsigned)?;
+    let derived = if provenance::has_single_key(vault, &signer.wallet_id) {
+        signer_address(vault, &signer, &unsigned)?
+    } else {
+        // A hardware account: the address the device registered for this path.
+        match (
+            &unsigned,
+            hardware::lookup(vault, &signer.wallet_id, &signer.path)?,
+        ) {
+            (UnsignedTx::Evm(_), Some(acc)) => acc.address,
+            (UnsignedTx::Evm(_), None) => {
+                return Err(invalid(
+                    "no key and no registered hardware account for this signer",
+                ))
+            }
+            _ => return Err(invalid("hardware signing is EVM only")),
+        }
+    };
     let matches = match &unsigned {
         UnsignedTx::Evm(_) => evm::parse_address(&derived)? == evm::parse_address(&signer.address)?,
         UnsignedTx::Solana(tx) => derived == signer.address && tx.from == derived,
@@ -489,6 +507,13 @@ pub fn approve(
     if let Some(unsigned) = &ledger.txs[i].unsigned {
         check_bitcoin_reservations(&ledger, tx_id, unsigned)?;
     }
+    if let Some(signer) = &ledger.txs[i].signer {
+        if !provenance::has_single_key(vault, &signer.wallet_id) {
+            return Err(invalid(
+                "this wallet's key is on a hardware device; approve it there",
+            ));
+        }
+    }
     // Policies can change while a proposal waits; the signing-time answer wins.
     let ctx = ledger.context(tx_id, now_ms, ledger.txs[i].simulation_ok);
     let decision = policy::evaluate(&ledger.policies, &ledger.txs[i].intent, &ctx);
@@ -551,6 +576,172 @@ pub fn approve(
         }
     }
     ledger.txs[i].decision = Some(decision);
+    let out = ledger.txs[i].clone();
+    save_ledger(vault, &ledger)?;
+    Ok(out)
+}
+
+/// First half of a hardware approval: the same checks as [`approve`] (fresh
+/// session, signing-time policy, local approver), then Awaiting → Signing and
+/// the exact bytes the device must sign. Nothing is signed here.
+pub fn begin_external(
+    vault: &mut EncryptedVault,
+    tx_id: &str,
+    session: &SessionProof,
+    device_id: &str,
+    now_ms: i64,
+) -> Result<(TxRecord, String)> {
+    vault.verify_session(session, false)?;
+    let mut ledger = load_ledger(vault)?;
+    let i = ledger.index(tx_id)?;
+    let actor = device_actor(device_id);
+    if ledger.txs[i].state != TxState::Awaiting {
+        return Err(invalid(
+            "only a transaction awaiting approval can be approved",
+        ));
+    }
+    let t = ledger.txs[i].clone();
+    let (Some(UnsignedTx::Evm(tx)), Some(signer)) = (&t.unsigned, &t.signer) else {
+        return Err(invalid("hardware signing is EVM only"));
+    };
+    let registered = hardware::lookup(vault, &signer.wallet_id, &signer.path)?
+        .ok_or_else(|| invalid("this signer is not a registered hardware account"))?;
+    if registered.address != signer.address {
+        return Err(invalid("hardware account changed since the proposal"));
+    }
+    evm::check_matches_intent(tx, &t.intent)?;
+    let ctx = ledger.context(tx_id, now_ms, t.simulation_ok);
+    let decision = policy::evaluate(&ledger.policies, &t.intent, &ctx);
+    if let Decision::Deny { reasons, .. } = &decision {
+        let note = format!("policy at signing time: {}", reasons.join("; "));
+        ledger.step(i, TxState::Rejected, Some(note), &actor, now_ms)?;
+        ledger.txs[i].decision = Some(decision);
+        let out = ledger.txs[i].clone();
+        save_ledger(vault, &ledger)?;
+        return Ok((out, String::new()));
+    }
+    if let Decision::Allow {
+        required_approvers, ..
+    } = &decision
+    {
+        if required_approvers.iter().any(|r| {
+            r.at_least > 1 || (r.at_least == 1 && !r.device_ids.iter().any(|d| d == device_id))
+        }) {
+            return Err(invalid("this policy needs approvals from other devices"));
+        }
+    }
+    let payload = format!("0x{}", hex::encode(tx.signing_payload()?));
+    ledger.step(
+        i,
+        TxState::Signing,
+        Some("waiting for the hardware device".into()),
+        &actor,
+        now_ms,
+    )?;
+    ledger.txs[i].decision = Some(decision);
+    let out = ledger.txs[i].clone();
+    save_ledger(vault, &ledger)?;
+    Ok((out, payload))
+}
+
+/// Second half: accept the device's signature only if it recovers, over the
+/// core's own sighash, to the registered address. Signing → Signed, or
+/// Signing → Failed with the reason when it does not.
+pub fn complete_external(
+    vault: &mut EncryptedVault,
+    tx_id: &str,
+    y_parity: u8,
+    r: &[u8; 32],
+    s: &[u8; 32],
+    device_id: &str,
+    now_ms: i64,
+) -> Result<TxRecord> {
+    let mut ledger = load_ledger(vault)?;
+    let i = ledger.index(tx_id)?;
+    let actor = device_actor(device_id);
+    if ledger.txs[i].state != TxState::Signing {
+        return Err(invalid(
+            "this transaction is not waiting for a device signature",
+        ));
+    }
+    let t = ledger.txs[i].clone();
+    let checked = (|| -> Result<(String, String)> {
+        let (Some(UnsignedTx::Evm(tx)), Some(signer)) = (&t.unsigned, &t.signer) else {
+            return Err(invalid("hardware signing is EVM only"));
+        };
+        evm::check_matches_intent(tx, &t.intent)?;
+        // Devices differ in how they report the recovery bit; (r, s) recovers
+        // to the registered address under at most one parity, so try both.
+        let sighash = tx.sighash()?;
+        let first = y_parity & 1;
+        let mut found = None;
+        let mut seen = String::new();
+        for parity in [first, first ^ 1] {
+            match hardware::recover_evm(&sighash, parity, r, s) {
+                Ok(addr) if addr == signer.address => {
+                    found = Some(parity);
+                    break;
+                }
+                Ok(addr) if seen.is_empty() => seen = addr,
+                _ => {}
+            }
+        }
+        let parity = found.ok_or_else(|| {
+            invalid(format!(
+                "the device signed as {seen}, not {}",
+                signer.address
+            ))
+        })?;
+        let raw = tx.encode_signed(parity, r, s)?;
+        Ok((
+            format!("0x{}", hex::encode(&raw)),
+            format!("0x{}", hex::encode(evm::keccak256(&raw))),
+        ))
+    })();
+    match checked {
+        Ok((raw, hash)) => {
+            ledger.step(i, TxState::Signed, None, &actor, now_ms)?;
+            ledger.txs[i].raw_signed_hex = Some(raw);
+            ledger.txs[i].hash = Some(hash);
+        }
+        Err(e) => {
+            ledger.step(i, TxState::Failed, Some(e.to_string()), &actor, now_ms)?;
+            ledger.txs[i].error = Some(e.to_string());
+        }
+    }
+    let out = ledger.txs[i].clone();
+    save_ledger(vault, &ledger)?;
+    Ok(out)
+}
+
+/// The device refused or went away: Signing → Failed with its reason.
+pub fn abort_external(
+    vault: &mut EncryptedVault,
+    tx_id: &str,
+    reason: &str,
+    device_id: &str,
+    now_ms: i64,
+) -> Result<TxRecord> {
+    let mut ledger = load_ledger(vault)?;
+    let i = ledger.index(tx_id)?;
+    if ledger.txs[i].state != TxState::Signing {
+        return Err(invalid(
+            "this transaction is not waiting for a device signature",
+        ));
+    }
+    let note: String = reason
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(200)
+        .collect();
+    ledger.step(
+        i,
+        TxState::Failed,
+        Some(note.clone()),
+        &device_actor(device_id),
+        now_ms,
+    )?;
+    ledger.txs[i].error = Some(note);
     let out = ledger.txs[i].clone();
     save_ledger(vault, &ledger)?;
     Ok(out)
@@ -1016,6 +1207,87 @@ mod tests {
         )
         .unwrap();
         evaluate(v, id, "d", 3).unwrap()
+    }
+
+    #[test]
+    fn hardware_signatures_must_recover_to_the_registered_address() {
+        let mut v = vault();
+        let session = SessionProof::Passphrase(pw());
+        // The "device" holds the Hardhat key; the vault holds none for wallet "hw".
+        let device_key = provenance::signing_key(&v, "w", Curve::Secp256k1, PATH).unwrap();
+        hardware::register(&mut v, &session, "hw", PATH, ADDR).unwrap();
+        assert!(
+            hardware::register(&mut v, &session, "hw", PATH, TO).is_err(),
+            "no re-pointing"
+        );
+        let hw = Signer {
+            wallet_id: "hw".into(),
+            ..signer()
+        };
+        for (id, good) in [("ok", true), ("bad", false)] {
+            let mut i = intent(id, TO, "1000");
+            i.wallet_id = "hw".into();
+            propose(&mut v, i, "d", 1).unwrap();
+            attach(
+                &mut v,
+                id,
+                hw.clone(),
+                unsigned(TO, "1000"),
+                serde_json::json!({}),
+                true,
+                "d",
+                2,
+            )
+            .unwrap();
+            assert_eq!(
+                evaluate(&mut v, id, "d", 3).unwrap().state,
+                TxState::Awaiting
+            );
+            assert!(approve(&mut v, id, &pw(), "d", 4).is_err());
+            assert_eq!(
+                load_ledger(&v).unwrap().txs[load_ledger(&v).unwrap().index(id).unwrap()].state,
+                TxState::Awaiting
+            );
+            let (rec, payload) = begin_external(&mut v, id, &session, "d", 5).unwrap();
+            assert_eq!(rec.state, TxState::Signing);
+            let bytes = hex::decode(payload.trim_start_matches("0x")).unwrap();
+            assert_eq!(bytes[0], 0x02, "EIP-1559 typed payload");
+            let digest = evm::keccak256(&bytes);
+            let secret: [u8; 32] = if good {
+                *device_key.secret()
+            } else {
+                [7u8; 32]
+            };
+            let (y, r, sig_s) = evm::sign_digest(&secret, &digest).unwrap();
+            let done = complete_external(&mut v, id, y, &r, &sig_s, "d", 6).unwrap();
+            if good {
+                assert_eq!(done.state, TxState::Signed);
+                assert!(done.raw_signed_hex.unwrap().starts_with("0x02"));
+            } else {
+                assert_eq!(done.state, TxState::Failed);
+                assert!(done.error.unwrap().contains("the device signed as"));
+            }
+        }
+        // A hardware signer with no registration cannot even be attached.
+        let mut i = intent("stray", TO, "1");
+        i.wallet_id = "other".into();
+        propose(&mut v, i, "d", 1).unwrap();
+        let stray = Signer {
+            wallet_id: "other".into(),
+            ..signer()
+        };
+        assert!(attach(
+            &mut v,
+            "stray",
+            stray,
+            unsigned(TO, "1"),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        load_ledger(&v).unwrap().chain().unwrap().verify().unwrap();
     }
 
     #[test]

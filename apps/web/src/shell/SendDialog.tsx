@@ -79,6 +79,8 @@ function SendForm({
 
   const accounts = useMemo(() => {
     const single = new Set(state.wallets.filter((w) => w.kind === 'single').map((w) => w.id));
+    // A Ledger signs EVM transactions; its accounts send through the device.
+    for (const w of state.wallets) if (w.kind === 'hardware') single.add(w.id);
     return state.accounts.filter(
       (a) =>
         ((a.family === 'evm' && EVM_SIGNING_CHAINS.has(a.chainId)) ||

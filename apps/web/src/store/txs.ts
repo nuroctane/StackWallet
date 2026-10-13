@@ -33,6 +33,7 @@ import {
 
 import { vault } from '../core/bridge.js';
 import type { ProposedBy } from '../core/vault.js';
+import type { SessionProof } from '@stackwallet/core-client';
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 const activeSends = new Set<string>();
@@ -180,6 +181,44 @@ async function proposeIntent(
   });
   if (!attached.ok) return attached;
   return vault.txEvaluate(id);
+}
+
+/**
+ * Approve a hardware wallet's proposal: the core makes the signing-time
+ * checks and hands over the exact payload, the device signs it, and the core
+ * accepts the signature only if it recovers to the registered address.
+ */
+export async function approveWithDevice(
+  registry: ChainRegistry,
+  tx: TxRecord,
+  session: SessionProof,
+  device: {
+    signTransaction(path: string, payloadHex: string): Promise<{ v: number; r: string; s: string }>;
+  },
+): Promise<Result<TxRecord>> {
+  if (activeSends.has(tx.id))
+    return { ok: false, error: 'This transfer is already being approved' };
+  if (!tx.signer) return { ok: false, error: 'No signer recorded' };
+  activeSends.add(tx.id);
+  try {
+    const begun = await vault.txBeginExternal(tx.id, session);
+    if (!begun.ok) return begun;
+    if (begun.value.record.state !== 'signing') return { ok: true, value: begun.value.record };
+    let sig;
+    try {
+      sig = await device.signTransaction(tx.signer.path, begun.value.payloadHex);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await vault.txAbortExternal(tx.id, `device: ${reason}`);
+      return { ok: false, error: reason };
+    }
+    const signed = await vault.txCompleteExternal(tx.id, sig);
+    if (!signed.ok) return signed;
+    if (signed.value.state !== 'signed' || !signed.value.rawSignedHex) return signed;
+    return broadcastSaved(registry, signed.value);
+  } finally {
+    activeSends.delete(tx.id);
+  }
 }
 
 /**

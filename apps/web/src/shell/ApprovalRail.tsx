@@ -10,7 +10,9 @@ import { findChain } from '../lib/chains.js';
 import { decodeCalldata, isUnlimitedApproval, type DecodedCall } from '../lib/decode.js';
 import { formatUnits, relativeTime } from '../lib/format.js';
 import { useRegistry } from '../store/RegistryContext.js';
-import { approveAndSend } from '../store/txs.js';
+import { approveAndSend, approveWithDevice } from '../store/txs.js';
+import { useDirectory } from '../store/persist.js';
+import { LedgerEth } from '../hardware/ledger.js';
 import { tokenStore, useTokens } from '../store/tokens.js';
 import { AddressLabel, useLabeler } from './AddressLabel.js';
 import { useShell } from './ShellContext.js';
@@ -127,6 +129,7 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
   const [passphrase, setPassphrase] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
+  const directoryState = useDirectory();
   const i = tx.intent;
   const chain = findChain(registry, i.chainId);
   const sim = (tx.simulation ?? null) as Simulation | null;
@@ -140,10 +143,27 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
   const native = chain?.nativeAsset;
   const maxFee = evm ? BigInt(evm.maxFeePerGas) * BigInt(evm.gasLimit) : undefined;
 
+  const hardware = directoryState.wallets.find((w) => w.id === i.walletId)?.kind === 'hardware';
   const approve = async () => {
     setWorking(true);
     setError(null);
-    const r = await approveAndSend(registry, tx, passphrase);
+    let r;
+    if (hardware) {
+      // The browser only shows its device picker inside the click's own task.
+      let device: LedgerEth;
+      try {
+        device = await LedgerEth.request();
+      } catch (err) {
+        setWorking(false);
+        setError(err instanceof Error ? err.message : String(err));
+        return;
+      }
+      try {
+        r = await approveWithDevice(registry, tx, { kind: 'passphrase', passphrase }, device);
+      } finally {
+        void device.close().catch(() => undefined);
+      }
+    } else r = await approveAndSend(registry, tx, passphrase);
     setPassphrase('');
     setWorking(false);
     if (!r.ok) setError(r.error);
@@ -302,7 +322,13 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
                 : undefined
           }
         >
-          {working ? <LoadingWord label="signing" /> : 'Approve'}
+          {working ? (
+            <LoadingWord label={hardware ? 'confirm on the device' : 'signing'} />
+          ) : hardware ? (
+            'Approve on Ledger'
+          ) : (
+            'Approve'
+          )}
         </Button>
         <Button
           type="button"

@@ -172,6 +172,18 @@ class FakeVault implements VaultHandle {
   async importSet(): Promise<never> {
     throw new Error('not used');
   }
+  async hardwareRegister(): Promise<never> {
+    throw new Error('not used');
+  }
+  async txBeginExternal(): Promise<never> {
+    throw new Error('not used');
+  }
+  async txCompleteExternal(): Promise<never> {
+    throw new Error('not used');
+  }
+  async txAbortExternal(): Promise<never> {
+    throw new Error('not used');
+  }
   async appRecord() {
     return null;
   }

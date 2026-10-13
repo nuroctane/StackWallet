@@ -71,6 +71,14 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
             >
               + watch
             </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Add a Ledger: the key stays on the device"
+              onClick={() => shell.openDialog({ kind: 'hardwareWallet', folderId: folder.id })}
+            >
+              + Ledger
+            </Button>
             {folder.parentId === null && (
               <Button
                 size="sm"
