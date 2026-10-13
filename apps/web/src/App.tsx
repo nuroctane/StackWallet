@@ -28,6 +28,8 @@ import {
   TransferSetDialog,
   TransferWalletDialog,
 } from './shell/SetTransferDialogs.js';
+import { ReceiveDialog } from './shell/ReceiveDialog.js';
+import { AddAccountDialog } from './shell/AddAccountDialog.js';
 import { StatusBar } from './shell/StatusBar.js';
 import { ThemeStudio } from './shell/ThemeStudio.js';
 import { VaultDialog } from './shell/VaultDialog.js';
@@ -321,6 +323,16 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
         onClose={closeDialog}
       />
       <ImportSetDialog open={dialog?.kind === 'importSet'} onClose={closeDialog} />
+      <AddAccountDialog
+        open={dialog?.kind === 'addAccount'}
+        walletId={dialog?.kind === 'addAccount' ? dialog.walletId : undefined}
+        onClose={closeDialog}
+      />
+      <ReceiveDialog
+        open={dialog?.kind === 'receive'}
+        walletId={dialog?.kind === 'receive' ? dialog.walletId : undefined}
+        onClose={closeDialog}
+      />
       <SendDialog
         open={dialog?.kind === 'send'}
         accountId={dialog?.kind === 'send' ? dialog.accountId : undefined}

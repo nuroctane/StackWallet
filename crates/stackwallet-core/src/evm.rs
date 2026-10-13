@@ -268,6 +268,30 @@ pub fn erc20_transfer_data(to: &str, amount: &str) -> Result<Vec<u8>> {
     Ok(data)
 }
 
+/// EVM networks the core signs on. Mainnets stay disabled until the EVM
+/// support gates in `docs/SECURITY.md` pass, exactly as for the other families:
+/// a chain id here can never move funds of value.
+pub const SIGNING_TESTNETS: &[u64] = &[
+    11_155_111, // Sepolia
+    17_000,     // Holesky
+    560_048,    // Hoodi
+    84_532,     // Base Sepolia
+    11_155_420, // OP Sepolia
+    421_614,    // Arbitrum Sepolia
+    80_002,     // Polygon Amoy
+];
+
+/// Refuse any EVM chain that is not a known testnet.
+pub fn check_chain(chain_id: &str) -> Result<()> {
+    let n = eip155_number(chain_id)?;
+    if !SIGNING_TESTNETS.contains(&n) {
+        return Err(invalid(format!(
+            "EVM signing is enabled on testnets only; {chain_id} is not one"
+        )));
+    }
+    Ok(())
+}
+
 /// The numeric chain id of a CAIP-2 `eip155:<n>` id.
 pub fn eip155_number(chain_id: &str) -> Result<u64> {
     chain_id

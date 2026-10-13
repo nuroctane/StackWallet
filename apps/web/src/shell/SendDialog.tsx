@@ -14,7 +14,7 @@ import { Button, Dialog, Field, Input, LoadingWord, Select } from '@stackwallet/
 
 import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
-import { findChain } from '../lib/chains.js';
+import { EVM_SIGNING_CHAINS, findChain } from '../lib/chains.js';
 import { parseUnits } from '../lib/format.js';
 import { useDirectory } from '../store/persist.js';
 import { useRegistry } from '../store/RegistryContext.js';
@@ -81,7 +81,7 @@ function SendForm({
     const single = new Set(state.wallets.filter((w) => w.kind === 'single').map((w) => w.id));
     return state.accounts.filter(
       (a) =>
-        (a.family === 'evm' ||
+        ((a.family === 'evm' && EVM_SIGNING_CHAINS.has(a.chainId)) ||
           (a.family === 'solana' && a.chainId === SOLANA_DEVNET) ||
           (a.family === 'cosmos' && a.chainId === COSMOS_TESTNET) ||
           (a.family === 'bitcoin' && a.chainId === BITCOIN_SIGNET)) &&

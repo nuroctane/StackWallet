@@ -92,6 +92,14 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
           <Badge>{kindLabel(wallet)}</Badge>
           <WalletTags wallet={wallet} />
           <span className="flex-1" />
+          <Button
+            size="sm"
+            variant="ghost"
+            title="Show an address and its QR code"
+            onClick={() => shell.openDialog({ kind: 'receive', walletId: wallet.id })}
+          >
+            Receive…
+          </Button>
           {wallet.kind !== 'single' && (
             <Button
               size="sm"
@@ -149,6 +157,16 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
             <Button size="sm" variant="ghost" onClick={() => shell.openDialog({ kind: 'tokens' })}>
               Tokens…
             </Button>
+            {wallet.kind === 'single' && (
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Derive the next account on a chain from this wallet's phrase"
+                onClick={() => shell.openDialog({ kind: 'addAccount', walletId: wallet.id })}
+              >
+                + account
+              </Button>
+            )}
           </div>
         </header>
         {accounts.length === 0 ? (

@@ -79,6 +79,12 @@ export class DirectoryStore {
     return this.apply(sets.createKeyedWallet(this.state, input, this.ctx));
   }
 
+  addKeyedAccount(
+    input: { walletId: string; label?: string } & sets.KeyedAccountInput,
+  ): ActionResult<string> {
+    return this.apply(sets.addKeyedAccount(this.state, input, this.ctx));
+  }
+
   /** Merge a set that arrived from another device under the root folder. */
   importSet(payload: unknown, setFolderId: string): ActionResult<string> {
     return this.apply(sets.importPayload(this.state, payload, setFolderId, this.ctx));

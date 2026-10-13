@@ -81,3 +81,11 @@ export function explorerTxUrl(info: ChainInfo, hash: string): string | undefined
   const url = info.explorerTxUrl.replace('{hash}', encodeURIComponent(hash));
   return url.startsWith('https://') ? url : undefined;
 }
+
+/**
+ * EVM networks the core signs on (mirror of `evm::SIGNING_TESTNETS`). The
+ * core refuses every other chain id; the UI only offers these.
+ */
+export const EVM_SIGNING_CHAINS: ReadonlySet<string> = new Set(
+  [11155111, 17000, 560048, 84532, 11155420, 421614, 80002].map((n) => `eip155:${n}`),
+);

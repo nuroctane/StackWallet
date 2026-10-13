@@ -325,7 +325,7 @@ pub fn propose(
     } else if intent.chain_id.0.starts_with("bip122:") {
         bitcoin::check_chain(&intent.chain_id.0)?;
     } else {
-        evm::eip155_number(&intent.chain_id.0)?;
+        evm::check_chain(&intent.chain_id.0)?;
     }
     let mut ledger = load_ledger(vault)?;
     if ledger.txs.iter().any(|t| t.id == intent.id) {
@@ -1002,6 +1002,23 @@ mod tests {
         )
         .unwrap();
         evaluate(v, id, "d", 3).unwrap()
+    }
+
+    #[test]
+    fn evm_mainnets_are_refused_at_proposal() {
+        let mut v = vault();
+        for chain in ["eip155:1", "eip155:8453", "eip155:137"] {
+            let mut i = intent(chain, TO, "1");
+            i.chain_id = ChainId(chain.into());
+            i.kind = TxIntentKind::Transfer {
+                to: TO.into(),
+                asset: AssetRef(format!("{chain}:native")),
+                amount: Amount("1".into()),
+            };
+            let err = propose(&mut v, i, "d", 1).unwrap_err();
+            assert!(err.to_string().contains("testnets only"), "{chain}: {err}");
+        }
+        assert!(load_ledger(&v).unwrap().txs.is_empty());
     }
 
     fn solana_awaiting(v: &mut EncryptedVault, id: &str) -> TxRecord {

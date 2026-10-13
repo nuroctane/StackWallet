@@ -296,6 +296,51 @@ export interface KeyedAccountInput {
   publicKeyHex: string;
 }
 
+/** Another account derived from a `single` wallet's sealed key (next index on a chain). */
+export function addKeyedAccount(
+  state: DirectoryState,
+  input: { walletId: string; label?: string } & KeyedAccountInput,
+  ctx: ReducerContext,
+): Outcome<string> {
+  const wallet = state.wallets.find((w) => w.id === input.walletId);
+  if (!wallet) return fail('Wallet not found');
+  if (wallet.kind !== 'single') return fail('Only single-key wallets derive more accounts');
+  const chain = ChainId.safeParse(input.chainId);
+  const family = chain.success ? chainFamilyOf(chain.data) : null;
+  if (!chain.success || !family) return fail(`Unsupported chain ${input.chainId}`);
+  if (
+    state.accounts.some(
+      (a) =>
+        a.walletId === input.walletId &&
+        a.chainId === chain.data &&
+        (a.derivationPath === input.derivationPath || a.address === input.address),
+    )
+  )
+    return fail('This account is already in the wallet');
+  const label = input.label?.trim().slice(0, 40);
+  const account: Account = {
+    id: ctx.newId(),
+    walletId: input.walletId,
+    family,
+    chainId: chain.data,
+    address: input.address,
+    derivationPath: input.derivationPath,
+    publicKeyHex: input.publicKeyHex,
+    ...(label ? { label } : {}),
+    hidden: false,
+  };
+  const t = ctx.now();
+  return {
+    ok: true,
+    state: {
+      ...state,
+      wallets: state.wallets.map((w) => (w.id === wallet.id ? { ...w, updatedAtMs: t } : w)),
+      accounts: [...state.accounts, account],
+    },
+    value: account.id,
+  };
+}
+
 /** A `single` wallet whose key the core already sealed under `walletId`. */
 export function createKeyedWallet(
   state: DirectoryState,
