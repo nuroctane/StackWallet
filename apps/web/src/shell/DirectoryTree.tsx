@@ -6,7 +6,7 @@ import { directory, useDirectory } from '../store/persist.js';
 import type { DirectoryState } from '../store/schema.js';
 import { flattenTree, kindLabel, walletFamilies, type TreeRow } from '../store/selectors.js';
 import { useShell } from './ShellContext.js';
-import { SetTags, WalletTags } from './ProvenanceTags.js';
+import { SetTags, UserTags, WalletTags } from './ProvenanceTags.js';
 import { WalletName } from './WalletName.js';
 
 export function DirectoryTree() {
@@ -322,6 +322,7 @@ function Row({
         </span>
       )}
 
+      {!renaming && wallet && <UserTags wallet={wallet} compact max={3} />}
       {!renaming && wallet && <WalletTags wallet={wallet} compact />}
       {!renaming && row.kind === 'folder' && <SetTags folderId={row.id} />}
 

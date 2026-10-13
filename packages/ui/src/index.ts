@@ -92,3 +92,13 @@ export {
 } from './theme/tokens.js';
 export { NUR_PRESETS, type NurPalette, type NurPreset } from './theme/nurPresets.js';
 export { applyTheme, readToken, useThemeEpoch } from './theme/apply.js';
+export {
+  SECURITY_GLYPHS,
+  SecurityGlyph,
+  TAG_ICON_GLYPHS,
+  TAG_ICON_IDS,
+  TagIcon,
+  isTagIconId,
+  type SecurityGlyphId,
+  type TagIconId,
+} from './TagIcon.js';

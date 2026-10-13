@@ -4,6 +4,7 @@ import { Button } from '@stackwallet/ui';
 import { vault } from '../../core/bridge.js';
 import { useVaultView } from '../../core/vault.js';
 import { walletTags } from '../../store/provenance.js';
+import { useWalletApprovals } from '../../store/approvals.js';
 import { useShell } from '../ShellContext.js';
 import { TagChips } from '../ProvenanceTags.js';
 
@@ -14,7 +15,7 @@ import { TagChips } from '../ProvenanceTags.js';
 export function KeysSection({ wallet }: { wallet: Wallet }) {
   const shell = useShell();
   const { status, provenance } = useVaultView(vault);
-  const tags = walletTags(provenance, wallet);
+  const tags = walletTags(provenance, wallet, useWalletApprovals(wallet.id));
   const p = provenance.wallets.find((w) => w.walletId === wallet.id);
   return (
     <section className="sw-elevated flex min-w-0 flex-col overflow-hidden">

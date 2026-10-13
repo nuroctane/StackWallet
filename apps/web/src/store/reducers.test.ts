@@ -204,6 +204,86 @@ describe('setWalletTags', () => {
   });
 });
 
+describe('user tag definitions', () => {
+  it('refuses tags that would impersonate a security tag', () => {
+    const { s, ctx, w } = seeded();
+    for (const word of [
+      'exposed',
+      'exported',
+      'Imported',
+      'approvals',
+      'local',
+      'no-backup',
+      'safe',
+    ])
+      expect(expectFail(r.setWalletTags(s, w, [word.toLowerCase()], ctx))).toMatch(/security tag/);
+    expect(expectFail(r.resolveTagInput(s, 'Open Approvals', ctx))).toMatch(/security tag/);
+    expect(expectFail(r.upsertTagDef(s, { id: 'cold', label: 'E x p o s e d' }, ctx))).toMatch(
+      /security tag/,
+    );
+    // A legacy wallet that already carries such a word may keep it (and drop it).
+    const legacy = {
+      ...s,
+      wallets: s.wallets.map((x) => (x.id === w ? { ...x, tags: ['local'] } : x)),
+    };
+    expect(expectOk(r.setWalletTags(legacy, w, ['local', 'cold'], ctx)).ok).toBe(true);
+    expect(expectOk(r.setWalletTags(legacy, w, [], ctx)).ok).toBe(true);
+  });
+
+  it('turns typed names into ids and keeps the nomenclature', () => {
+    const { s, ctx } = seeded();
+    const typed = expectOk(r.resolveTagInput(s, 'Cold Storage', ctx));
+    expect(typed.value).toBe('cold-storage');
+    expect(typed.state.tagDefs).toMatchObject([
+      { id: 'cold-storage', label: 'Cold Storage', icon: null },
+    ]);
+    // Typing the name again finds the same tag, however it is spelled.
+    expect(expectOk(r.resolveTagInput(typed.state, 'cold storage', ctx)).value).toBe(
+      'cold-storage',
+    );
+    const plain = expectOk(r.resolveTagInput(s, 'defi', ctx));
+    expect(plain.value).toBe('defi');
+    expect(plain.state).toBe(s);
+    expect(expectFail(r.resolveTagInput(s, '  ', ctx))).toMatch(/Type a tag/);
+    expect(expectFail(r.resolveTagInput(s, '✦✦', ctx))).toMatch(/letter or digit/);
+  });
+
+  it('customises colour, icon and name, and refuses danger and duplicates', () => {
+    const { s, ctx } = seeded();
+    const a = expectOk(
+      r.upsertTagDef(s, { id: 'cold', label: 'Cold', color: 'warm', icon: 'snow' }, ctx),
+    );
+    expect(a.value).toMatchObject({ id: 'cold', label: 'Cold', color: 'warm', icon: 'snow' });
+    const b = expectOk(
+      r.upsertTagDef(
+        a.state,
+        { id: 'cold', label: 'Deep cold', color: '#A0C4FF', icon: 'moon' },
+        ctx,
+      ),
+    );
+    expect(b.state.tagDefs).toHaveLength(1);
+    expect(b.value).toMatchObject({ label: 'Deep cold', color: '#a0c4ff', icon: 'moon' });
+    expect(
+      expectFail(r.upsertTagDef(b.state, { id: 'cold', label: 'x', color: 'danger' }, ctx)),
+    ).toMatch(/colour/);
+    expect(
+      expectFail(r.upsertTagDef(b.state, { id: 'cold', label: 'x', icon: 'lock' }, ctx)),
+    ).toMatch(/icon/);
+    expect(expectFail(r.upsertTagDef(b.state, { id: 'hot', label: 'deep COLD' }, ctx))).toMatch(
+      /already called/,
+    );
+    expect(expectFail(r.upsertTagDef(b.state, { id: 'cold', label: '' }, ctx))).toMatch(/1–24/);
+    const reset = expectOk(r.resetTagDef(b.state, 'cold'));
+    expect(reset.state.tagDefs).toEqual([]);
+  });
+
+  it('parses old directories without tag definitions', () => {
+    const { s } = seeded();
+    const { tagDefs: _drop, ...old } = s;
+    expect(DirectoryState.parse(old).tagDefs).toEqual([]);
+  });
+});
+
 describe('ui reducers', () => {
   it('toggles expansion only for real folders', () => {
     const seed = seeded();

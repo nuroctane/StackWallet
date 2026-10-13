@@ -7,13 +7,15 @@ import { explorerAddressUrl, FAMILY_LABEL, findChain } from '../../lib/chains.js
 import { formatUnits, relativeTime } from '../../lib/format.js';
 import { useBalances, type BalanceEntry } from '../../store/balances.js';
 import { directory } from '../../store/persist.js';
-import { MAX_TAG_LENGTH, MAX_TAGS } from '../../store/reducers.js';
 import { useRegistry } from '../../store/RegistryContext.js';
 import type { DirectoryState } from '../../store/schema.js';
 import { accountsOf, kindLabel, pathTo } from '../../store/selectors.js';
 import { Breadcrumb } from '../Breadcrumb.js';
 import { isTypingTarget, useShell } from '../ShellContext.js';
 import { WalletTags } from '../ProvenanceTags.js';
+import { TagEditor } from '../TagEditor.js';
+import { useScanApprovals } from '../../store/approvals.js';
+import { ApprovalsSection } from './ApprovalsSection.js';
 import { nameTitle, useWalletLabel } from '../WalletName.js';
 import { KeysSection } from './KeysSection.js';
 import { CollectiblesGrid } from './CollectiblesGrid.js';
@@ -32,6 +34,7 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
   const [renaming, setRenaming] = useState(false);
   const now = useNow(CLOCK_TICK_MS);
   const label = useWalletLabel(wallet);
+  useScanApprovals(wallet.id);
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -173,6 +176,8 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
       </section>
 
       {wallet.kind === 'single' && <KeysSection wallet={wallet} />}
+
+      <ApprovalsSection accounts={accounts} />
 
       <TransactionsSection wallet={wallet} />
 
@@ -412,80 +417,6 @@ function Verified({
     >
       mismatch
     </span>
-  );
-}
-
-function TagEditor({ wallet }: { wallet: Wallet }) {
-  const toasts = useToasts();
-  const [draft, setDraft] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-  const full = wallet.tags.length >= MAX_TAGS;
-
-  const report = (result: { ok: boolean; error?: string }) => {
-    if (!result.ok && result.error) toasts.push(result.error, 'danger');
-  };
-
-  const add = () => {
-    const tag = draft.trim();
-    if (tag === '') return;
-    const result = directory.addTag(wallet.id, tag);
-    report(result);
-    if (result.ok) setDraft('');
-  };
-
-  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' || e.key === ',') {
-      e.preventDefault();
-      add();
-    } else if (e.key === 'Backspace' && draft === '') {
-      const last = wallet.tags[wallet.tags.length - 1];
-      if (last) report(directory.removeTag(wallet.id, last));
-    } else if (e.key === 'Escape') {
-      setDraft('');
-    }
-  };
-
-  return (
-    <div
-      role="group"
-      aria-label="Tags"
-      className="flex min-h-7 flex-wrap items-center gap-1.5"
-      onClick={() => inputRef.current?.focus()}
-    >
-      {wallet.tags.map((t) => (
-        <span
-          key={t}
-          className="inline-flex h-5 items-center gap-1 rounded-sw-sm border border-edge pl-1.5 text-[10px] font-medium tracking-[0.08em] text-ok uppercase"
-        >
-          {t}
-          <button
-            type="button"
-            aria-label={`Remove tag ${t}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              report(directory.removeTag(wallet.id, t));
-            }}
-            className="sw-pressable flex h-5 w-5 items-center justify-center rounded-sw-sm text-faint hover:text-ink"
-          >
-            ×
-          </button>
-        </span>
-      ))}
-      <input
-        ref={inputRef}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={onKeyDown}
-        onBlur={add}
-        disabled={full}
-        maxLength={MAX_TAG_LENGTH}
-        placeholder={full ? `${MAX_TAGS} tags max` : wallet.tags.length === 0 ? 'add tag' : '+'}
-        aria-label="Add tag"
-        spellCheck={false}
-        autoComplete="off"
-        className="h-5 min-w-[6ch] flex-1 basis-[6ch] bg-transparent px-1 font-mono text-[11px] text-muted outline-none placeholder:text-faint disabled:cursor-not-allowed"
-      />
-    </div>
   );
 }
 

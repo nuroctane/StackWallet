@@ -7,6 +7,14 @@ import {
 } from '@stackwallet/core-client';
 
 import type { DirectoryState } from './schema.js';
+import {
+  MAX_TAG_DEFS,
+  MAX_TAG_LABEL,
+  TagDef,
+  foldTagWord,
+  isReservedTagWord,
+  slugifyTag,
+} from './tagDefs.js';
 
 export const ROOT_FOLDER_NAME = 'Wallets';
 
@@ -39,6 +47,7 @@ export function emptyState(ctx: ReducerContext): DirectoryState {
     ],
     wallets: [],
     accounts: [],
+    tagDefs: [],
     ui: { expandedFolderIds: [], selectedId: null },
   };
 }
@@ -266,6 +275,7 @@ export function setWalletTags(
   for (const tag of clean) {
     if (tag.length > MAX_TAG_LENGTH) return fail(`Tag "${tag}" is too long`);
     if (!TAG_PATTERN.test(tag)) return fail('Tags may use letters, digits and dashes only');
+    if (!wallet.tags.includes(tag) && isReservedTagWord(tag)) return fail(reservedMessage(tag));
   }
   if (clean.length === wallet.tags.length && clean.every((t, i) => t === wallet.tags[i])) {
     return ok(state, undefined);
@@ -280,6 +290,85 @@ export function setWalletTags(
     },
     undefined,
   );
+}
+
+function reservedMessage(word: string): string {
+  return `"${word}" is a security tag; StackWallet sets it from the key and chain history, never by hand`;
+}
+
+/**
+ * Create or edit the look of one user tag. The id never changes once tags
+ * point at it; renaming edits the label, so every wallet follows along.
+ */
+export function upsertTagDef(
+  state: DirectoryState,
+  input: { id: string; label: string; color?: unknown; icon?: unknown },
+  ctx: ReducerContext,
+): Outcome<TagDef> {
+  const parsed = TagDef.safeParse({ ...input, updatedAtMs: ctx.now() });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    if (issue?.path[0] === 'label') return fail(`Tag names are 1–${MAX_TAG_LABEL} characters`);
+    if (issue?.path[0] === 'color') return fail('Pick a theme colour or a #rrggbb colour');
+    if (issue?.path[0] === 'icon') return fail('Pick one of the tag icons');
+    return fail('Tags may use letters, digits and dashes only');
+  }
+  const def = parsed.data;
+  const existing = state.tagDefs.find((d) => d.id === def.id);
+  if (isReservedTagWord(def.label)) return fail(reservedMessage(def.label));
+  if (isReservedTagWord(def.id)) return fail(reservedMessage(def.id));
+  const clash = state.tagDefs.find(
+    (d) => d.id !== def.id && foldTagWord(d.label) === foldTagWord(def.label),
+  );
+  if (clash) return fail(`Another tag is already called "${clash.label}"`);
+  if (!existing && state.tagDefs.length >= MAX_TAG_DEFS)
+    return fail(`At most ${MAX_TAG_DEFS} custom tags`);
+  if (
+    existing &&
+    existing.label === def.label &&
+    existing.color === def.color &&
+    existing.icon === def.icon
+  )
+    return ok(state, existing);
+  return ok(
+    {
+      ...state,
+      tagDefs: existing
+        ? state.tagDefs.map((d) => (d.id === def.id ? def : d))
+        : [...state.tagDefs, def],
+    },
+    def,
+  );
+}
+
+/** Forget a tag's custom look; wallets keep the tag and it falls back to the default style. */
+export function resetTagDef(state: DirectoryState, id: string): Outcome {
+  if (!state.tagDefs.some((d) => d.id === id)) return ok(state, undefined);
+  return ok({ ...state, tagDefs: state.tagDefs.filter((d) => d.id !== id) }, undefined);
+}
+
+/**
+ * Turn what the user typed into a tag id: an existing tag whose name or id
+ * matches, otherwise a new slug. A name that a slug cannot spell (spaces,
+ * capitals, accents) gets a definition so the nomenclature survives.
+ */
+export function resolveTagInput(
+  state: DirectoryState,
+  typed: string,
+  ctx: ReducerContext,
+): Outcome<string> {
+  const text = typed.trim();
+  if (text === '') return fail('Type a tag name');
+  const folded = foldTagWord(text);
+  const known = state.tagDefs.find((d) => foldTagWord(d.label) === folded || d.id === text);
+  if (known) return ok(state, known.id);
+  if (isReservedTagWord(text)) return fail(reservedMessage(text));
+  const id = slugifyTag(text);
+  if (id === '') return fail('Tag names need at least one letter or digit');
+  const used = state.tagDefs.some((d) => d.id === id);
+  if (used || text === id) return ok(state, id);
+  const made = upsertTagDef(state, { id, label: text.slice(0, MAX_TAG_LABEL) }, ctx);
+  return made.ok ? ok(made.state, id) : made;
 }
 
 export interface WatchWalletInput {

@@ -54,10 +54,27 @@ describe('provenance tags', () => {
     expect(kinds('local')).toEqual(['local']);
     expect(kinds('exposed')).toEqual(['exposed']);
     expect(kinds('arrived')).toEqual(['exposed', 'imported']);
-    expect(kinds('sent')).toEqual(['copied']);
+    expect(kinds('sent')).toEqual(['exported']);
     expect(kinds('unknown')).toEqual(['local']);
     expect(kinds('unknown', 'watch')).toEqual([]);
     expect(walletTags(table, { id: 'arrived', kind: 'single' })[1]?.detail).toContain('phone');
+  });
+
+  it('adds a locked approvals tag for open allowances on any wallet kind', () => {
+    const tags = walletTags(
+      table,
+      { id: 'unknown', kind: 'watch' },
+      { tokens: 2, collectibles: 1 },
+    );
+    expect(tags.map((t) => t.kind)).toEqual(['approvals']);
+    expect(tags[0]!.label).toBe('approvals 3');
+    expect(tags[0]!.detail).toContain('2 token allowances and 1 collectible approval');
+    expect(kinds('unknown', 'watch')).toEqual([]);
+    expect(
+      walletTags(table, { id: 'local', kind: 'single' }, { tokens: 0, collectibles: 0 }).map(
+        (t) => t.kind,
+      ),
+    ).toEqual(['local']);
   });
 
   it('tags whole sets', () => {

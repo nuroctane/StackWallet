@@ -32,6 +32,7 @@ import { directoryQuarantinedKey, useDirectory } from './store/persist.js';
 import { RegistryContext, useRegistry } from './store/RegistryContext.js';
 import { applyRpcSettings, rpcSettings, rpcSettingsQuarantinedKey } from './store/rpcSettings.js';
 import { collectiblesStore } from './store/collectibles.js';
+import { approvalsStore } from './store/approvals.js';
 import { namesStore } from './store/names.js';
 import { themeQuarantinedKey } from './store/theme.js';
 import { ThemeApplier } from './store/ThemeApplier.js';
@@ -61,6 +62,7 @@ function buildRegistry(): { registry: ChainRegistry; error?: string } {
     applyRpcSettings(registry, rpcSettings.getSnapshot());
     namesStore.configure(registry);
     collectiblesStore.configure(registry);
+    approvalsStore.configure(registry);
     return { registry };
   } catch (err) {
     return {

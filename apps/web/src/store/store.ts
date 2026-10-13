@@ -1,6 +1,7 @@
 import * as r from './reducers.js';
 import * as sets from './sets.js';
 import type { DirectoryState } from './schema.js';
+import type { TagDef } from './tagDefs.js';
 
 export type ActionResult<T = undefined> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -90,10 +91,32 @@ export class DirectoryStore {
     return this.apply(r.setWalletTags(this.state, walletId, tags, this.ctx));
   }
 
-  addTag(walletId: string, tag: string): ActionResult {
+  /** Add a tag by id or by any name the user types; new names get their own definition. */
+  addTag(walletId: string, typed: string): ActionResult {
     const wallet = this.state.wallets.find((w) => w.id === walletId);
     if (!wallet) return { ok: false, error: 'Wallet not found' };
-    return this.setWalletTags(walletId, [...wallet.tags, tag]);
+    const resolved = r.resolveTagInput(this.state, typed, this.ctx);
+    if (!resolved.ok) return resolved;
+    const tagged = r.setWalletTags(
+      resolved.state,
+      walletId,
+      [...wallet.tags, resolved.value],
+      this.ctx,
+    );
+    return this.apply(tagged);
+  }
+
+  upsertTagDef(input: {
+    id: string;
+    label: string;
+    color?: unknown;
+    icon?: unknown;
+  }): ActionResult<TagDef> {
+    return this.apply(r.upsertTagDef(this.state, input, this.ctx));
+  }
+
+  resetTagDef(id: string): ActionResult {
+    return this.apply(r.resetTagDef(this.state, id));
   }
 
   removeTag(walletId: string, tag: string): ActionResult {
