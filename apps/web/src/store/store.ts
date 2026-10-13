@@ -2,6 +2,7 @@ import * as r from './reducers.js';
 import * as sets from './sets.js';
 import type { DirectoryState } from './schema.js';
 import type { TagDef } from './tagDefs.js';
+import { adoptLayoutDirectory, type AdoptResult } from './layoutBundle.js';
 
 export type ActionResult<T = undefined> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -81,6 +82,11 @@ export class DirectoryStore {
   /** Merge a set that arrived from another device under the root folder. */
   importSet(payload: unknown, setFolderId: string): ActionResult<string> {
     return this.apply(sets.importPayload(this.state, payload, setFolderId, this.ctx));
+  }
+
+  /** Watch-only wallets and folders a layout points at; see `layoutBundle.ts`. */
+  adoptLayoutDirectory(raw: unknown): ActionResult<AdoptResult> {
+    return this.apply(adoptLayoutDirectory(this.state, raw, this.ctx));
   }
 
   deleteWallet(walletId: string): ActionResult {

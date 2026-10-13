@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
 
-import { Chip, Popover } from '@stackwallet/ui';
+import { Button, Chip, Popover, useToasts } from '@stackwallet/ui';
 
 import { isTypingTarget } from '../shell/ShellContext.js';
+import { directory } from '../store/persist.js';
+import { exportLayoutBundle, importLayoutBundle } from './layoutTransfer.js';
 import { useWorkspace, workspace } from './persist.js';
 
 interface Menu {
@@ -22,6 +24,8 @@ export function LayoutTabs() {
   const { layouts, activeId } = useWorkspace();
   const [menu, setMenu] = useState<Menu | null>(null);
   const [rename, setRename] = useState<Rename | null>(null);
+  const [importAnchor, setImportAnchor] = useState<HTMLElement | null>(null);
+  const toasts = useToasts();
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -57,9 +61,14 @@ export function LayoutTabs() {
   };
 
   const exportLayout = (id: string) => {
-    const data = workspace.exportLayout(id);
+    const data = exportLayoutBundle(workspace, directory, id);
     if (data && typeof navigator !== 'undefined' && navigator.clipboard) {
-      void navigator.clipboard.writeText(JSON.stringify(data, null, 2)).catch(() => undefined);
+      void navigator.clipboard
+        .writeText(JSON.stringify(data, null, 2))
+        .then(() =>
+          toasts.push('Layout copied: wallets travel as watch-only addresses, no keys, no tags'),
+        )
+        .catch(() => toasts.push('Clipboard unavailable', 'danger'));
     }
     setMenu(null);
   };
@@ -126,6 +135,18 @@ export function LayoutTabs() {
       >
         +
       </button>
+      <button
+        type="button"
+        className="sw-pressable inline-flex h-5 flex-none items-center justify-center rounded-sw-sm px-1.5 text-[11px] text-faint hover:text-ink"
+        aria-label="import layout"
+        title="import a layout from JSON"
+        aria-haspopup="dialog"
+        aria-expanded={importAnchor !== null}
+        onClick={(e) => setImportAnchor(importAnchor ? null : e.currentTarget)}
+      >
+        import
+      </button>
+      <ImportLayoutPopover anchor={importAnchor} onClose={() => setImportAnchor(null)} />
 
       <Popover
         anchor={menu?.anchor ?? null}
@@ -149,7 +170,12 @@ export function LayoutTabs() {
             >
               duplicate
             </button>
-            <button type="button" className={menuItem} onClick={() => exportLayout(menu.id)}>
+            <button
+              type="button"
+              className={menuItem}
+              title="copies JSON: panes plus their wallets as watch-only addresses"
+              onClick={() => exportLayout(menu.id)}
+            >
               export
             </button>
             <button
@@ -167,5 +193,69 @@ export function LayoutTabs() {
         )}
       </Popover>
     </div>
+  );
+}
+
+function ImportLayoutPopover({
+  anchor,
+  onClose,
+}: {
+  anchor: HTMLElement | null;
+  onClose: () => void;
+}) {
+  const toasts = useToasts();
+  const [text, setText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const submit = () => {
+    const r = importLayoutBundle(workspace, directory, text);
+    if (!r.ok) {
+      setError(r.error);
+      return;
+    }
+    const v = r.value;
+    const parts = [
+      v.createdWallets > 0 &&
+        `${v.createdWallets} watch-only wallet${v.createdWallets === 1 ? '' : 's'} added`,
+      v.matchedWallets > 0 && `${v.matchedWallets} matched to wallets already here`,
+      v.unresolved > 0 && `${v.unresolved} pane${v.unresolved === 1 ? '' : 's'} need a wallet`,
+    ].filter(Boolean);
+    toasts.push(`Layout imported${parts.length ? `: ${parts.join(', ')}` : ''}`);
+    setText('');
+    setError(null);
+    onClose();
+  };
+  return (
+    <Popover
+      anchor={anchor}
+      open={anchor !== null}
+      onClose={onClose}
+      label="import layout"
+      width="w-[320px]"
+    >
+      <div className="flex flex-col gap-2 p-2 text-[12px]">
+        <textarea
+          value={text}
+          autoFocus
+          onChange={(e) => setText(e.target.value)}
+          spellCheck={false}
+          aria-label="layout json"
+          placeholder='{ "stackwalletLayout": 2, … }'
+          className="h-28 resize-none rounded-sw-sm border border-edge bg-paper p-2 font-mono text-[10px] text-ink outline-none focus:border-edge-strong"
+        />
+        <p className="text-[11px] text-faint">
+          Wallets in a layout arrive watch-only (or match wallets already here by address). Keys
+          only come over the gated wallet or directory export.
+        </p>
+        {error && <p className="text-[11px] text-danger">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button size="sm" variant="primary" disabled={!text.trim()} onClick={submit}>
+            Import
+          </Button>
+        </div>
+      </div>
+    </Popover>
   );
 }

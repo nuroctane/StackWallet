@@ -14,6 +14,7 @@ import { kindLabel, pathTo } from '../store/selectors.js';
 import { useShell } from '../shell/ShellContext.js';
 import { ELEMENT_KINDS, registry } from './elements/registry.js';
 import { workspace, useWorkspace } from './persist.js';
+import { exportLayoutBundle } from './layoutTransfer.js';
 import type { ElementKind } from './schema.js';
 
 export type ResultType = 'action' | 'element' | 'layout' | 'wallet' | 'folder' | 'device' | 'chain';
@@ -230,7 +231,7 @@ function SearchBody({
         label: 'copy layout json',
         dim: 'clipboard',
         run: () => {
-          const data = workspace.exportLayout();
+          const data = exportLayoutBundle(workspace, directory);
           if (data) void navigator.clipboard.writeText(JSON.stringify(data)).catch(() => undefined);
         },
       },

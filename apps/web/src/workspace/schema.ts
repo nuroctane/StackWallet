@@ -75,10 +75,15 @@ export type WorkspaceState = z.infer<typeof WorkspaceState>;
 export const PaneConfig = Pane.pick({ kind: true, props: true, w: true, h: true, collapsed: true });
 export type PaneConfig = z.infer<typeof PaneConfig>;
 
-/** Portable form of a layout for export/import through the clipboard. */
+/**
+ * Portable form of a layout for export/import through the clipboard. Version 2
+ * adds `directory`: the watch-only view of the wallets and folders the panes
+ * point at (validated by `store/layoutBundle.ts`). No keys, no key history.
+ */
 export const LayoutExport = z.object({
-  stackwalletLayout: z.literal(1),
+  stackwalletLayout: z.union([z.literal(1), z.literal(2)]),
   name: Layout.shape.name,
   panes: PaneConfig.extend({ x: Pane.shape.x, y: Pane.shape.y }).array().max(MAX_PANES_PER_LAYOUT),
+  directory: z.unknown().optional(),
 });
 export type LayoutExport = z.infer<typeof LayoutExport>;
