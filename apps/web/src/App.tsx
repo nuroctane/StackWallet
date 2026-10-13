@@ -35,6 +35,8 @@ import { SignMessageDialog } from './shell/SignMessageDialog.js';
 import { HardwareWalletDialog } from './shell/HardwareWalletDialog.js';
 import { NftSendDialog } from './shell/NftSendDialog.js';
 import { StakeDialog, SwapDialog } from './shell/TradeDialogs.js';
+import { WalletConnectDialog, WalletConnectNotifier } from './shell/WalletConnectDialog.js';
+import { walletConnect } from './walletconnect/client.js';
 import { StatusBar } from './shell/StatusBar.js';
 import { ThemeStudio } from './shell/ThemeStudio.js';
 import { VaultDialog } from './shell/VaultDialog.js';
@@ -92,6 +94,7 @@ export function App() {
     const unconfigure = tokenStore.configure(registry);
     const unsubscribe = tokenStore.subscribe(() => balanceCache.invalidate());
     const stopAutomations = startAutomations(registry);
+    void walletConnect.start(registry);
     return () => {
       unconfigure();
       unsubscribe();
@@ -237,6 +240,8 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
   }, []);
 
   const closeDialog = useCallback(() => setDialog(null), []);
+  // A dapp's request opens its dialog unless the user is already in another one.
+  const openWalletConnect = useCallback(() => setDialog((d) => d ?? { kind: 'walletConnect' }), []);
   const deleteTarget =
     dialog?.kind === 'deleteWallet'
       ? { kind: 'wallet' as const, id: dialog.walletId }
@@ -358,6 +363,8 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
         onClose={closeDialog}
       />
       <ContactsDialog open={dialog?.kind === 'contacts'} onClose={closeDialog} />
+      <WalletConnectDialog open={dialog?.kind === 'walletConnect'} onClose={closeDialog} />
+      <WalletConnectNotifier onOpen={openWalletConnect} />
       <AddAccountDialog
         open={dialog?.kind === 'addAccount'}
         walletId={dialog?.kind === 'addAccount' ? dialog.walletId : undefined}

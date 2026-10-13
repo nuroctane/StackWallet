@@ -102,12 +102,23 @@ export async function proposeSend(
  */
 export async function proposeContractCall(
   registry: ChainRegistry,
-  req: { account: Account; to: string; dataHex: string; value?: string; replace?: ReplaceOptions },
+  req: {
+    account: Account;
+    to: string;
+    dataHex: string;
+    value?: string;
+    replace?: ReplaceOptions;
+    untrustedDestinations?: string[];
+  },
 ): Promise<Result<TxRecord>> {
   if (req.account.family !== 'evm') return { ok: false, error: 'Contract calls are EVM only' };
   return proposeIntent(
     registry,
-    { account: req.account, ...(req.replace ? { replace: req.replace } : {}) },
+    {
+      account: req.account,
+      ...(req.replace ? { replace: req.replace } : {}),
+      ...(req.untrustedDestinations ? { untrustedDestinations: req.untrustedDestinations } : {}),
+    },
     { kind: 'contractCall', to: req.to, dataHex: req.dataHex, value: req.value ?? '0' },
   );
 }

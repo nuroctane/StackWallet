@@ -99,6 +99,16 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
                 Contacts…
               </Button>
             )}
+            {folder.parentId === null && (
+              <Button
+                size="sm"
+                variant="ghost"
+                title="Connect dapps over WalletConnect; off until you add your own project id"
+                onClick={() => shell.openDialog({ kind: 'walletConnect' })}
+              >
+                Dapps…
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"

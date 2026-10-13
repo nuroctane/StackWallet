@@ -17,6 +17,7 @@ export type ShellDialog =
   | { kind: 'receive'; walletId: string }
   | { kind: 'addAccount'; walletId: string }
   | { kind: 'contacts' }
+  | { kind: 'walletConnect' }
   | { kind: 'signMessage'; walletId: string }
   | { kind: 'swap'; walletId: string }
   | { kind: 'stake'; walletId: string }

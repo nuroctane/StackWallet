@@ -34,7 +34,7 @@ export function SignMessageDialog({
   );
 }
 
-function typedSummary(text: string): string | null {
+export function typedSummary(text: string): string | null {
   try {
     const d = JSON.parse(text) as { primaryType?: unknown; domain?: Record<string, unknown> };
     const primary = typeof d.primaryType === 'string' ? d.primaryType : '?';

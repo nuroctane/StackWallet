@@ -177,6 +177,13 @@ function SearchBody({
         run: () => shell.openDialog({ kind: 'hardwareWallet' }),
       },
       {
+        id: 'a:walletconnect',
+        type: 'action',
+        label: 'walletconnect',
+        dim: 'connect a dapp',
+        run: () => shell.openDialog({ kind: 'walletConnect' }),
+      },
+      {
         id: 'a:contacts',
         type: 'action',
         label: 'contacts',

@@ -10,6 +10,7 @@ import {
   type Quote,
 } from '@stackwallet/chains-evm';
 import {
+  COSMOS_TESTNET,
   listDelegations,
   listValidators,
   type CosmosAdapter,
@@ -386,7 +387,7 @@ function StakeForm({ walletId, onClose }: { walletId: string; onClose: () => voi
   const registry = useRegistry();
   const ids = { account: useId(), action: useId(), validator: useId(), amount: useId() };
   const accounts = accountsOf(state, walletId).filter(
-    (a) => a.family === 'cosmos' && a.derivationPath,
+    (a) => a.chainId === COSMOS_TESTNET && a.derivationPath,
   );
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '');
   const account = accounts.find((a) => a.id === accountId) ?? accounts[0];
@@ -548,5 +549,5 @@ export function canSwap(accounts: readonly Account[]): boolean {
   return accounts.some((a) => a.family === 'evm' && a.derivationPath && swapRoute(a.chainId));
 }
 export function canStake(accounts: readonly Account[]): boolean {
-  return accounts.some((a) => a.family === 'cosmos' && a.derivationPath);
+  return accounts.some((a) => a.chainId === COSMOS_TESTNET && a.derivationPath);
 }
