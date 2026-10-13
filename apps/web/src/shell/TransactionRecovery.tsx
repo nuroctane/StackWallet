@@ -4,7 +4,8 @@ import { Button, Input } from '@stackwallet/ui';
 import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
 import { useRegistry } from '../store/RegistryContext.js';
-import { retryBroadcast } from '../store/txs.js';
+import { useDirectory } from '../store/persist.js';
+import { proposeReplacement, retryBroadcast } from '../store/txs.js';
 
 export function TransactionRecovery({ tx }: { tx: TxRecord }) {
   const registry = useRegistry();
@@ -13,8 +14,30 @@ export function TransactionRecovery({ tx }: { tx: TxRecord }) {
   const [passphrase, setPassphrase] = useState('');
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState('');
+  const { accounts } = useDirectory();
   if (!['signed', 'broadcast', 'pending'].includes(tx.state) || !tx.hash || !tx.rawSignedHex)
     return null;
+  const account = accounts.find((a) => a.id === tx.intent.accountId);
+  const replaceable =
+    account?.family === 'evm' &&
+    ['broadcast', 'pending'].includes(tx.state) &&
+    tx.unsigned !== null &&
+    tx.unsigned !== undefined &&
+    'maxFeePerGas' in tx.unsigned;
+  const replace = async (mode: 'speedUp' | 'cancel') => {
+    if (!account) return;
+    setWorking(true);
+    setMessage('');
+    const r = await proposeReplacement(registry, tx, account, mode);
+    setWorking(false);
+    setMessage(
+      !r.ok
+        ? r.error
+        : r.value.state === 'awaiting'
+          ? `${mode === 'cancel' ? 'Cancel' : 'Speed-up'} proposed at the same nonce with higher fees; approve it in the queue.`
+          : 'The replacement was denied by policy.',
+    );
+  };
   const retry = async () => {
     setWorking(true);
     setMessage('');
@@ -100,6 +123,28 @@ export function TransactionRecovery({ tx }: { tx: TxRecord }) {
         >
           Retry original broadcast…
         </Button>
+      )}
+      {replaceable && (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={working || view.busy || view.status.kind !== 'unlocked'}
+            title="Same transaction, same nonce, fees raised by at least 12.5%"
+            onClick={() => void replace('speedUp')}
+          >
+            Speed up…
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={working || view.busy || view.status.kind !== 'unlocked'}
+            title="A zero-value transfer to yourself at the same nonce; if it lands first, the original never will"
+            onClick={() => void replace('cancel')}
+          >
+            Cancel transaction…
+          </Button>
+        </div>
       )}
       {message && (
         <p role="status" className="break-words text-muted">

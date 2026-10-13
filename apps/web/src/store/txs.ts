@@ -301,6 +301,97 @@ async function broadcastSaved(
   }
 }
 
+function evmUnsigned(t: TxRecord) {
+  const u = t.unsigned;
+  return u && 'maxFeePerGas' in u && 'nonce' in u ? u : null;
+}
+
+/**
+ * Replace a stuck EVM transaction: the same intent with higher fees (speed
+ * up), or a zero-value transfer to the sender itself (cancel). Either is a new
+ * proposal at the same nonce, checked by the core and approved like any other;
+ * whichever the chain includes first settles both.
+ */
+export async function proposeReplacement(
+  registry: ChainRegistry,
+  tx: TxRecord,
+  account: Account,
+  mode: 'speedUp' | 'cancel',
+): Promise<Result<TxRecord>> {
+  const u = evmUnsigned(tx);
+  if (!u || account.family !== 'evm')
+    return { ok: false, error: 'Only EVM transactions can be replaced' };
+  if (!['broadcast', 'pending'].includes(tx.state))
+    return { ok: false, error: 'Only a sent, unconfirmed transaction can be replaced' };
+  const replace = {
+    nonce: u.nonce,
+    maxFeePerGas: BigInt(u.maxFeePerGas),
+    maxPriorityFeePerGas: BigInt(u.maxPriorityFeePerGas),
+  };
+  const i = tx.intent;
+  if (mode === 'cancel')
+    return proposeIntent(
+      registry,
+      { account, replace },
+      {
+        kind: 'transfer',
+        to: account.address,
+        asset: `${i.chainId}:native`,
+        amount: '0',
+      },
+    );
+  if (i.kind === 'transfer')
+    return proposeIntent(
+      registry,
+      { account, replace },
+      {
+        kind: 'transfer',
+        to: i.to,
+        asset: i.asset,
+        amount: i.amount,
+      },
+    );
+  if (i.kind === 'contractCall')
+    return proposeIntent(
+      registry,
+      { account, replace },
+      {
+        kind: 'contractCall',
+        to: i.to,
+        dataHex: i.dataHex,
+        value: i.value,
+      },
+    );
+  return { ok: false, error: 'This transaction kind cannot be sped up' };
+}
+
+/**
+ * Once one EVM transaction at a nonce confirms, every other one from the
+ * same account at that nonce can never land: earlier ones were replaced,
+ * later replacements were dropped.
+ */
+async function settleNonceSiblings(confirmed: TxRecord, txs: readonly TxRecord[]): Promise<void> {
+  const u = evmUnsigned(confirmed);
+  if (!u) return;
+  for (const t of txs) {
+    const o = evmUnsigned(t);
+    if (
+      t.id === confirmed.id ||
+      !o ||
+      o.nonce !== u.nonce ||
+      t.intent.accountId !== confirmed.intent.accountId ||
+      t.intent.chainId !== confirmed.intent.chainId ||
+      t.state !== 'pending'
+    )
+      continue;
+    await vault.txReport(
+      t.id,
+      t.createdAtMs < confirmed.createdAtMs ? 'replaced' : 'dropped',
+      `nonce ${u.nonce} was used by ${confirmed.hash ?? confirmed.id}`,
+    );
+  }
+}
+
 /** Ask the chain about every pending transaction and record final outcomes. */
 export async function pollPending(
   registry: ChainRegistry,
@@ -345,7 +436,8 @@ export async function pollPending(
                 )
               : await registry.adapterFor(t.intent.chainId).status(t.hash, t.intent.chainId);
         if (status.state === 'confirmed') {
-          await vault.txReport(t.id, 'confirmed', `block ${status.blockNumber}`);
+          const done = await vault.txReport(t.id, 'confirmed', `block ${status.blockNumber}`);
+          if (done.ok) await settleNonceSiblings(done.value, txs);
         } else if (status.state === 'failed') {
           await vault.txReport(t.id, 'failed', status.reason ?? 'reverted');
         } else if (status.state === 'expired') {

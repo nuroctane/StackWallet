@@ -522,3 +522,79 @@ describe('SOL core lifecycle orchestration', () => {
     expect(mocks.txReport.mock.calls.map((args) => args[1])).toEqual(['broadcast', 'pending']);
   });
 });
+
+describe('EVM replacement', () => {
+  const evmChain = 'eip155:11155111';
+  const evmAccount = {
+    id: 'a',
+    walletId: 'w',
+    family: 'evm',
+    chainId: evmChain,
+    address: '0x1111111111111111111111111111111111111111',
+    derivationPath: "m/44'/60'/0'/0/0",
+    publicKeyHex: '02',
+    hidden: false,
+  } as Account;
+  const stuck = {
+    ...tx,
+    state: 'pending' as const,
+    hash: '0xabc',
+    rawSignedHex: '0x01',
+    intent: {
+      ...tx.intent,
+      chainId: evmChain,
+      to: '0x2222222222222222222222222222222222222222',
+      asset: `${evmChain}:native`,
+    },
+    unsigned: {
+      chainId: 11155111,
+      nonce: 7,
+      maxPriorityFeePerGas: '100',
+      maxFeePerGas: '1000',
+      gasLimit: 21000,
+      to: '0x2222222222222222222222222222222222222222',
+      value: '1000',
+      dataHex: '',
+    },
+  } as TxRecord;
+
+  it('proposes a cancel at the same nonce with bumped fees', async () => {
+    mocks.txPropose.mockResolvedValue({ ok: true, value: { ...stuck, id: 'r' } });
+    mocks.prepareEvm.mockResolvedValue({ unsigned: stuck.unsigned, simulation: { ok: true } });
+    mocks.txAttach.mockResolvedValue({ ok: true, value: stuck });
+    mocks.txEvaluate.mockResolvedValue({ ok: true, value: { ...stuck, state: 'awaiting' } });
+    const { proposeReplacement } = await import('./txs.js');
+    const r = await proposeReplacement(
+      { adapterFor: () => ({ family: 'evm' }) } as unknown as ChainRegistry,
+      stuck,
+      evmAccount,
+      'cancel',
+    );
+    expect(r.ok).toBe(true);
+    const intent = mocks.txPropose.mock.calls[0]![0];
+    expect(intent).toMatchObject({ kind: 'transfer', to: evmAccount.address, amount: '0' });
+    expect(mocks.prepareEvm.mock.calls[0]![3]).toEqual({
+      nonce: 7,
+      maxFeePerGas: 1000n,
+      maxPriorityFeePerGas: 100n,
+    });
+  });
+
+  it('marks the other transaction at a nonce replaced once one confirms', async () => {
+    const replacement = { ...stuck, id: 'r', hash: '0xdef', createdAtMs: 5 };
+    mocks.txReport.mockImplementation(async (id: string, state: TxRecord['state']) => ({
+      ok: true,
+      value: { ...(id === 'r' ? replacement : stuck), state },
+    }));
+    const registry = {
+      adapterFor: () => ({
+        status: async (h: string) =>
+          h === '0xdef' ? { state: 'confirmed', blockNumber: 9 } : { state: 'pending' },
+      }),
+    } as unknown as ChainRegistry;
+    await pollPending(registry, [stuck, replacement]);
+    const reports = mocks.txReport.mock.calls.map((c) => [c[0], c[1]]);
+    expect(reports).toContainEqual(['r', 'confirmed']);
+    expect(reports).toContainEqual(['t', 'replaced']);
+  });
+});
