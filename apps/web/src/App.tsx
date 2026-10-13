@@ -31,6 +31,7 @@ import {
 import { ReceiveDialog } from './shell/ReceiveDialog.js';
 import { AddAccountDialog } from './shell/AddAccountDialog.js';
 import { ContactsDialog } from './shell/ContactsDialog.js';
+import { SignMessageDialog } from './shell/SignMessageDialog.js';
 import { NftSendDialog } from './shell/NftSendDialog.js';
 import { StatusBar } from './shell/StatusBar.js';
 import { ThemeStudio } from './shell/ThemeStudio.js';
@@ -328,6 +329,11 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       <NftSendDialog
         open={dialog?.kind === 'sendNft'}
         target={dialog?.kind === 'sendNft' ? dialog : undefined}
+        onClose={closeDialog}
+      />
+      <SignMessageDialog
+        open={dialog?.kind === 'signMessage'}
+        walletId={dialog?.kind === 'signMessage' ? dialog.walletId : undefined}
         onClose={closeDialog}
       />
       <ContactsDialog open={dialog?.kind === 'contacts'} onClose={closeDialog} />

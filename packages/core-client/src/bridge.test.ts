@@ -199,6 +199,21 @@ describe.skipIf(!built)('wasm bridge against the built core', () => {
     const exposures = (await v.provenance()).wallets[0]?.exposures ?? [];
     expect(exposures.map((e) => e.channel)).toEqual(['clipboard']);
 
+    const message = await v.signMessage({
+      walletId: 'dev',
+      path: "m/44'/60'/0'/0/0",
+      address: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266',
+      session,
+      kind: 'personal',
+      payload: 'hello world',
+      deviceId: 'd',
+      nowMs: 4,
+    });
+    expect(message.digestHex).toBe(
+      '0xd9eba16ed0ecae432b71fe008c98cc872bb4cc214d3220a36f365326cf807d68',
+    );
+    expect((await v.ledger()).audit.at(-1)?.event).toBe('messageSigned');
+
     await v.createSingle('fresh', 4);
     const sol = await v.singlePublicKey('fresh', 'ed25519', "m/44'/501'/0'/0'");
     expect(sol).toMatch(/^[0-9a-f]{64}$/);

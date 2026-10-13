@@ -172,6 +172,9 @@ class FakeVault implements VaultHandle {
   async importSet(): Promise<never> {
     throw new Error('not used');
   }
+  async signMessage(): Promise<never> {
+    throw new Error('not used');
+  }
   async verifySession(session: SessionProof) {
     if (session.kind !== 'passphrase' || session.passphrase !== this.pass)
       throw new Error('wrong passphrase');

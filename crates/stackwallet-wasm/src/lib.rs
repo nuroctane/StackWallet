@@ -401,6 +401,42 @@ impl WasmVault {
             .map_err(core_err)
     }
 
+    /// Sign an EIP-191 message (`kind = "personal"`) or EIP-712 typed data
+    /// (`"typedData"`, testnet domains only); audited. Returns `SignedMessage` JSON.
+    #[allow(clippy::too_many_arguments)]
+    pub fn sign_message(
+        &mut self,
+        wallet_id: &str,
+        path: &str,
+        address: &str,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        kind: &str,
+        payload: &str,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let kind: stackwallet_core::message::MessageKind =
+            serde_json::from_value(serde_json::Value::String(kind.into()))?;
+        let session = session_from(session_slot, session_secret, session_device);
+        let signed = stackwallet_core::message::sign_message(
+            &mut self.inner,
+            stackwallet_core::message::MessageRequest {
+                wallet_id,
+                path,
+                address,
+                session: &session,
+                kind,
+                payload,
+                device_id,
+                now_ms: now_ms as i64,
+            },
+        )
+        .map_err(core_err)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
     /// Device-local unlock methods (`SlotInfo[]` JSON). Readable while locked.
     pub fn slots_json(&self) -> Result<String, JsError> {
         Ok(serde_json::to_string(&self.inner.slots())?)

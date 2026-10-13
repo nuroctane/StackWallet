@@ -83,6 +83,13 @@ pub enum AuditEvent {
     GrantChanged {
         grant_id: String,
     },
+    /// An off-chain signature (EIP-191 or EIP-712) left the vault.
+    MessageSigned {
+        wallet_id: String,
+        address: String,
+        kind: String,
+        digest_hex: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

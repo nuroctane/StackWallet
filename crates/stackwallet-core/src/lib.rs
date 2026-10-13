@@ -27,6 +27,7 @@ pub mod identity;
 pub mod intent;
 pub mod ledger;
 pub mod lifecycle;
+pub mod message;
 pub mod model;
 pub mod policy;
 pub mod provenance;

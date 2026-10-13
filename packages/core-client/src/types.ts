@@ -640,6 +640,16 @@ export type SessionProof =
   | { kind: 'passphrase'; passphrase: string }
   | { kind: 'slot'; slotId: string; secret: Uint8Array; device?: Uint8Array };
 
+export const MessageKind = z.enum(['personal', 'typedData']);
+export type MessageKind = z.infer<typeof MessageKind>;
+
+export const SignedMessage = z.object({
+  address: z.string(),
+  digestHex: z.string().regex(/^0x[0-9a-f]{64}$/),
+  signatureHex: z.string().regex(/^0x[0-9a-f]{130}$/),
+});
+export type SignedMessage = z.infer<typeof SignedMessage>;
+
 export const ExportKeyScope = z.enum(['folder', 'wallet']);
 export type ExportKeyScope = z.infer<typeof ExportKeyScope>;
 

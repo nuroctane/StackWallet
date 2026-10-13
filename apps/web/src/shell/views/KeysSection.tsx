@@ -69,6 +69,15 @@ export function KeysSection({ wallet }: { wallet: Wallet }) {
             size="sm"
             variant="ghost"
             disabled={status.kind !== 'unlocked'}
+            title="Sign a text message or EIP-712 typed data with this wallet's EVM key"
+            onClick={() => shell.openDialog({ kind: 'signMessage', walletId: wallet.id })}
+          >
+            Sign message…
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={status.kind !== 'unlocked'}
             title="The key every export of this wallet needs, with its directory's key and a fresh sign-in"
             onClick={() => shell.openDialog({ kind: 'exportKey', scope: 'wallet', id: wallet.id })}
           >

@@ -686,6 +686,20 @@ pub fn report(
 }
 
 /// Replace the policy set; each added, changed or removed policy is audited.
+/// Append one event that belongs to no transaction (a signed message).
+pub fn append_audit(
+    vault: &mut EncryptedVault,
+    now_ms: i64,
+    actor: Actor,
+    event: AuditEvent,
+) -> Result<()> {
+    let mut ledger = load_ledger(vault)?;
+    let mut chain = ledger.chain()?;
+    chain.append(now_ms, actor, event);
+    ledger.audit = chain.entries().to_vec();
+    save_ledger(vault, &ledger)
+}
+
 pub fn set_policies(
     vault: &mut EncryptedVault,
     policies: Vec<Policy>,

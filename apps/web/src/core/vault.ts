@@ -25,6 +25,7 @@ import {
   type Revealed,
   type RevealedSecret,
   type SessionProof,
+  type SignedMessage,
   type Signer,
   type SlotInfo,
   type TxIntent,
@@ -576,6 +577,27 @@ export class VaultStore {
     const slot = this.view.slots.find((s) => s.id === choice.slotId && s.kind === 'passkey');
     if (!slot?.credentialId) throw new Error('That passkey is not set on this device');
     return { kind: 'slot', slotId: slot.id, secret: await passkeySecret(slot.credentialId) };
+  }
+
+  /** Sign a message from a single wallet's EVM key; the core audits it before returning. */
+  signMessage(req: {
+    walletId: string;
+    path: string;
+    address: string;
+    session: SessionProof;
+    kind: 'personal' | 'typedData';
+    payload: string;
+  }): Promise<{ ok: true; value: SignedMessage } | { ok: false; error: string }> {
+    return this.guardedValue(async () => {
+      const out = await this.unlockedVault().signMessage({
+        ...req,
+        deviceId: this.deviceId(),
+        nowMs: this.now(),
+      });
+      await this.persist();
+      await this.refreshLedger();
+      return out;
+    });
   }
 
   /** Set or change the export key of a directory or a wallet. */

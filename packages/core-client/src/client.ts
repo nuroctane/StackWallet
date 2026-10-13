@@ -23,6 +23,8 @@ import {
   ExportKeyScope,
   SlotInfo,
   SlotKind,
+  MessageKind,
+  SignedMessage,
   type ExportGateInput,
   type SessionProof,
   Hex32,
@@ -139,6 +141,17 @@ export interface VaultHandle {
     bundle: string,
     nowMs: number,
   ): Promise<ImportedSet>;
+  /** EIP-191 or EIP-712 (testnet domains) signature from a single wallet's EVM key; audited. */
+  signMessage(req: {
+    walletId: string;
+    path: string;
+    address: string;
+    session: SessionProof;
+    kind: MessageKind;
+    payload: string;
+    deviceId: string;
+    nowMs: number;
+  }): Promise<SignedMessage>;
   /** Step-up check; `allowPin` stays false for anything that takes material out. */
   verifySession(session: SessionProof, allowPin: boolean): Promise<void>;
   /** Device-local unlock methods; readable while locked. */
@@ -324,6 +337,18 @@ export interface WasmVaultObject {
     sessionSecret: Uint8Array,
     sessionDevice: Uint8Array | undefined,
     bundle: string,
+    nowMs: number,
+  ): string;
+  sign_message(
+    walletId: string,
+    path: string,
+    address: string,
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    kind: string,
+    payload: string,
+    deviceId: string,
     nowMs: number,
   ): string;
   verify_session(
@@ -571,6 +596,34 @@ class WasmVaultHandle implements VaultHandle {
       JSON.stringify(req.walletIds),
       JSON.stringify(req.directory),
       req.nowMs,
+    );
+  }
+  async signMessage(req: {
+    walletId: string;
+    path: string;
+    address: string;
+    session: SessionProof;
+    kind: MessageKind;
+    payload: string;
+    deviceId: string;
+    nowMs: number;
+  }) {
+    const [slot, secret, device] = sessionArgs(req.session);
+    return SignedMessage.parse(
+      JSON.parse(
+        this.raw.sign_message(
+          req.walletId,
+          req.path,
+          req.address,
+          slot,
+          secret,
+          device,
+          MessageKind.parse(req.kind),
+          req.payload,
+          req.deviceId,
+          req.nowMs,
+        ),
+      ),
     );
   }
   async verifySession(session: SessionProof, allowPin: boolean) {
