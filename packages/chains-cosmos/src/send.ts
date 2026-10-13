@@ -3,6 +3,8 @@ import type { Simulation, TxStatus } from '@stackwallet/chains';
 import { CosmosTx, type TxIntent } from '@stackwallet/core-client';
 import { Any } from 'cosmjs-types/google/protobuf/any';
 import { MsgSend } from 'cosmjs-types/cosmos/bank/v1beta1/tx';
+import { MsgDelegate, MsgUndelegate } from 'cosmjs-types/cosmos/staking/v1beta1/tx';
+import { MsgWithdrawDelegatorReward } from 'cosmjs-types/cosmos/distribution/v1beta1/tx';
 import { PubKey } from 'cosmjs-types/cosmos/crypto/secp256k1/keys';
 import { BaseAccount } from 'cosmjs-types/cosmos/auth/v1beta1/auth';
 import { AuthInfo, SignDoc, TxBody, TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx';
@@ -94,33 +96,57 @@ export function cosmosBodyAuth(input: CosmosTx): {
   authInfoBytes: Uint8Array;
 } {
   const tx = CosmosTx.parse(input);
+  const msg = tx.msg ?? 'send';
   if (
     !isValidCosmosAddress(tx.from, 'osmo') ||
-    !isValidCosmosAddress(tx.to, 'osmo') ||
+    !isValidCosmosAddress(tx.to, msg === 'send' ? 'osmo' : 'osmovaloper') ||
     tx.from !== tx.from.toLowerCase() ||
     tx.to !== tx.to.toLowerCase() ||
     tx.from === tx.to
   )
     throw new Error('Invalid canonical Osmosis sender or recipient');
   for (const value of [tx.amount, tx.accountNumber, tx.sequence, tx.feeAmount]) Uint64.parse(value);
-  if (BigInt(tx.amount) === 0n || BigInt(tx.feeAmount) === 0n || BigInt(tx.feeAmount) > 1_000_000n)
+  if (
+    (msg === 'withdrawRewards' ? tx.amount !== '0' : BigInt(tx.amount) === 0n) ||
+    BigInt(tx.feeAmount) === 0n ||
+    BigInt(tx.feeAmount) > 1_000_000n
+  )
     throw new Error('Amount or fee out of bounds');
   const publicBytes = Uint8Array.from(tx.publicKeyHex.match(/../g)!, (b) => parseInt(b, 16));
   if (encodeCosmosAddress('osmo', cosmosAccountBytes(publicBytes, 'secp256k1')) !== tx.from)
     throw new Error('Public key differs from sender');
-  const msg = MsgSend.fromPartial({
-    fromAddress: tx.from,
-    toAddress: tx.to,
-    amount: [{ denom: 'uosmo', amount: tx.amount }],
-  });
+  const coin = { denom: 'uosmo', amount: tx.amount };
+  const stake = { delegatorAddress: tx.from, validatorAddress: tx.to, amount: coin };
+  const message =
+    msg === 'send'
+      ? {
+          typeUrl: '/cosmos.bank.v1beta1.MsgSend',
+          value: MsgSend.encode(
+            MsgSend.fromPartial({ fromAddress: tx.from, toAddress: tx.to, amount: [coin] }),
+          ).finish(),
+        }
+      : msg === 'delegate'
+        ? {
+            typeUrl: '/cosmos.staking.v1beta1.MsgDelegate',
+            value: MsgDelegate.encode(MsgDelegate.fromPartial(stake)).finish(),
+          }
+        : msg === 'undelegate'
+          ? {
+              typeUrl: '/cosmos.staking.v1beta1.MsgUndelegate',
+              value: MsgUndelegate.encode(MsgUndelegate.fromPartial(stake)).finish(),
+            }
+          : {
+              typeUrl: '/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward',
+              value: MsgWithdrawDelegatorReward.encode(
+                MsgWithdrawDelegatorReward.fromPartial({
+                  delegatorAddress: tx.from,
+                  validatorAddress: tx.to,
+                }),
+              ).finish(),
+            };
   const bodyBytes = TxBody.encode(
     TxBody.fromPartial({
-      messages: [
-        Any.fromPartial({
-          typeUrl: '/cosmos.bank.v1beta1.MsgSend',
-          value: MsgSend.encode(msg).finish(),
-        }),
-      ],
+      messages: [Any.fromPartial(message)],
       timeoutHeight: BigInt(tx.timeoutHeight),
     }),
   ).finish();
@@ -161,12 +187,31 @@ export async function prepareCosmos(
   from: string,
   publicKeyHex: string,
 ): Promise<{ unsigned: CosmosTx; simulation: Simulation }> {
-  if (
-    intent.chainId !== COSMOS_TESTNET ||
-    intent.kind !== 'transfer' ||
-    intent.asset !== `${COSMOS_TESTNET}:native`
-  )
-    throw new Error('Only native transfers on Osmosis Testnet are enabled');
+  const native = `${COSMOS_TESTNET}:native`;
+  const shape =
+    intent.kind === 'transfer'
+      ? { msg: 'send' as const, to: intent.to, amount: intent.amount, asset: intent.asset }
+      : intent.kind === 'stake'
+        ? {
+            msg: 'delegate' as const,
+            to: intent.validator,
+            amount: intent.amount,
+            asset: intent.asset,
+          }
+        : intent.kind === 'unstake'
+          ? {
+              msg: 'undelegate' as const,
+              to: intent.validator,
+              amount: intent.amount,
+              asset: intent.asset,
+            }
+          : intent.kind === 'claim' && intent.validator
+            ? { msg: 'withdrawRewards' as const, to: intent.validator, amount: '0', asset: native }
+            : null;
+  if (intent.chainId !== COSMOS_TESTNET || !shape || shape.asset !== native)
+    throw new Error('Only native transfers and staking on Osmosis Testnet are enabled');
+  // Only a delegation spends the balance; undelegating and claiming pay just the fee.
+  const spends = shape.msg === 'send' || shape.msg === 'delegate' ? BigInt(shape.amount) : 0n;
   return adapter.withChain(intent.chainId, async (lcd) => {
     const latest = await lcd('/cosmos/base/tendermint/v1beta1/blocks/latest', Latest);
     const account = await lcd(`/cosmos/auth/v1beta1/accounts/${encodeURIComponent(from)}`, Account);
@@ -180,10 +225,11 @@ export async function prepareCosmos(
     )
       throw new Error('LCD account differs from sender key');
     let unsigned = CosmosTx.parse({
+      ...(shape.msg === 'send' ? {} : { msg: shape.msg }),
       chainId: intent.chainId,
       from,
-      to: intent.to,
-      amount: intent.amount,
+      to: shape.to,
+      amount: shape.amount,
       publicKeyHex,
       accountNumber: account.account.account_number,
       sequence: account.account.sequence,
@@ -220,17 +266,17 @@ export async function prepareCosmos(
       Balance,
     );
     if (!balance) throw new Error('Balance endpoint unavailable');
-    if (BigInt(balance.balance?.amount ?? '0') < BigInt(intent.amount) + BigInt(unsigned.feeAmount))
-      error ??= 'Balance does not cover the transfer and fee';
+    if (BigInt(balance.balance?.amount ?? '0') < spends + BigInt(unsigned.feeAmount))
+      error ??= 'Balance does not cover the amount and fee';
     return {
       unsigned,
       simulation: {
         ok: error === undefined,
         assetDeltas: [
-          { assetRef: intent.asset, amount: `-${intent.amount}` },
-          { assetRef: intent.asset, amount: `-${unsigned.feeAmount}` },
+          ...(spends > 0n ? [{ assetRef: native, amount: `-${spends}` }] : []),
+          { assetRef: native, amount: `-${unsigned.feeAmount}` },
         ],
-        fee: { assetRef: intent.asset, amount: unsigned.feeAmount },
+        fee: { assetRef: native, amount: unsigned.feeAmount },
         warnings: [],
         ...(error ? { error } : {}),
       },

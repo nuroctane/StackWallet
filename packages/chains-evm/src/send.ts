@@ -16,6 +16,7 @@ import type { EvmTx, TxIntent } from '@stackwallet/core-client';
 import { z } from 'zod';
 
 import { isValidEvmAddress, type EvmAdapter } from './evm.js';
+import { encodeExactInputSingle, feeOfAggregator, swapRoute } from './swap.js';
 
 const Hex = z
   .string()
@@ -53,7 +54,7 @@ export interface CallShape {
 }
 
 /** The on-chain call an intent becomes; the core performs the same mapping to check it. */
-export function callFor(intent: TxIntent): CallShape {
+export function callFor(intent: TxIntent, from?: string): CallShape {
   if (intent.kind === 'transfer') {
     const amount = BigInt(intent.amount);
     const token = erc20Of(intent.asset, intent.chainId);
@@ -81,6 +82,29 @@ export function callFor(intent: TxIntent): CallShape {
       value: BigInt(intent.value),
       data: intent.dataHex.startsWith('0x') ? intent.dataHex : `0x${intent.dataHex}`,
       delta: { assetRef: `${intent.chainId}:native`, amount: `-${intent.value}` },
+    };
+  }
+  if (intent.kind === 'swap') {
+    const route = swapRoute(intent.chainId);
+    if (!route) throw new TypeError(`no swap router is known on ${intent.chainId}`);
+    if (!from) throw new TypeError('a swap needs the account it pays out to');
+    const native = intent.sell === `${intent.chainId}:native`;
+    const tokenIn = native ? route.weth : erc20Of(intent.sell, intent.chainId);
+    const tokenOut = erc20Of(intent.buy, intent.chainId);
+    if (!tokenIn || !tokenOut) throw new TypeError('a swap sells ether or a token for a token');
+    const amountIn = BigInt(intent.sellAmount);
+    return {
+      to: route.router,
+      value: native ? amountIn : 0n,
+      data: encodeExactInputSingle({
+        tokenIn,
+        tokenOut,
+        fee: feeOfAggregator(intent.aggregator),
+        recipient: from,
+        amountIn,
+        minOut: BigInt(intent.minBuyAmount),
+      }),
+      delta: { assetRef: intent.sell, amount: `-${intent.sellAmount}` },
     };
   }
   throw new TypeError(`${intent.kind} has no EVM form yet`);
@@ -139,7 +163,7 @@ export async function prepareEvm(
 ): Promise<Prepared> {
   const chainId = intent.chainId;
   const chainNum = Number(chainId.split(':')[1]);
-  const call = callFor(intent);
+  const call = callFor(intent, from);
   const rpc = <T>(method: string, params: unknown[], schema: z.ZodType<T>) =>
     adapter.call(chainId, method, params, schema);
 
@@ -195,7 +219,11 @@ export async function prepareEvm(
     },
     simulation: {
       ok: error === undefined,
-      assetDeltas: [call.delta, { assetRef: `${chainId}:native`, amount: `-${expectedFee}` }],
+      assetDeltas: [
+        call.delta,
+        ...(intent.kind === 'swap' ? [{ assetRef: intent.buy, amount: intent.minBuyAmount }] : []),
+        { assetRef: `${chainId}:native`, amount: `-${expectedFee}` },
+      ],
       fee: { assetRef: `${chainId}:native`, amount: expectedFee.toString() },
       warnings,
       ...(error ? { error } : {}),

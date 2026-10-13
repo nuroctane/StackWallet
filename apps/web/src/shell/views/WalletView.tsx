@@ -18,6 +18,7 @@ import { useScanApprovals } from '../../store/approvals.js';
 import { ApprovalsSection } from './ApprovalsSection.js';
 import { nameTitle, useWalletLabel } from '../WalletName.js';
 import { KeysSection } from './KeysSection.js';
+import { canStake, canSwap } from '../TradeDialogs.js';
 import { CollectiblesGrid } from './CollectiblesGrid.js';
 import { NamesSection } from './NamesSection.js';
 import { TransactionsSection } from './TransactionsSection.js';
@@ -100,6 +101,26 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
           >
             Receive…
           </Button>
+          {canSwap(accounts) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Swap through Uniswap v3; the core checks router, recipient and floor"
+              onClick={() => shell.openDialog({ kind: 'swap', walletId: wallet.id })}
+            >
+              Swap…
+            </Button>
+          )}
+          {canStake(accounts) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Delegate, undelegate or claim rewards"
+              onClick={() => shell.openDialog({ kind: 'stake', walletId: wallet.id })}
+            >
+              Stake…
+            </Button>
+          )}
           {wallet.kind !== 'single' && (
             <Button
               size="sm"

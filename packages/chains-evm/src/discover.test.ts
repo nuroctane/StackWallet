@@ -14,7 +14,7 @@ describe('token discovery', () => {
       {
         token: {
           address_hash: T.replace('a', 'b'),
-          symbol: 'FREE‮GIFT',
+          symbol: 'FREE\u202eGIFT',
           decimals: '18',
           type: 'ERC-20',
           reputation: 'scam',

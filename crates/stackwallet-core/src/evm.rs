@@ -359,9 +359,168 @@ pub fn check_matches_intent(tx: &EvmTx, intent: &TxIntent) -> Result<()> {
                 return Err(invalid("value differs from the intent"));
             }
         }
+        TxIntentKind::Swap {
+            sell,
+            sell_amount,
+            buy,
+            min_buy_amount,
+            max_slippage_bps,
+            aggregator,
+        } => {
+            let swap = parse_swap(&data, aggregator)?;
+            let route = swap_route(&intent.chain_id.0)?;
+            if !same_address(&tx.to, route.router)? {
+                return Err(invalid("a swap must go to the known router for this chain"));
+            }
+            if *max_slippage_bps > 5_000 {
+                return Err(invalid("slippage above 50% is refused"));
+            }
+            let weth = parse_address(route.weth)?;
+            let native = format!("{}:native", intent.chain_id.0);
+            let token_in = if sell.0 == native {
+                if value != decimal_to_be(&sell_amount.0)? {
+                    return Err(invalid("value must equal the native amount sold"));
+                }
+                weth
+            } else {
+                if !value.is_empty() {
+                    return Err(invalid("a token sale sends no native value"));
+                }
+                let t = erc20_of(&sell.0, &intent.chain_id.0)
+                    .ok_or_else(|| invalid(format!("unsupported asset {}", sell.0)))?;
+                parse_address(&t)?
+            };
+            // The router can only pay out tokens here; wrapped ether is the
+            // asset to name when buying the gas coin.
+            let token_out = erc20_of(&buy.0, &intent.chain_id.0)
+                .ok_or_else(|| invalid("buy an ERC-20 (use WETH for ether)"))?;
+            if swap.token_in != token_in || swap.token_out != parse_address(&token_out)? {
+                return Err(invalid("swap tokens differ from the intent"));
+            }
+            if swap.token_in == swap.token_out {
+                return Err(invalid("a swap needs two different tokens"));
+            }
+            if swap.amount_in != decimal_to_be(&sell_amount.0)? {
+                return Err(invalid("amount sold differs from the intent"));
+            }
+            let min = decimal_to_be(&min_buy_amount.0)?;
+            if min.is_empty() || swap.amount_out_min != min {
+                return Err(invalid(
+                    "minimum received differs from the intent or is zero",
+                ));
+            }
+        }
         _ => return Err(invalid("this intent kind has no EVM form yet")),
     }
     Ok(())
+}
+
+/// A router the core lets swaps go through: Uniswap v3 `SwapRouter02` and the
+/// wrapped gas token it pays native sales with. Additive per testnet.
+pub struct SwapRoute {
+    pub chain_id: &'static str,
+    pub router: &'static str,
+    pub quoter: &'static str,
+    pub weth: &'static str,
+}
+
+pub const SWAP_ROUTES: &[SwapRoute] = &[SwapRoute {
+    chain_id: "eip155:11155111",
+    router: "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E",
+    quoter: "0xEd1f6473345F45b75F8179591dd5bA1888cf2FB3",
+    weth: "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+}];
+
+pub fn swap_route(chain_id: &str) -> Result<&'static SwapRoute> {
+    SWAP_ROUTES
+        .iter()
+        .find(|r| r.chain_id == chain_id)
+        .ok_or_else(|| invalid(format!("no swap router is known on {chain_id}")))
+}
+
+const EXACT_INPUT_SINGLE: &str =
+    "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))";
+const UNISWAP_FEES: &[u32] = &[100, 500, 3_000, 10_000];
+
+/// The fields of one `exactInputSingle` call, amounts as minimal big-endian.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SwapCall {
+    pub token_in: [u8; 20],
+    pub token_out: [u8; 20],
+    pub fee: u32,
+    pub recipient: [u8; 20],
+    pub amount_in: Vec<u8>,
+    pub amount_out_min: Vec<u8>,
+}
+
+fn word_address(w: &[u8]) -> Result<[u8; 20]> {
+    if w[..12].iter().any(|b| *b != 0) {
+        return Err(invalid("address word has high bits set"));
+    }
+    Ok(w[12..32].try_into().expect("20 bytes"))
+}
+
+/// Decode swap calldata strictly: exactly one call, one pool, no price limit.
+pub fn parse_swap(data: &[u8], aggregator: &str) -> Result<SwapCall> {
+    let want_fee = aggregator
+        .strip_prefix("uniswap-v3:")
+        .and_then(|f| f.parse::<u32>().ok())
+        .filter(|f| UNISWAP_FEES.contains(f))
+        .ok_or_else(|| invalid(format!("unknown aggregator {aggregator:?}")))?;
+    if data.len() != 4 + 7 * 32 || data[..4] != keccak256(EXACT_INPUT_SINGLE.as_bytes())[..4] {
+        return Err(invalid("calldata is not a single exactInputSingle swap"));
+    }
+    let w = |i: usize| &data[4 + i * 32..4 + (i + 1) * 32];
+    let fee_word = w(2);
+    if fee_word[..28].iter().any(|b| *b != 0) {
+        return Err(invalid("fee word out of range"));
+    }
+    let fee = u32::from_be_bytes(fee_word[28..].try_into().expect("4 bytes"));
+    if fee != want_fee {
+        return Err(invalid("pool fee differs from the intent"));
+    }
+    if w(6).iter().any(|b| *b != 0) {
+        return Err(invalid("a price limit is not supported"));
+    }
+    Ok(SwapCall {
+        token_in: word_address(w(0))?,
+        token_out: word_address(w(1))?,
+        fee,
+        recipient: word_address(w(3))?,
+        amount_in: strip_zeros(w(4)).to_vec(),
+        amount_out_min: strip_zeros(w(5)).to_vec(),
+    })
+}
+
+/// Who a swap pays out to, so the ledger can require it to be the signer.
+pub fn swap_recipient(tx: &EvmTx, intent: &TxIntent) -> Result<Option<[u8; 20]>> {
+    match &intent.kind {
+        TxIntentKind::Swap { aggregator, .. } => {
+            Ok(Some(parse_swap(&tx.data()?, aggregator)?.recipient))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Calldata for `exactInputSingle`, as the adapter should build it.
+pub fn swap_calldata(
+    token_in: &str,
+    token_out: &str,
+    fee: u32,
+    recipient: &str,
+    amount_in: &str,
+    amount_out_min: &str,
+) -> Result<Vec<u8>> {
+    let mut out = keccak256(EXACT_INPUT_SINGLE.as_bytes())[..4].to_vec();
+    let addr = |a: &str| -> Result<[u8; 32]> { Ok(pad32(&parse_address(a)?)) };
+    out.extend(addr(token_in)?);
+    out.extend(addr(token_out)?);
+    out.extend(pad32(&u64_be(u64::from(fee))));
+    out.extend(addr(recipient)?);
+    out.extend(pad32(&decimal_to_be(amount_in)?));
+    out.extend(pad32(&decimal_to_be(amount_out_min)?));
+    out.extend([0u8; 32]);
+    Ok(out)
 }
 
 /// Signature over `sighash` with low-S normalization; returns (y parity, r, s).
@@ -388,6 +547,34 @@ pub fn sign_digest(secret: &[u8; 32], sighash: &[u8; 32]) -> Result<(u8, [u8; 32
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Shared with `packages/chains-evm/src/swap.test.ts`, so both sides agree byte for byte.
+    const SWAP_VECTOR: &str = "04e45aaf000000000000000000000000fff9976782d46cc05630d1f6ebab18b2324d6b140000000000000000000000001c7d4b196cb0c7b01d743fbc6116a902379c72380000000000000000000000000000000000000000000000000000000000000bb8000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000038d7ea4c6800000000000000000000000000000000000000000000000000000000000002625a00000000000000000000000000000000000000000000000000000000000000000";
+
+    #[test]
+    fn swap_calldata_matches_the_shared_vector_and_decodes_back() {
+        let data = swap_calldata(
+            "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+            "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+            3000,
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+            "1000000000000000",
+            "2500000",
+        )
+        .unwrap();
+        assert_eq!(hex::encode(&data), SWAP_VECTOR);
+        let call = parse_swap(&data, "uniswap-v3:3000").unwrap();
+        assert_eq!(call.fee, 3000);
+        assert_eq!(call.amount_out_min, decimal_to_be("2500000").unwrap());
+        assert!(parse_swap(&data, "uniswap-v3:500").is_err());
+        assert!(parse_swap(&data, "uniswap-v2").is_err());
+        let mut limited = data.clone();
+        *limited.last_mut().unwrap() = 1;
+        assert!(parse_swap(&limited, "uniswap-v3:3000").is_err());
+        let mut extra = data.clone();
+        extra.push(0);
+        assert!(parse_swap(&extra, "uniswap-v3:3000").is_err());
+    }
     use crate::intent::{Amount, Proposer};
     use crate::model::{AssetRef, ChainId};
     use k256::ecdsa::VerifyingKey;

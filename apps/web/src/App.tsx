@@ -34,6 +34,7 @@ import { ContactsDialog } from './shell/ContactsDialog.js';
 import { SignMessageDialog } from './shell/SignMessageDialog.js';
 import { HardwareWalletDialog } from './shell/HardwareWalletDialog.js';
 import { NftSendDialog } from './shell/NftSendDialog.js';
+import { StakeDialog, SwapDialog } from './shell/TradeDialogs.js';
 import { StatusBar } from './shell/StatusBar.js';
 import { ThemeStudio } from './shell/ThemeStudio.js';
 import { VaultDialog } from './shell/VaultDialog.js';
@@ -339,6 +340,16 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       <HardwareWalletDialog
         open={dialog?.kind === 'hardwareWallet'}
         folderId={dialog?.kind === 'hardwareWallet' ? dialog.folderId : undefined}
+        onClose={closeDialog}
+      />
+      <SwapDialog
+        open={dialog?.kind === 'swap'}
+        walletId={dialog?.kind === 'swap' ? dialog.walletId : undefined}
+        onClose={closeDialog}
+      />
+      <StakeDialog
+        open={dialog?.kind === 'stake'}
+        walletId={dialog?.kind === 'stake' ? dialog.walletId : undefined}
         onClose={closeDialog}
       />
       <SignMessageDialog

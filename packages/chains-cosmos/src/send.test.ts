@@ -11,6 +11,7 @@ import {
   type WasmModule,
 } from '@stackwallet/core-client';
 import { MsgSend } from 'cosmjs-types/cosmos/bank/v1beta1/tx';
+import { MsgDelegate } from 'cosmjs-types/cosmos/staking/v1beta1/tx';
 import { AuthInfo, TxBody, TxRaw } from 'cosmjs-types/cosmos/tx/v1beta1/tx';
 import { BaseAccount } from 'cosmjs-types/cosmos/auth/v1beta1/auth';
 import { Any } from 'cosmjs-types/google/protobuf/any';
@@ -168,6 +169,32 @@ describe('Osmosis native transfer lifecycle', () => {
     );
     expect(wire.bodyBytes).toEqual(bodyBytes);
     expect(wire.authInfoBytes).toEqual(authInfoBytes);
+  });
+  it('prepares a delegation to a validator operator and refuses one to an account', async () => {
+    const validator = encodeCosmosAddress('osmovaloper', new Uint8Array(20).fill(9));
+    const stake: TxIntent = {
+      ...intent,
+      kind: 'stake',
+      validator,
+      asset: `${COSMOS_TESTNET}:native`,
+      amount: '1000',
+    } as TxIntent;
+    const prepared = await prepareCosmos(adapter(), stake, from, publicKeyHex);
+    expect(prepared.unsigned).toMatchObject({ msg: 'delegate', to: validator, amount: '1000' });
+    const body = TxBody.decode(cosmosBodyAuth(prepared.unsigned).bodyBytes);
+    expect(body.messages[0]!.typeUrl).toBe('/cosmos.staking.v1beta1.MsgDelegate');
+    expect(MsgDelegate.decode(body.messages[0]!.value)).toEqual({
+      delegatorAddress: from,
+      validatorAddress: validator,
+      amount: { denom: 'uosmo', amount: '1000' },
+    });
+    await expect(
+      prepareCosmos(adapter(), { ...stake, validator: to } as TxIntent, from, publicKeyHex),
+    ).rejects.toThrow();
+    const claim = { ...intent, kind: 'claim', validator } as TxIntent;
+    const claimed = await prepareCosmos(adapter({ balance: '20000' }), claim, from, publicKeyHex);
+    expect(claimed.unsigned).toMatchObject({ msg: 'withdrawRewards', amount: '0' });
+    expect(claimed.simulation.ok).toBe(true);
   });
   it('rejects mismatched chains before preparation and records failed simulations', async () => {
     await expect(
@@ -343,6 +370,41 @@ describe.skipIf(!existsSync(resolve(wasmDir, 'stackwallet_wasm_bg.wasm')))(
           12,
         );
         expect((await vault.txApprove('policy', pass, 'd', 13)).state).toBe('rejected');
+        const validator = encodeCosmosAddress('osmovaloper', new Uint8Array(20).fill(9));
+        const stake = {
+          ...intent,
+          id: 'stake',
+          kind: 'stake',
+          validator,
+          asset: `${COSMOS_TESTNET}:native`,
+          amount: '1000',
+        } as TxIntent;
+        const delegate = { ...unsigned, msg: 'delegate' as const, to: validator, sequence: '1' };
+        await vault.txPropose(stake, 'd', 14);
+        await expect(
+          vault.txAttach({
+            ...attach,
+            txId: 'stake',
+            unsigned: { ...delegate, msg: 'undelegate' as const },
+            nowMs: 15,
+          }),
+        ).rejects.toThrow(/intent/);
+        await vault.setPolicies([], 'd', 15);
+        await vault.txAttach({ ...attach, txId: 'stake', unsigned: delegate, nowMs: 16 });
+        await vault.txEvaluate('stake', 'd', 17);
+        const staked = await vault.txApprove('stake', pass, 'd', 18);
+        expect(staked.state).toBe('signed');
+        const stakeRaw = TxRaw.decode(
+          new Uint8Array(Buffer.from(staked.rawSignedHex!.slice(2), 'hex')),
+        );
+        expect(stakeRaw.bodyBytes).toEqual(cosmosBodyAuth(delegate).bodyBytes);
+        expect(
+          Secp256k1.verifySignature(
+            Secp256k1Signature.fromFixedLength(stakeRaw.signatures[0]!),
+            sha256(cosmosSignDoc(delegate)),
+            Buffer.from(pub, 'hex'),
+          ),
+        ).toBe(true);
         const history = await vault.ledger();
         const reopened = await core.openVault(await vault.toBytes());
         try {

@@ -34,20 +34,23 @@ fn number(value: &str, positive: bool) -> Result<u64> {
     Ok(n)
 }
 fn address_bytes(address: &str) -> Result<Vec<u8>> {
+    hrp_bytes(address, "osmo")
+}
+fn hrp_bytes(address: &str, hrp: &str) -> Result<Vec<u8>> {
     if address.len() > 90 {
         return Err(invalid("address too long"));
     }
     let checked =
         CheckedHrpstring::new::<Bech32>(address).map_err(|_| invalid("invalid bech32 address"))?;
     let bytes: Vec<_> = checked.byte_iter().collect();
-    if checked.hrp().as_str() != "osmo"
+    if checked.hrp().as_str() != hrp
         || ![20, 32].contains(&bytes.len())
         || bytes.iter().all(|b| *b == 0)
         || bech32::encode::<Bech32>(checked.hrp(), &bytes)
             .map_err(|_| invalid("invalid address"))?
             != address
     {
-        return Err(invalid("expected a canonical osmo address"));
+        return Err(invalid(format!("expected a canonical {hrp} address")));
     }
     Ok(bytes)
 }
@@ -60,9 +63,23 @@ pub fn address(public: &[u8]) -> Result<String> {
         .map_err(|_| invalid("invalid address"))
 }
 
+/// The one message a transaction carries. Staking messages name a validator
+/// operator (`osmovaloper…`) in `to`; a reward claim moves no `amount` ("0").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CosmosMsg {
+    #[default]
+    Send,
+    Delegate,
+    Undelegate,
+    WithdrawRewards,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CosmosTx {
+    #[serde(default, skip_serializing_if = "is_send")]
+    pub msg: CosmosMsg,
     pub chain_id: String,
     pub from: String,
     pub to: String,
@@ -74,15 +91,32 @@ pub struct CosmosTx {
     pub fee_amount: String,
     pub timeout_height: u64,
 }
+fn is_send(m: &CosmosMsg) -> bool {
+    *m == CosmosMsg::Send
+}
+
 impl CosmosTx {
     pub fn validate(&self) -> Result<()> {
         check_chain(&self.chain_id)?;
         address_bytes(&self.from)?;
-        address_bytes(&self.to)?;
+        match self.msg {
+            CosmosMsg::Send => {
+                address_bytes(&self.to)?;
+            }
+            _ => {
+                hrp_bytes(&self.to, "osmovaloper")?;
+            }
+        }
         if self.from == self.to {
             return Err(invalid("sender and recipient must differ"));
         }
-        number(&self.amount, true)?;
+        if self.msg == CosmosMsg::WithdrawRewards {
+            if self.amount != "0" {
+                return Err(invalid("a reward claim carries no amount"));
+            }
+        } else {
+            number(&self.amount, true)?;
+        }
         number(&self.account_number, false)?;
         number(&self.sequence, false)?;
         let fee = number(&self.fee_amount, true)?;
@@ -109,16 +143,32 @@ impl CosmosTx {
         if intent.chain_id.0 != self.chain_id {
             return Err(invalid("chain differs from intent"));
         }
-        match &intent.kind {
-            TxIntentKind::Transfer { to, asset, amount }
-                if *to == self.to
-                    && amount.0 == self.amount
-                    && asset.0 == format!("{TESTNET}:native") =>
+        let native = format!("{TESTNET}:native");
+        match (&intent.kind, self.msg) {
+            (TxIntentKind::Transfer { to, asset, amount }, CosmosMsg::Send)
+            | (
+                TxIntentKind::Stake {
+                    validator: to,
+                    asset,
+                    amount,
+                },
+                CosmosMsg::Delegate,
+            )
+            | (
+                TxIntentKind::Unstake {
+                    validator: to,
+                    asset,
+                    amount,
+                },
+                CosmosMsg::Undelegate,
+            ) if *to == self.to && amount.0 == self.amount && asset.0 == native => Ok(()),
+            (TxIntentKind::Claim { validator: Some(v) }, CosmosMsg::WithdrawRewards)
+                if *v == self.to =>
             {
                 Ok(())
             }
             _ => Err(invalid(
-                "destination, amount or asset differs from native transfer intent",
+                "message, destination, amount or asset differs from the intent",
             )),
         }
     }
@@ -128,16 +178,40 @@ impl CosmosTx {
             denom: "uosmo".into(),
             amount: amount.into(),
         };
-        let send = BankSend {
-            from_address: self.from.clone(),
-            to_address: self.to.clone(),
-            amount: vec![coin(&self.amount)],
+        let stake = || Stake {
+            delegator_address: self.from.clone(),
+            validator_address: self.to.clone(),
+            amount: Some(coin(&self.amount)),
+        };
+        let message = match self.msg {
+            CosmosMsg::Send => Any {
+                type_url: "/cosmos.bank.v1beta1.MsgSend".into(),
+                value: BankSend {
+                    from_address: self.from.clone(),
+                    to_address: self.to.clone(),
+                    amount: vec![coin(&self.amount)],
+                }
+                .encode_to_vec(),
+            },
+            CosmosMsg::Delegate => Any {
+                type_url: "/cosmos.staking.v1beta1.MsgDelegate".into(),
+                value: stake().encode_to_vec(),
+            },
+            CosmosMsg::Undelegate => Any {
+                type_url: "/cosmos.staking.v1beta1.MsgUndelegate".into(),
+                value: stake().encode_to_vec(),
+            },
+            CosmosMsg::WithdrawRewards => Any {
+                type_url: "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward".into(),
+                value: WithdrawReward {
+                    delegator_address: self.from.clone(),
+                    validator_address: self.to.clone(),
+                }
+                .encode_to_vec(),
+            },
         };
         let body = Body {
-            messages: vec![Any {
-                type_url: "/cosmos.bank.v1beta1.MsgSend".into(),
-                value: send.encode_to_vec(),
-            }],
+            messages: vec![message],
             timeout_height: self.timeout_height,
         };
         let auth = Auth {
@@ -218,6 +292,22 @@ struct BankSend {
     amount: Vec<Coin>,
 }
 #[derive(Clone, PartialEq, Message)]
+struct Stake {
+    #[prost(string, tag = "1")]
+    delegator_address: String,
+    #[prost(string, tag = "2")]
+    validator_address: String,
+    #[prost(message, optional, tag = "3")]
+    amount: Option<Coin>,
+}
+#[derive(Clone, PartialEq, Message)]
+struct WithdrawReward {
+    #[prost(string, tag = "1")]
+    delegator_address: String,
+    #[prost(string, tag = "2")]
+    validator_address: String,
+}
+#[derive(Clone, PartialEq, Message)]
 struct Body {
     #[prost(message, repeated, tag = "1")]
     messages: Vec<Any>,
@@ -290,6 +380,7 @@ mod tests {
         let key = k256::ecdsa::SigningKey::from_bytes((&[7; 32]).into()).unwrap();
         let public = key.verifying_key().to_encoded_point(true);
         CosmosTx {
+            msg: CosmosMsg::Send,
             chain_id: TESTNET.into(),
             from: address(public.as_bytes()).unwrap(),
             to: address(
@@ -351,5 +442,89 @@ mod tests {
         let mut json = serde_json::to_value(original).unwrap();
         json["memo"] = serde_json::json!("extra");
         assert!(serde_json::from_value::<CosmosTx>(json).is_err());
+    }
+    #[test]
+    fn staking_messages_name_a_validator_and_match_the_intent() {
+        use crate::intent::{Amount, Proposer, TxIntent};
+        use crate::model::{AssetRef, ChainId};
+        let base = tx();
+        let operator =
+            bech32::encode::<Bech32>(Hrp::parse("osmovaloper").unwrap(), &[9u8; 20]).unwrap();
+        let delegate = CosmosTx {
+            msg: CosmosMsg::Delegate,
+            to: operator.clone(),
+            ..base.clone()
+        };
+        delegate.validate().unwrap();
+        // A delegation to an account address, or a send to an operator, is refused.
+        assert!(CosmosTx {
+            to: base.to.clone(),
+            ..delegate.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(CosmosTx {
+            msg: CosmosMsg::Send,
+            ..delegate.clone()
+        }
+        .validate()
+        .is_err());
+        let claim = CosmosTx {
+            msg: CosmosMsg::WithdrawRewards,
+            amount: "0".into(),
+            ..delegate.clone()
+        };
+        claim.validate().unwrap();
+        assert!(CosmosTx {
+            amount: "5".into(),
+            ..claim.clone()
+        }
+        .validate()
+        .is_err());
+
+        let intent = |kind| TxIntent {
+            id: "t".into(),
+            wallet_id: "w".into(),
+            account_id: "a".into(),
+            chain_id: ChainId(TESTNET.into()),
+            proposer: Proposer::Human {
+                device_id: "d".into(),
+            },
+            kind,
+            usd_micros: None,
+            untrusted_destinations: vec![],
+            created_at_ms: 0,
+        };
+        let asset = AssetRef(format!("{TESTNET}:native"));
+        let stake = intent(TxIntentKind::Stake {
+            validator: operator.clone(),
+            asset: asset.clone(),
+            amount: Amount("1000".into()),
+        });
+        delegate.check_matches_intent(&stake).unwrap();
+        // The same fields as an undelegation do not satisfy a stake intent.
+        assert!(CosmosTx {
+            msg: CosmosMsg::Undelegate,
+            ..delegate.clone()
+        }
+        .check_matches_intent(&stake)
+        .is_err());
+        claim
+            .check_matches_intent(&intent(TxIntentKind::Claim {
+                validator: Some(operator),
+            }))
+            .unwrap();
+        assert!(claim
+            .check_matches_intent(&intent(TxIntentKind::Claim { validator: None }))
+            .is_err());
+        let (body, _) = delegate.body_auth().unwrap();
+        let decoded = Body::decode(body.as_slice()).unwrap();
+        assert_eq!(
+            decoded.messages[0].type_url,
+            "/cosmos.staking.v1beta1.MsgDelegate"
+        );
+        // A plain send keeps its exact serialized form.
+        let json = serde_json::to_value(&base).unwrap();
+        assert!(json.get("msg").is_none());
     }
 }

@@ -18,6 +18,8 @@ export type ShellDialog =
   | { kind: 'addAccount'; walletId: string }
   | { kind: 'contacts' }
   | { kind: 'signMessage'; walletId: string }
+  | { kind: 'swap'; walletId: string }
+  | { kind: 'stake'; walletId: string }
   | { kind: 'hardwareWallet'; folderId?: string }
   | ({ kind: 'sendNft' } & import('./NftSendDialog.js').NftSendTarget)
   | { kind: 'exportKey'; scope: 'folder' | 'wallet'; id: string }

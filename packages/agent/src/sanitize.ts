@@ -3,7 +3,8 @@
  * memos, indexer text) is untrusted. Control, bidi and zero-width
  * characters are removed and length is capped before it reaches a prompt.
  */
-const HIDDEN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f​-‏‪-‮⁠-⁩﻿]/g;
+const HIDDEN =
+  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g;
 
 export function sanitizeUntrusted(text: string, max = 200): string {
   const clean = text.replace(HIDDEN, '').trim();

@@ -73,6 +73,19 @@ export const KNOWN_SELECTORS: Readonly<Record<string, Signature>> = {
       { name: 'dataLength', type: 'uint256' },
     ],
   },
+  // Uniswap v3 SwapRouter02: a single static tuple, so it decodes like flat arguments.
+  '0x04e45aaf': {
+    name: 'exactInputSingle',
+    args: [
+      { name: 'tokenIn', type: 'address' },
+      { name: 'tokenOut', type: 'address' },
+      { name: 'fee', type: 'uint256' },
+      { name: 'recipient', type: 'address' },
+      { name: 'amountIn', type: 'uint256' },
+      { name: 'minOut', type: 'uint256' },
+      { name: 'priceLimit', type: 'uint256' },
+    ],
+  },
   '0xd0e30db0': { name: 'deposit', args: [] },
   '0x2e1a7d4d': { name: 'withdraw', args: [{ name: 'amount', type: 'uint256' }] },
 };

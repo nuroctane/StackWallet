@@ -75,6 +75,21 @@ export function useHeadline(): (tx: TxRecord) => string {
       const call = decodeCalldata(i.dataHex);
       return call.kind === 'call' ? `Call ${call.function}` : 'Call an unknown function';
     }
+    const amountOf = (asset: string, amount: string) => {
+      if (asset === `${i.chainId}:native` && chain) {
+        const d = chain.nativeAsset.decimals;
+        return `${formatUnits(amount, d, d)} ${chain.nativeAsset.symbol}`;
+      }
+      const t = tokenStore.find(asset);
+      return t
+        ? `${formatUnits(amount, t.decimals, t.decimals)} ${t.symbol}`
+        : `${amount} base units of ${asset.split(':').pop()?.slice(0, 8) ?? asset}…`;
+    };
+    if (i.kind === 'swap')
+      return `Swap ${amountOf(i.sell, i.sellAmount)} for at least ${amountOf(i.buy, i.minBuyAmount)}`;
+    if (i.kind === 'stake') return `Delegate ${amountOf(i.asset, i.amount)}`;
+    if (i.kind === 'unstake') return `Undelegate ${amountOf(i.asset, i.amount)}`;
+    if (i.kind === 'claim') return 'Claim staking rewards';
     return i.kind;
   };
 }
@@ -133,7 +148,12 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
   const i = tx.intent;
   const chain = findChain(registry, i.chainId);
   const sim = (tx.simulation ?? null) as Simulation | null;
-  const recipient = i.kind === 'transfer' || i.kind === 'contractCall' ? i.to : null;
+  const recipient =
+    i.kind === 'transfer' || i.kind === 'contractCall'
+      ? i.to
+      : i.kind === 'stake' || i.kind === 'unstake' || i.kind === 'claim'
+        ? i.validator
+        : null;
   const unknownRecipient = recipient ? labeler(recipient, i.chainId).source === 'none' : false;
   const evm = tx.unsigned && 'dataHex' in tx.unsigned ? tx.unsigned : null;
   const solana = tx.unsigned && 'recentBlockhash' in tx.unsigned ? tx.unsigned : null;

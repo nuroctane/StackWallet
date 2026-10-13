@@ -694,7 +694,11 @@ export const SolanaTx = z.strictObject({
   messageVersion: z.enum(['legacy', 'v0']).optional(),
 });
 export type SolanaTx = z.infer<typeof SolanaTx>;
+export const CosmosMsg = z.enum(['send', 'delegate', 'undelegate', 'withdrawRewards']);
+export type CosmosMsg = z.infer<typeof CosmosMsg>;
 export const CosmosTx = z.strictObject({
+  /** Absent means a bank send; staking messages name a validator operator in `to`. */
+  msg: CosmosMsg.optional(),
   chainId: z.literal('cosmos:osmo-test-5'),
   from: z.string().max(90),
   to: z.string().max(90),

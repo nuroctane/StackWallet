@@ -38,7 +38,7 @@ function host(proposed: unknown[]): AgentHost {
     wallets: () => [
       {
         id: 'w1',
-        name: 'Hot‮',
+        name: 'Hot\u202e',
         kind: 'single',
         accounts: [{ chainId: 'eip155:11155111', address: '0xabc', chain: 'Sepolia' }],
       },
@@ -118,7 +118,7 @@ describe('agent turn', () => {
   });
 
   it('strips hidden characters', () => {
-    expect(sanitizeUntrusted('a​b‮c\u0007', 10)).toBe('abc');
+    expect(sanitizeUntrusted('a\u200bb\u202ec\u0007', 10)).toBe('abc');
     expect(sanitizeUntrusted('x'.repeat(5), 3)).toBe('xxx…');
   });
 });

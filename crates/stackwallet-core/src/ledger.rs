@@ -437,6 +437,13 @@ pub fn attach(
             signer.path, signer.address
         )));
     }
+    if let UnsignedTx::Evm(tx) = &unsigned {
+        if let Some(to) = evm::swap_recipient(tx, &ledger.txs[i].intent)? {
+            if to != evm::parse_address(&derived)? {
+                return Err(invalid("a swap must pay out to the signing account"));
+            }
+        }
+    }
     let actor = device_actor(device_id);
     ledger.step(
         i,
@@ -1519,6 +1526,7 @@ mod tests {
             provenance::signing_key(&v, "w", Curve::Secp256k1, "m/44'/118'/0'/0/1").unwrap();
         let to = cosmos::address(&other.public).unwrap();
         let unsigned = CosmosTx {
+            msg: cosmos::CosmosMsg::Send,
             chain_id: cosmos::TESTNET.into(),
             from: from.clone(),
             to: to.clone(),
@@ -1609,6 +1617,51 @@ mod tests {
         )
         .is_err());
         assert_eq!(load_ledger(&v).unwrap().txs[0].state, TxState::Draft);
+    }
+
+    #[test]
+    fn swaps_must_match_the_intent_and_pay_the_signer() {
+        let usdc = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238";
+        let route = evm::swap_route("eip155:11155111").unwrap();
+        let swap = |id: &str| {
+            let mut i = intent(id, TO, "0");
+            i.kind = TxIntentKind::Swap {
+                sell: AssetRef("eip155:11155111:native".into()),
+                sell_amount: Amount("1000".into()),
+                buy: AssetRef(format!("eip155:11155111:erc20:{usdc}")),
+                min_buy_amount: Amount("990".into()),
+                max_slippage_bps: 100,
+                aggregator: "uniswap-v3:3000".into(),
+            };
+            i
+        };
+        let tx = |recipient: &str, min: &str| EvmTx {
+            gas_limit: 200_000,
+            to: route.router.into(),
+            value: "1000".into(),
+            data_hex: hex::encode(
+                evm::swap_calldata(route.weth, usdc, 3000, recipient, "1000", min).unwrap(),
+            ),
+            ..unsigned(TO, "0")
+        };
+        let attach_tx = |v: &mut EncryptedVault, id: &str, t: EvmTx| {
+            attach(v, id, signer(), t, serde_json::json!({}), true, "d", 2)
+        };
+        let mut v = vault();
+        propose(&mut v, swap("ok"), "d", 1).unwrap();
+        assert!(attach_tx(&mut v, "ok", tx(ADDR, "990")).is_ok());
+
+        propose(&mut v, swap("pay-other"), "d", 1).unwrap();
+        let err = attach_tx(&mut v, "pay-other", tx(TO, "990")).unwrap_err();
+        assert!(err.to_string().contains("signing account"), "{err}");
+
+        propose(&mut v, swap("no-floor"), "d", 1).unwrap();
+        assert!(attach_tx(&mut v, "no-floor", tx(ADDR, "1")).is_err());
+
+        let mut other_router = tx(ADDR, "990");
+        other_router.to = TO.into();
+        propose(&mut v, swap("router"), "d", 1).unwrap();
+        assert!(attach_tx(&mut v, "router", other_router).is_err());
     }
 
     #[test]

@@ -112,15 +112,68 @@ export async function proposeContractCall(
   );
 }
 
+type IntentShape =
+  | { kind: 'transfer'; to: string; asset: string; amount: string }
+  | { kind: 'contractCall'; to: string; dataHex: string; value: string }
+  | {
+      kind: 'swap';
+      sell: string;
+      sellAmount: string;
+      buy: string;
+      minBuyAmount: string;
+      maxSlippageBps: number;
+      aggregator: string;
+    }
+  | { kind: 'stake' | 'unstake'; validator: string; asset: string; amount: string }
+  | { kind: 'claim'; validator: string };
+
+/**
+ * Propose a single-pool swap on a chain the core knows a router for. The core
+ * decodes the calldata and refuses any other router, recipient, amount or floor.
+ */
+export async function proposeSwap(
+  registry: ChainRegistry,
+  req: {
+    account: Account;
+    sell: string;
+    sellAmount: string;
+    buy: string;
+    minBuyAmount: string;
+    maxSlippageBps: number;
+    aggregator: string;
+  },
+): Promise<Result<TxRecord>> {
+  if (req.account.family !== 'evm') return { ok: false, error: 'Swaps are EVM only' };
+  const { account, ...swap } = req;
+  return proposeIntent(registry, { account }, { kind: 'swap', ...swap });
+}
+
+/** Delegate, undelegate or claim on Osmosis Testnet; the core builds the staking message. */
+export async function proposeStaking(
+  registry: ChainRegistry,
+  req: { account: Account } & (
+    | { kind: 'stake' | 'unstake'; validator: string; amount: string }
+    | { kind: 'claim'; validator: string }
+  ),
+): Promise<Result<TxRecord>> {
+  if (req.account.family !== 'cosmos') return { ok: false, error: 'Staking is Cosmos only' };
+  const asset = `${req.account.chainId}:native`;
+  return proposeIntent(
+    registry,
+    { account: req.account },
+    req.kind === 'claim'
+      ? { kind: 'claim', validator: req.validator }
+      : { kind: req.kind, validator: req.validator, asset, amount: req.amount },
+  );
+}
+
 async function proposeIntent(
   registry: ChainRegistry,
   req: Pick<
     SendRequest,
     'account' | 'bitcoin' | 'solana' | 'replace' | 'by' | 'untrustedDestinations'
   >,
-  kind:
-    | { kind: 'transfer'; to: string; asset: string; amount: string }
-    | { kind: 'contractCall'; to: string; dataHex: string; value: string },
+  kind: IntentShape,
 ): Promise<Result<TxRecord>> {
   const { account } = req;
   if (!account.derivationPath) return { ok: false, error: 'This account has no key in the vault' };
