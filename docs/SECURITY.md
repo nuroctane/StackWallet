@@ -81,6 +81,16 @@ Directory and layout saves retain dirty state on failure, retry with a bounded t
 window focus/page exit, and expose unsaved changes in the status bar. Portfolio totals count a
 unique chain/address once even when several wallet views refer to it.
 
+Directory and layout writes also hold an origin-wide Web Lock. They merge independent entity
+and field changes against their loaded baseline, preserving deletions and validating the merged
+structure. A conflicting edit refuses to replace committed metadata and retains a recovery copy
+containing the baseline, local changes and remote state. The status bar can download these copies
+as one JSON file. Pending page-exit saves are archived synchronously before waiting for a lock.
+Compatible interrupted copies are merged on reload and their exact revisions are marked applied;
+the original copies remain available, so a newer revision from an active tab cannot be discarded.
+Unresolved copies remain downloadable. These copies contain directory/layout metadata, not vault
+key material. Legacy cyclic folder graphs are repaired on load so their wallets remain visible.
+
 Live spend reservations remain counted across every spend-cap window until resolved; they do
 not age out with the draft. Confirmed spend uses the recorded confirmation time. Aggregated
 USD amounts saturate instead of overflowing. Ambiguous broadcasts retain the core-computed hash

@@ -151,6 +151,10 @@ export class WorkspaceStore {
 
   readonly getSnapshot = (): WorkspaceState => this.state;
 
+  adoptPersisted(state: WorkspaceState): void {
+    this.commit(state);
+  }
+
   private commit(next: WorkspaceState): void {
     if (next === this.state) return;
     this.state = next;

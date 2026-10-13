@@ -31,6 +31,10 @@ export class DirectoryStore {
 
   readonly getSnapshot = (): DirectoryState => this.state;
 
+  adoptPersisted(state: DirectoryState): void {
+    this.commit(r.ensureRoot(state, this.ctx));
+  }
+
   private commit(next: DirectoryState): void {
     if (next === this.state) return;
     this.state = next;

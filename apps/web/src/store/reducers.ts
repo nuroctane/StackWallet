@@ -63,10 +63,32 @@ export function ensureRoot(state: DirectoryState, ctx: ReducerContext): Director
   }
   const rootId = root.id;
   const ids = new Set(folders.map((f) => f.id));
-  const repairedFolders = folders.map((f) => {
+  let repairedFolders = folders.map((f) => {
     if (f.parentId === null) return f.id === rootId ? f : { ...f, parentId: rootId };
     return ids.has(f.parentId) && f.parentId !== f.id ? f : { ...f, parentId: rootId };
   });
+  const parents = new Map(repairedFolders.map((f) => [f.id, f.parentId]));
+  const connected = new Set([rootId]);
+  const breaks = new Set<string>();
+  for (const folder of repairedFolders) {
+    const path: string[] = [],
+      seen = new Set<string>();
+    let current: string | null = folder.id;
+    while (current !== null && !connected.has(current)) {
+      if (seen.has(current)) {
+        breaks.add(current);
+        break;
+      }
+      seen.add(current);
+      path.push(current);
+      current = parents.get(current) ?? null;
+    }
+    for (const id of path) connected.add(id);
+  }
+  if (breaks.size > 0)
+    repairedFolders = repairedFolders.map((f) =>
+      breaks.has(f.id) ? { ...f, parentId: rootId } : f,
+    );
   const wallets = state.wallets.map((w) => (ids.has(w.folderId) ? w : { ...w, folderId: rootId }));
   const walletIds = new Set(wallets.map((w) => w.id));
   const accounts = state.accounts.filter((a) => walletIds.has(a.walletId));

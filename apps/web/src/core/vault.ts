@@ -30,6 +30,7 @@ import {
 } from '@stackwallet/core-client';
 
 import type { StorageLike } from '../store/persist.js';
+import { withStorageWriter } from '../store/storageWriter.js';
 
 export const VAULT_STORAGE_KEY = 'stackwallet.vault.v1';
 /** Read-only mirror of the sealed provenance table, so tags stay visible while locked. */
@@ -37,22 +38,10 @@ export const PROVENANCE_CACHE_KEY = 'stackwallet.provenance.v1';
 export const IDENTITY_LABEL = 'device-identity';
 export const MIN_PASSPHRASE_CHARS = 10;
 
-const writers = new WeakMap<StorageLike, Promise<unknown>>();
 class DurabilityError extends Error {}
 
 async function withVaultWriter<T>(storage: StorageLike, op: () => Promise<T>): Promise<T> {
-  if (typeof navigator !== 'undefined' && navigator.locks) {
-    return navigator.locks.request(VAULT_STORAGE_KEY, op);
-  }
-  // Browser writes need a lock shared by every tab, not just this JavaScript realm.
-  if (typeof window !== 'undefined' && storage === window.localStorage) {
-    throw new Error(
-      'This browser cannot coordinate vault writes. Use a browser with Web Locks support.',
-    );
-  }
-  const pending = (writers.get(storage) ?? Promise.resolve()).catch(() => undefined).then(op);
-  writers.set(storage, pending);
-  return pending;
+  return withStorageWriter(storage, VAULT_STORAGE_KEY, op);
 }
 
 export type VaultStatus =

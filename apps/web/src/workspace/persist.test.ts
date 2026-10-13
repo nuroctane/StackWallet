@@ -33,7 +33,7 @@ const overlaps = (a: Rect, b: Rect) =>
   a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
 describe('defaultWorkspace', () => {
-  it('validates, has home active and non-overlapping panes inside a 1440x820 canvas', () => {
+  it('validates, has home active and non-overlapping panes inside a 1440x820 canvas', async () => {
     const state = defaultWorkspace(makeCtx());
     expect(WorkspaceState.parse(state)).toEqual(state);
     expect(state.layouts.map((l) => l.name)).toEqual(['home', 'devices']);
@@ -67,7 +67,7 @@ describe('defaultWorkspace', () => {
     expect(state.layouts[1]?.panes.map((p) => p.kind)).toEqual(['devices', 'network']);
   });
 
-  it('elementDefaults covers every kind with a valid size', () => {
+  it('elementDefaults covers every kind with a valid size', async () => {
     for (const k of ElementKind.options) {
       const size = elementDefaults[k];
       expect(size.w).toBeGreaterThanOrEqual(240);
@@ -77,20 +77,20 @@ describe('defaultWorkspace', () => {
 });
 
 describe('loadWorkspace', () => {
-  it('starts from the default workspace with no storage or an empty key', () => {
+  it('starts from the default workspace with no storage or an empty key', async () => {
     const ctx = makeCtx();
     expect(loadWorkspace(null, ctx).state.layouts.map((l) => l.name)).toEqual(['home', 'devices']);
     expect(loadWorkspace(new MemoryStorage(), ctx).state.layouts).toHaveLength(2);
   });
 
-  it('uses a supplied initialiser when storage is empty', () => {
+  it('uses a supplied initialiser when storage is empty', async () => {
     const ctx = makeCtx();
     const loaded = loadWorkspace(new MemoryStorage(), ctx, () => emptyState(ctx));
     expect(loaded.state.layouts).toHaveLength(1);
     expect(loaded.state.layouts[0]?.panes).toHaveLength(0);
   });
 
-  it('round-trips a valid blob', () => {
+  it('round-trips a valid blob', async () => {
     const ctx = makeCtx();
     const storage = new MemoryStorage();
     const state = defaultWorkspace(ctx);
@@ -100,7 +100,7 @@ describe('loadWorkspace', () => {
     expect(loaded.quarantinedKey).toBeUndefined();
   });
 
-  it('quarantines unparseable and schema-invalid blobs, then starts fresh', () => {
+  it('quarantines unparseable and schema-invalid blobs, then starts fresh', async () => {
     const ctx = makeCtx();
     for (const bad of ['{not json', JSON.stringify({ version: 2, layouts: [] })]) {
       const storage = new MemoryStorage();
@@ -108,12 +108,12 @@ describe('loadWorkspace', () => {
       const loaded = loadWorkspace(storage, ctx);
       expect(loaded.quarantinedKey).toBe(`${WORKSPACE_STORAGE_KEY}.corrupt-5000`);
       expect(storage.getItem(loaded.quarantinedKey!)).toBe(bad);
-      expect(storage.getItem(WORKSPACE_STORAGE_KEY)).toBeNull();
+      expect(storage.getItem(WORKSPACE_STORAGE_KEY)).toBe(bad);
       expect(loaded.state.layouts[0]?.name).toBe('home');
     }
   });
 
-  it('repairs an activeId that matches no layout', () => {
+  it('repairs an activeId that matches no layout', async () => {
     const ctx = makeCtx();
     const storage = new MemoryStorage();
     const state = defaultWorkspace(ctx);
@@ -132,7 +132,7 @@ describe('createPersistedWorkspace', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('debounces saves, flushes on demand and on dispose', () => {
+  it('debounces saves, flushes on demand and on dispose', async () => {
     const storage = new MemoryStorage();
     const { store, flush, dispose } = createPersistedWorkspace({
       storage,
@@ -145,32 +145,32 @@ describe('createPersistedWorkspace', () => {
     store.addPane({ kind: 'wallet', props: {}, w: 240, h: 120 }, viewport);
     expect(storage.getItem(WORKSPACE_STORAGE_KEY)).toBeNull();
 
-    vi.advanceTimersByTime(149);
+    await vi.advanceTimersByTimeAsync(149);
     expect(storage.getItem(WORKSPACE_STORAGE_KEY)).toBeNull();
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     const saved = WorkspaceState.parse(JSON.parse(storage.getItem(WORKSPACE_STORAGE_KEY)!));
     expect(saved.layouts[0]?.panes).toHaveLength(8);
 
     store.toggleLock();
-    flush();
+    await flush();
     expect(WorkspaceState.parse(JSON.parse(storage.getItem(WORKSPACE_STORAGE_KEY)!)).locked).toBe(
       true,
     );
 
     store.toggleLock();
-    dispose();
+    await dispose();
     expect(WorkspaceState.parse(JSON.parse(storage.getItem(WORKSPACE_STORAGE_KEY)!)).locked).toBe(
       false,
     );
 
     store.toggleLock();
-    vi.advanceTimersByTime(1000);
+    await vi.advanceTimersByTimeAsync(1000);
     expect(WorkspaceState.parse(JSON.parse(storage.getItem(WORKSPACE_STORAGE_KEY)!)).locked).toBe(
       false,
     );
   });
 
-  it('reports the quarantined key and uses the initialiser', () => {
+  it('reports the quarantined key and uses the initialiser', async () => {
     const storage = new MemoryStorage();
     storage.setItem(WORKSPACE_STORAGE_KEY, 'garbage');
     const ctx = makeCtx();

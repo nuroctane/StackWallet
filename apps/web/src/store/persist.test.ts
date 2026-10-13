@@ -22,13 +22,13 @@ function makeCtx(): ReducerContext {
 }
 
 describe('loadDirectory', () => {
-  it('starts fresh with no storage or an empty key', () => {
+  it('starts fresh with no storage or an empty key', async () => {
     const ctx = makeCtx();
     expect(loadDirectory(null, ctx).state.folders).toHaveLength(1);
     expect(loadDirectory(new MemoryStorage(), ctx).state.folders).toHaveLength(1);
   });
 
-  it('round-trips a valid blob', () => {
+  it('round-trips a valid blob', async () => {
     const ctx = makeCtx();
     const storage = new MemoryStorage();
     const state = emptyState(ctx);
@@ -38,7 +38,7 @@ describe('loadDirectory', () => {
     expect(loaded.quarantinedKey).toBeUndefined();
   });
 
-  it('quarantines unparseable and schema-invalid blobs, then starts fresh', () => {
+  it('quarantines unparseable and schema-invalid blobs, then starts fresh', async () => {
     const ctx = makeCtx();
     for (const bad of ['{not json', JSON.stringify({ version: 2, folders: [] })]) {
       const storage = new MemoryStorage();
@@ -55,7 +55,7 @@ describe('createPersistedStore', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('debounces saves and flushes on dispose', () => {
+  it('debounces saves and flushes on dispose', async () => {
     const storage = new MemoryStorage();
     const { store, dispose } = createPersistedStore({ storage, ctx: makeCtx(), debounceMs: 150 });
     const root = rootOf(store.getSnapshot());
@@ -64,19 +64,19 @@ describe('createPersistedStore', () => {
     store.createFolder('B', root.id);
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
 
-    vi.advanceTimersByTime(149);
+    await vi.advanceTimersByTimeAsync(149);
     expect(storage.getItem(STORAGE_KEY)).toBeNull();
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     const saved = JSON.parse(storage.getItem(STORAGE_KEY)!) as { folders: unknown[] };
     expect(saved.folders).toHaveLength(3);
 
     store.createFolder('C', root.id);
-    dispose();
+    await dispose();
     const flushed = JSON.parse(storage.getItem(STORAGE_KEY)!) as { folders: unknown[] };
     expect(flushed.folders).toHaveLength(4);
   });
 
-  it('repairs a structurally broken but schema-valid blob on load', () => {
+  it('repairs a structurally broken but schema-valid blob on load', async () => {
     const ctx = makeCtx();
     const storage = new MemoryStorage();
     const state = emptyState(ctx);

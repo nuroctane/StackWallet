@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
-import { reportStorageSave } from '../store/storageStatus.js';
+import { mergeWorkspace } from '../store/metadataMerge.js';
+import { createMetadataPersistence } from '../store/metadataPersistence.js';
 
 import type { StorageLike } from '../store/persist.js';
 import { defaultWorkspace } from './defaults.js';
@@ -40,12 +41,11 @@ export function loadWorkspace(
   const result = parsed === undefined ? undefined : WorkspaceState.safeParse(parsed);
   if (result?.success) return { state: repairActive(result.data) };
 
-  // A hand-built layout is worth keeping for manual recovery. The live key is
-  // cleared so the same blob is not quarantined again on every reload.
+  // Keep the original until a coordinated save replaces it; another tab may
+  // have published a valid layout since this read.
   const quarantinedKey = `${WORKSPACE_STORAGE_KEY}.corrupt-${ctx.now()}`;
   try {
     storage.setItem(quarantinedKey, raw);
-    storage.removeItem(WORKSPACE_STORAGE_KEY);
   } catch {
     // Storage full or blocked: nothing more we can do but start fresh.
   }
@@ -69,8 +69,8 @@ export function saveWorkspace(storage: StorageLike, state: WorkspaceState): bool
 export interface PersistedWorkspace {
   store: WorkspaceStore;
   quarantinedKey?: string;
-  flush(): void;
-  dispose(): void;
+  flush(): Promise<void>;
+  dispose(): Promise<void>;
 }
 
 export function createPersistedWorkspace(
@@ -87,42 +87,20 @@ export function createPersistedWorkspace(
   const loaded = loadWorkspace(storage, ctx, options.initial ?? (() => defaultWorkspace(ctx)));
   const store = new WorkspaceStore(loaded.state, ctx);
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let dirty = false;
-  let failures = 0;
-  let disposed = false;
-  const flush = () => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
-    if (!dirty) return;
-    const ok = !!storage && saveWorkspace(storage, store.getSnapshot());
-    reportStorageSave('layout', ok);
-    if (ok) {
-      dirty = false;
-      failures = 0;
-    } else if (!disposed && ++failures < 3) timer = setTimeout(flush, 5_000);
-  };
-  const unsubscribe = store.subscribe(() => {
-    dirty = true;
-    failures = 0;
-    if (timer !== undefined) clearTimeout(timer);
-    timer = setTimeout(flush, debounceMs);
+  const persistence = createMetadataPersistence({
+    storage,
+    key: WORKSPACE_STORAGE_KEY,
+    name: 'layout',
+    debounceMs,
+    snapshot: store.getSnapshot,
+    subscribe: store.subscribe,
+    adopt: (state) => store.adoptPersisted(state),
+    parse: (raw) => repairActive(WorkspaceState.parse(JSON.parse(raw))),
+    merge: mergeWorkspace,
   });
-
-  const hasWindow = typeof window !== 'undefined';
-  if (hasWindow) window.addEventListener('pagehide', flush);
-  if (hasWindow) window.addEventListener('focus', flush);
-
   const result: PersistedWorkspace = {
     store,
-    flush,
-    dispose() {
-      disposed = true;
-      unsubscribe();
-      if (hasWindow) window.removeEventListener('pagehide', flush);
-      if (hasWindow) window.removeEventListener('focus', flush);
-      flush();
-    },
+    ...persistence,
   };
   if (loaded.quarantinedKey) result.quarantinedKey = loaded.quarantinedKey;
   return result;

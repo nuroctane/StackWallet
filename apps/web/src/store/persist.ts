@@ -3,7 +3,8 @@ import { useSyncExternalStore } from 'react';
 import { emptyState, type ReducerContext } from './reducers.js';
 import { DirectoryState } from './schema.js';
 import { defaultContext, DirectoryStore } from './store.js';
-import { reportStorageSave } from './storageStatus.js';
+import { mergeDirectory } from './metadataMerge.js';
+import { createMetadataPersistence } from './metadataPersistence.js';
 
 export const STORAGE_KEY = 'stackwallet.directory.v1';
 export const SAVE_DEBOUNCE_MS = 150;
@@ -12,6 +13,8 @@ export interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
+  readonly length?: number;
+  key?(index: number): string | null;
 }
 
 export interface LoadResult {
@@ -61,8 +64,8 @@ export function saveDirectory(storage: StorageLike, state: DirectoryState): bool
 export interface PersistedStore {
   store: DirectoryStore;
   quarantinedKey?: string;
-  flush(): void;
-  dispose(): void;
+  flush(): Promise<void>;
+  dispose(): Promise<void>;
 }
 
 export function createPersistedStore(
@@ -78,42 +81,20 @@ export function createPersistedStore(
   const loaded = loadDirectory(storage, ctx);
   const store = new DirectoryStore(loaded.state, ctx);
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let dirty = false;
-  let failures = 0;
-  let disposed = false;
-  const flush = () => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
-    if (!dirty) return;
-    const ok = !!storage && saveDirectory(storage, store.getSnapshot());
-    reportStorageSave('directory', ok);
-    if (ok) {
-      dirty = false;
-      failures = 0;
-    } else if (!disposed && ++failures < 3) timer = setTimeout(flush, 5_000);
-  };
-  const unsubscribe = store.subscribe(() => {
-    dirty = true;
-    failures = 0;
-    if (timer !== undefined) clearTimeout(timer);
-    timer = setTimeout(flush, debounceMs);
+  const persistence = createMetadataPersistence({
+    storage,
+    key: STORAGE_KEY,
+    name: 'directory',
+    debounceMs,
+    snapshot: store.getSnapshot,
+    subscribe: store.subscribe,
+    adopt: (state) => store.adoptPersisted(state),
+    parse: (raw) => DirectoryState.parse(JSON.parse(raw)),
+    merge: (base, local, remote) => mergeDirectory(base, local, remote, ctx),
   });
-
-  const hasWindow = typeof window !== 'undefined';
-  if (hasWindow) window.addEventListener('pagehide', flush);
-  if (hasWindow) window.addEventListener('focus', flush);
-
   const result: PersistedStore = {
     store,
-    flush,
-    dispose() {
-      disposed = true;
-      unsubscribe();
-      if (hasWindow) window.removeEventListener('pagehide', flush);
-      if (hasWindow) window.removeEventListener('focus', flush);
-      flush();
-    },
+    ...persistence,
   };
   if (loaded.quarantinedKey) result.quarantinedKey = loaded.quarantinedKey;
   return result;

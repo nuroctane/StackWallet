@@ -102,7 +102,7 @@ describe('audit regressions', () => {
     }
   }, 20000);
 
-  it('retains layout changes after a failed save until storage recovers', () => {
+  it('retains layout changes after a failed save until storage recovers', async () => {
     const values = new Map<string, string>();
     let full = true;
     const storage = {
@@ -117,14 +117,14 @@ describe('audit regressions', () => {
     };
     const p = createPersistedWorkspace({ storage, ctx, initial: () => emptyWorkspace(ctx) });
     p.store.toggleLock();
-    p.flush();
+    await p.flush();
     full = false;
-    p.flush();
+    await p.flush();
     expect(JSON.parse([...values.values()][0]!).locked).toBe(true);
-    p.dispose();
+    await p.dispose();
   });
 
-  it('terminates traversal even for an already corrupt cyclic directory', () => {
+  it('terminates traversal even for an already corrupt cyclic directory', async () => {
     const state = emptyState(ctx);
     const folder = {
       name: 'cycle',
@@ -139,7 +139,7 @@ describe('audit regressions', () => {
     );
     expect(subtree(state, 'a')).toEqual(['a', 'b']);
   });
-  it('rejects disconnected folder cycles', () => {
+  it('rejects disconnected folder cycles', async () => {
     const folder = (id: string, parentId: string | null) => ({
       id,
       parentId,
@@ -174,7 +174,7 @@ describe('audit regressions', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('counts duplicate on-chain balances once', () => {
+  it('counts duplicate on-chain balances once', async () => {
     const accounts = ['a', 'b'].map((id) => ({ id, chainId: 'eip155:1', address: 'same' }));
     const entry = {
       holdings: [{ assetRef: 'eip155:1:native', amount: '100' }],
@@ -192,7 +192,7 @@ describe('audit regressions', () => {
     expect(totals[0]?.incomplete).toBe(false);
   });
 
-  it('retries a failed directory save when storage recovers', () => {
+  it('retries a failed directory save when storage recovers', async () => {
     const values = new Map<string, string>();
     let full = true;
     let attempts = 0;
@@ -209,12 +209,12 @@ describe('audit regressions', () => {
     };
     const p = createPersistedStore({ storage, ctx });
     p.store.createFolder('unsaved', 'root');
-    p.flush();
+    await p.flush();
     full = false;
-    p.flush();
-    expect(attempts).toBe(2);
+    await p.flush();
+    expect(attempts).toBe(3);
     expect(values.size).toBe(1);
-    p.dispose();
+    await p.dispose();
   });
 
   it('refuses wallet creation without persistent storage', async () => {
