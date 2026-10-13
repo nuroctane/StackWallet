@@ -150,8 +150,10 @@ cluster check prevents accidental cross-cluster endpoints; it does not make RPC 
 chain proofs. Simulation and network outcomes still rely on public RPC, and malformed or imprecise
 responses fail closed. An unavailable expiry check refuses signing; an expired proposal cannot be
 approved again. Broadcast uncertainty reserves the spend until finality or observed expiry.
-The single-key Devnet increment does not satisfy the TSS testnet support gate above. Mainnet, SPL,
-arbitrary instructions and threshold SOL sends are not enabled by this increment.
+The single-key Devnet increment does not satisfy the TSS testnet support gate above. Native legacy
+and v0 messages are rebuilt in the core with one transfer, one signer and no lookup tables.
+The format is sealed with the proposal; changing it after attachment requires a new proposal.
+Mainnet, SPL, arbitrary instructions and threshold SOL sends are not enabled by this increment.
 
 Native Cosmos signing is restricted to Osmosis Testnet in the core. The sender is derived from
 the vault key and checked against the intent; only one native bank transfer with bounded gas,

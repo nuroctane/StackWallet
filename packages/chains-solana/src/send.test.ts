@@ -76,6 +76,64 @@ function adapter(overrides: Record<string, unknown> = {}, calls: [string, unknow
 }
 
 describe('native SOL transfer preparation', () => {
+  it('prepares v0 with the exact fee and simulation message and no lookup tables', async () => {
+    const calls: [string, unknown[]][] = [];
+    const prepared = await prepareSolana(adapter({}, calls), intent, from, {
+      messageVersion: 'v0',
+    });
+    const message = nativeTransferMessage(prepared.unsigned);
+    const decoded = getCompiledTransactionMessageDecoder().decode(message);
+    expect(decoded.version).toBe(0);
+    if (decoded.version !== 0) throw new Error('Expected v0');
+    expect(decoded.staticAccounts).toEqual([from, to, SYSTEM]);
+    expect(decoded.instructions).toHaveLength(1);
+    expect(message[0]).toBe(0x80);
+    expect(message[151]).toBe(0);
+    expect(message.slice(1, 151)).toEqual(nativeTransferMessage(tx));
+    expect(decoded.addressTableLookups ?? []).toEqual([]);
+    const fee = calls.find(([m]) => m === 'getFeeForMessage')![1];
+    const simulation = calls.find(([m]) => m === 'simulateTransaction')![1];
+    expect(base64.decode(fee[0] as string)).toEqual(message);
+    expect(base64.decode(simulation[0] as string).slice(65)).toEqual(message);
+    for (const options of [
+      { messageVersion: 'v1' },
+      { messageVersion: 0 },
+      { addressTableLookups: [] },
+    ])
+      await expect(prepareSolana(adapter(), intent, from, options as never)).rejects.toThrow();
+  });
+  it.each(['legacy', 'v0'] as const)(
+    'broadcasts only the bounded %s native wire shape',
+    async (messageVersion) => {
+      const message = nativeTransferMessage({ ...tx, messageVersion });
+      const wire = new Uint8Array(65 + message.length);
+      wire[0] = 1;
+      wire.set(new Uint8Array(64).fill(4), 1);
+      wire.set(message, 65);
+      const hex = (b: Uint8Array) => `0x${Buffer.from(b).toString('hex')}`;
+      expect(await broadcastSolana(adapter(), SOLANA_DEVNET, hex(wire))).toBe(hash);
+      const offset = messageVersion === 'v0' ? 1 : 0;
+      for (const [position, value] of [
+        [0, 2],
+        [65, 0x81],
+        [65 + offset + 132, 2],
+        [65 + offset + 134, 3],
+        [65 + offset + 68, 1],
+      ]) {
+        const bad = wire.slice();
+        bad[position!] = value!;
+        const calls: [string, unknown[]][] = [];
+        await expect(
+          broadcastSolana(adapter({}, calls), SOLANA_DEVNET, hex(bad)),
+        ).rejects.toThrow();
+        expect(calls).toEqual([]);
+      }
+      if (messageVersion === 'v0') {
+        wire[wire.length - 1] = 1;
+        await expect(broadcastSolana(adapter(), SOLANA_DEVNET, hex(wire))).rejects.toThrow();
+      }
+    },
+  );
   it('SDK decodes exactly one native transfer and the simulation uses these message bytes', async () => {
     const calls: [string, unknown[]][] = [];
     const prepared = await prepareSolana(adapter({}, calls), intent, from);
@@ -114,7 +172,7 @@ describe('native SOL transfer preparation', () => {
       broadcastSolana(
         adapter({ getGenesisHash: base58.encode(new Uint8Array(32).fill(10)) }, calls),
         SOLANA_DEVNET,
-        `0x${'01'.repeat(215)}`,
+        `0x01${'04'.repeat(64)}${Buffer.from(nativeTransferMessage(tx)).toString('hex')}`,
       ),
     ).rejects.toThrow();
     expect(calls.map(([m]) => m)).toEqual(['getGenesisHash']);
@@ -251,80 +309,86 @@ const wasmDir = resolve(import.meta.dirname, '../../../apps/web/public/wasm');
 describe.skipIf(!existsSync(resolve(wasmDir, 'stackwallet_wasm_bg.wasm')))(
   'real core SOL wire interoperability',
   () => {
-    it('SDK decodes core-signed bytes; Node verifies the Ed25519 signature; sealed history reopens', async () => {
-      const module = (await import(
-        pathToFileURL(resolve(wasmDir, 'stackwallet_wasm.js')).href
-      )) as WasmModule;
-      await module.default?.({
-        module_or_path: readFileSync(resolve(wasmDir, 'stackwallet_wasm_bg.wasm')),
-      });
-      const core = new WasmCoreClient(module);
-      const pass = 'disposable SOL interoperability fixture';
-      const vault = await core.createVault(pass);
-      try {
-        await vault.importPhrase(
-          'w',
-          'test test test test test test test test test test test junk',
-          1,
-        );
-        const path = "m/44'/501'/0'/0'";
-        const pub = await vault.singlePublicKey('w', 'ed25519', path);
-        const from = base58.encode(Buffer.from(pub, 'hex'));
-        const unsigned = { ...tx, from };
-        await vault.txPropose(intent, 'd', 2);
-        const signer = { walletId: 'w', path, address: from };
-        await expect(
-          vault.txAttach({
+    it.each(['legacy', 'v0'] as const)(
+      'SDK decodes core-signed %s bytes; Node verifies the Ed25519 signature; sealed history reopens',
+      async (messageVersion) => {
+        const module = (await import(
+          pathToFileURL(resolve(wasmDir, 'stackwallet_wasm.js')).href
+        )) as WasmModule;
+        await module.default?.({
+          module_or_path: readFileSync(resolve(wasmDir, 'stackwallet_wasm_bg.wasm')),
+        });
+        const core = new WasmCoreClient(module);
+        const pass = 'disposable SOL interoperability fixture';
+        const vault = await core.createVault(pass);
+        try {
+          await vault.importPhrase(
+            'w',
+            'test test test test test test test test test test test junk',
+            1,
+          );
+          const path = "m/44'/501'/0'/0'";
+          const pub = await vault.singlePublicKey('w', 'ed25519', path);
+          const from = base58.encode(Buffer.from(pub, 'hex'));
+          const unsigned = { ...tx, from, messageVersion };
+          await vault.txPropose(intent, 'd', 2);
+          const signer = { walletId: 'w', path, address: from };
+          await expect(
+            vault.txAttach({
+              txId: 't',
+              signer,
+              unsigned: { ...unsigned, to: tx.recentBlockhash },
+              simulation: {},
+              simulationOk: true,
+              deviceId: 'd',
+              nowMs: 3,
+            }),
+          ).rejects.toThrow(/destination/);
+          await vault.txAttach({
             txId: 't',
             signer,
-            unsigned: { ...unsigned, to: tx.recentBlockhash },
-            simulation: {},
+            unsigned,
+            simulation: { ok: true },
             simulationOk: true,
             deviceId: 'd',
             nowMs: 3,
-          }),
-        ).rejects.toThrow(/destination/);
-        await vault.txAttach({
-          txId: 't',
-          signer,
-          unsigned,
-          simulation: { ok: true },
-          simulationOk: true,
-          deviceId: 'd',
-          nowMs: 3,
-        });
-        await vault.txEvaluate('t', 'd', 4);
-        await expect(vault.txApprove('t', 'wrong', 'd', 5)).rejects.toThrow();
-        const signed = await vault.txApprove('t', pass, 'd', 5);
-        const wire = Buffer.from(signed.rawSignedHex!.slice(2), 'hex');
-        const decoded = getTransactionDecoder().decode(wire);
-        expect(new Uint8Array(decoded.messageBytes)).toEqual(nativeTransferMessage(unsigned));
-        expect(Object.keys(decoded.signatures)).toEqual([from]);
-        expect(base58.encode(wire.subarray(1, 65))).toBe(signed.hash);
-        const key = createPublicKey({
-          key: Buffer.concat([
-            Buffer.from('302a300506032b6570032100', 'hex'),
-            Buffer.from(pub, 'hex'),
-          ]),
-          format: 'der',
-          type: 'spki',
-        });
-        expect(verify(null, wire.subarray(65), key, wire.subarray(1, 65))).toBe(true);
-        await vault.txReport('t', 'broadcast', null, 'd', 6);
-        await vault.txReport('t', 'pending', null, 'd', 7);
-        await vault.txReport('t', 'expired', 'blockhash expired', 'd', 8);
-        const history = await vault.ledger();
-        const bytes = await vault.toBytes();
-        const reopened = await core.openVault(bytes);
-        try {
-          await reopened.unlock(pass);
-          expect(await reopened.ledger()).toEqual(history);
+          });
+          await vault.txEvaluate('t', 'd', 4);
+          await expect(vault.txApprove('t', 'wrong', 'd', 5)).rejects.toThrow();
+          const signed = await vault.txApprove('t', pass, 'd', 5);
+          const wire = Buffer.from(signed.rawSignedHex!.slice(2), 'hex');
+          const decoded = getTransactionDecoder().decode(wire);
+          expect(new Uint8Array(decoded.messageBytes)).toEqual(nativeTransferMessage(unsigned));
+          expect(getCompiledTransactionMessageDecoder().decode(decoded.messageBytes).version).toBe(
+            messageVersion === 'v0' ? 0 : 'legacy',
+          );
+          expect(Object.keys(decoded.signatures)).toEqual([from]);
+          expect(base58.encode(wire.subarray(1, 65))).toBe(signed.hash);
+          const key = createPublicKey({
+            key: Buffer.concat([
+              Buffer.from('302a300506032b6570032100', 'hex'),
+              Buffer.from(pub, 'hex'),
+            ]),
+            format: 'der',
+            type: 'spki',
+          });
+          expect(verify(null, wire.subarray(65), key, wire.subarray(1, 65))).toBe(true);
+          await vault.txReport('t', 'broadcast', null, 'd', 6);
+          await vault.txReport('t', 'pending', null, 'd', 7);
+          await vault.txReport('t', 'expired', 'blockhash expired', 'd', 8);
+          const history = await vault.ledger();
+          const bytes = await vault.toBytes();
+          const reopened = await core.openVault(bytes);
+          try {
+            await reopened.unlock(pass);
+            expect(await reopened.ledger()).toEqual(history);
+          } finally {
+            reopened.free();
+          }
         } finally {
-          reopened.free();
+          vault.free();
         }
-      } finally {
-        vault.free();
-      }
-    });
+      },
+    );
   },
 );

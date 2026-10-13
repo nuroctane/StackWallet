@@ -22,6 +22,7 @@ import { proposeSend } from '../store/txs.js';
 import { tokenStore } from '../store/tokens.js';
 import { AddressLabel } from './AddressLabel.js';
 import { BitcoinCoinControl } from './BitcoinCoinControl.js';
+import { SolanaMessageFormat } from './SolanaMessageFormat.js';
 import { useShell } from './ShellContext.js';
 import { useWalletLabel } from './WalletName.js';
 
@@ -105,6 +106,7 @@ function SendForm({
   const [result, setResult] = useState<TxRecord | null>(null);
   const [bitcoin, setBitcoin] = useState<BitcoinPrepareOptions>({});
   const [bitcoinReady, setBitcoinReady] = useState(true);
+  const [messageVersion, setMessageVersion] = useState<'legacy' | 'v0'>('legacy');
 
   if (accounts.length === 0) {
     return (
@@ -171,6 +173,7 @@ function SendForm({
       asset,
       amount: units,
       ...(account.family === 'bitcoin' ? { bitcoin } : {}),
+      ...(account.family === 'solana' ? { solana: { messageVersion } } : {}),
     });
     setWorking(false);
     if (!r.ok) setError(r.error);
@@ -223,6 +226,7 @@ function SendForm({
             setAssetKind('native');
             setBitcoin({});
             setBitcoinReady(true);
+            setMessageVersion('legacy');
             setAccountId(e.target.value);
           }}
         >
@@ -292,10 +296,11 @@ function SendForm({
         </Select>
       </Field>
       {account?.family === 'solana' && (
-        <p className="text-[11px] text-faint">
-          Devnet SOL only. Approval expires with the blockhash; an expired transfer needs a fresh
-          proposal.
-        </p>
+        <SolanaMessageFormat
+          value={messageVersion}
+          disabled={working}
+          onChange={setMessageVersion}
+        />
       )}
       {account?.family === 'cosmos' && (
         <p className="text-[11px] text-faint">

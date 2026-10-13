@@ -798,6 +798,14 @@ mod tests {
     }
 
     fn solana_awaiting(v: &mut EncryptedVault, id: &str) -> TxRecord {
+        solana_awaiting_version(v, id, solana::MessageVersion::Legacy)
+    }
+
+    fn solana_awaiting_version(
+        v: &mut EncryptedVault,
+        id: &str,
+        message_version: solana::MessageVersion,
+    ) -> TxRecord {
         let path = "m/44'/501'/0'/0'";
         let key = provenance::signing_key(v, "w", Curve::Ed25519, path).unwrap();
         let from = bs58::encode(hex::decode(key.public_hex()).unwrap()).into_string();
@@ -825,6 +833,7 @@ mod tests {
                 lamports: "1000".into(),
                 recent_blockhash: bs58::encode([9; 32]).into_string(),
                 last_valid_block_height: 100,
+                message_version,
             },
             serde_json::json!({"ok": true}),
             true,
@@ -833,6 +842,31 @@ mod tests {
         )
         .unwrap();
         evaluate(v, id, "d", 3).unwrap()
+    }
+
+    #[test]
+    fn versioned_solana_signing_and_history_are_audited() {
+        let mut v = vault();
+        solana_awaiting_version(&mut v, "v0", solana::MessageVersion::V0);
+        let signed = approve(&mut v, "v0", &pw(), "d", 4).unwrap();
+        let raw = hex::decode(signed.raw_signed_hex.unwrap().trim_start_matches("0x")).unwrap();
+        assert_eq!(raw.len(), 217);
+        assert_eq!(raw[65], 0x80);
+        report(&mut v, "v0", TxState::Broadcast, None, "d", 5).unwrap();
+        report(&mut v, "v0", TxState::Pending, None, "d", 6).unwrap();
+        let ledger = load_ledger(&v).unwrap();
+        ledger.validate().unwrap();
+        assert!(matches!(
+            ledger.audit.last().unwrap().event,
+            AuditEvent::TxTransition {
+                to: TxState::Pending,
+                ..
+            }
+        ));
+        let bytes = v.to_bytes().unwrap();
+        let mut reopened = EncryptedVault::from_bytes(&bytes).unwrap();
+        reopened.unlock(&pw()).unwrap();
+        assert_eq!(load_ledger(&reopened).unwrap(), ledger);
     }
 
     #[test]

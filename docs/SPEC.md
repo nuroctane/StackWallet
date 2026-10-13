@@ -638,6 +638,11 @@ an approval screen reads as names, not hex:
    Mainnet SOL signing remains disabled. SDK wire decoding, independent signature verification,
    ledger persistence and failure/expiry fixtures are covered; the funded Devnet check is opt-in
    (`STACKWALLET_DEVNET_SMOKE=1`).
+   Native Devnet sends can explicitly select a v0 message with all accounts inline and zero
+   address lookup tables. Legacy remains the default and old sealed records remain readable.
+   The core independently constructs and signs the selected format; fee lookup and simulation
+   use those exact bytes. Approval exposes the format and broadcast refuses added instructions,
+   signers, lookup tables and unsupported message versions. No v1 signing is enabled.
    Explicit tracking also reads public SPL Token and Token-2022 balances by mint, with cluster,
    mint program, owner, decimals and slot validation plus independent endpoint cross-checks.
    Wallet → Tokens accepts Solana mints and local labels. Holdings retain full mint/program
@@ -668,7 +673,8 @@ an approval screen reads as names, not hex:
    sender inputs and change remain P2WPKH. Unknown witness versions and legacy recipients fail.
    Remaining in this phase: Bitcoin Taproot/threshold signing and RBF
    replacement, Solana FROST and Cosmos threshold ceremonies,
-   SPL/Token-2022 and versioned transactions, IBC and other Cosmos messages, and swaps per family.
+   SPL/Token-2022 transfers, address lookup tables and v1 messages, IBC and other Cosmos messages,
+   and swaps per family.
 5. **Agent runtime**: providers, tools, run loop, grants, agent party.
 6. **Automations + scheduler**: triggers / actions, headless CLI as automation device.
 7. **Markets**: aggregation, registry, charts, portfolio analytics, alerts, and the market

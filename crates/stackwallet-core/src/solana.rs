@@ -9,6 +9,21 @@ use crate::{CoreError, Result};
 
 pub const DEVNET: &str = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MessageVersion {
+    #[default]
+    #[serde(rename = "legacy")]
+    Legacy,
+    #[serde(rename = "v0")]
+    V0,
+}
+
+impl MessageVersion {
+    fn is_legacy(&self) -> bool {
+        *self == Self::Legacy
+    }
+}
+
 fn invalid(reason: impl Into<String>) -> CoreError {
     CoreError::Invalid {
         what: "Solana transfer",
@@ -50,6 +65,8 @@ pub struct SolanaTx {
     pub lamports: String,
     pub recent_blockhash: String,
     pub last_valid_block_height: u64,
+    #[serde(default, skip_serializing_if = "MessageVersion::is_legacy")]
+    pub message_version: MessageVersion,
 }
 
 impl SolanaTx {
@@ -109,6 +126,11 @@ impl SolanaTx {
         message.extend_from_slice(&[1, 2, 2, 0, 1, 12]);
         message.extend_from_slice(&2u32.to_le_bytes());
         message.extend_from_slice(&amount.to_le_bytes());
+        if self.message_version == MessageVersion::V0 {
+            message.insert(0, 0x80);
+            // All checked accounts stay inline; lookup-table state cannot change destinations.
+            message.push(0);
+        }
         Ok(message)
     }
 
@@ -144,6 +166,7 @@ mod tests {
             lamports: "1000".into(),
             recent_blockhash: bs58::encode([9; 32]).into_string(),
             last_valid_block_height: 100,
+            message_version: MessageVersion::Legacy,
         }
     }
     fn intent(tx: &SolanaTx) -> TxIntent {
@@ -209,5 +232,38 @@ mod tests {
         let mut json = serde_json::to_value(original).unwrap();
         json["instructions"] = serde_json::json!(["extra"]);
         assert!(serde_json::from_value::<SolanaTx>(json).is_err());
+    }
+
+    #[test]
+    fn versioned_message_is_signed_and_old_records_stay_legacy() {
+        let legacy = tx();
+        let saved = serde_json::to_value(&legacy).unwrap();
+        assert!(saved.get("messageVersion").is_none());
+        assert_eq!(
+            serde_json::from_value::<SolanaTx>(saved.clone()).unwrap(),
+            legacy
+        );
+        let mut versioned = legacy.clone();
+        versioned.message_version = MessageVersion::V0;
+        versioned.check_matches_intent(&intent(&legacy)).unwrap();
+        let message = versioned.message().unwrap();
+        assert_eq!(message[0], 0x80);
+        assert_eq!(&message[1..151], legacy.message().unwrap());
+        assert_eq!(message[151], 0);
+        let (wire, _) = versioned.sign(&[7; 32]).unwrap();
+        let bytes = hex::decode(wire.strip_prefix("0x").unwrap()).unwrap();
+        assert_eq!(bytes.len(), 217);
+        let signature = ed25519_dalek::Signature::from_slice(&bytes[1..65]).unwrap();
+        let key = SigningKey::from_bytes(&[7; 32]).verifying_key();
+        key.verify_strict(&message, &signature).unwrap();
+        assert!(key
+            .verify_strict(&legacy.message().unwrap(), &signature)
+            .is_err());
+        let mut hostile = saved;
+        hostile["messageVersion"] = serde_json::json!("v1");
+        assert!(serde_json::from_value::<SolanaTx>(hostile).is_err());
+        let mut hostile = serde_json::to_value(versioned).unwrap();
+        hostile["addressTableLookups"] = serde_json::json!(["untrusted"]);
+        assert!(serde_json::from_value::<SolanaTx>(hostile).is_err());
     }
 }

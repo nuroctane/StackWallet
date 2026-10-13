@@ -20,7 +20,7 @@ const Signature = z
     }
   });
 
-/** The same bounded legacy message the core constructs independently. */
+/** The same bounded message the core constructs independently. */
 export function nativeTransferMessage(input: SolanaTx): Uint8Array {
   const tx = SolanaTx.parse(input);
   const amount = BigInt(tx.lamports);
@@ -43,6 +43,12 @@ export function nativeTransferMessage(input: SolanaTx): Uint8Array {
   const view = new DataView(bytes.buffer);
   view.setUint32(138, 2, true);
   view.setBigUint64(142, amount, true);
+  if (tx.messageVersion === 'v0') {
+    const versioned = new Uint8Array(152);
+    versioned[0] = 0x80;
+    versioned.set(bytes, 1);
+    return versioned;
+  }
   return bytes;
 }
 
@@ -57,10 +63,14 @@ export async function prepareSolana(
   adapter: SolanaAdapter,
   intent: TxIntent,
   from: string,
+  options: SolanaPrepareOptions = {},
 ): Promise<{
   unsigned: SolanaTx;
   simulation: Simulation;
 }> {
+  const checkedOptions = z
+    .strictObject({ messageVersion: z.enum(['legacy', 'v0']).optional() })
+    .parse(options);
   if (
     intent.chainId !== SOLANA_DEVNET ||
     intent.kind !== 'transfer' ||
@@ -83,6 +93,7 @@ export async function prepareSolana(
     lamports: intent.amount,
     recentBlockhash: latest.value.blockhash,
     lastValidBlockHeight: latest.value.lastValidBlockHeight,
+    ...(checkedOptions.messageVersion ? { messageVersion: checkedOptions.messageVersion } : {}),
   });
   const message = nativeTransferMessage(unsigned);
   const [fee, balance, recipient] = await Promise.all([
@@ -146,13 +157,41 @@ export async function solanaBlockhashValid(adapter: SolanaAdapter, tx: SolanaTx)
   return result.value;
 }
 
+export interface SolanaPrepareOptions {
+  messageVersion?: 'legacy' | 'v0';
+}
+
 export async function broadcastSolana(
   adapter: SolanaAdapter,
   chainId: string,
   rawHex: string,
 ): Promise<string> {
-  if (!/^0x[0-9a-fA-F]{430}$/.test(rawHex)) throw new Error('Invalid native SOL wire transaction');
+  if (!/^0x(?:[0-9a-fA-F]{430}|[0-9a-fA-F]{434})$/.test(rawHex))
+    throw new Error('Invalid native SOL wire transaction');
   const bytes = Uint8Array.from(rawHex.slice(2).match(/../g)!, (b) => parseInt(b, 16));
+  const message = bytes.slice(65);
+  const v0 = message[0] === 0x80;
+  if (bytes[0] !== 1 || message.length !== (v0 ? 152 : 150))
+    throw new Error('Invalid native SOL wire transaction');
+  const offset = v0 ? 1 : 0;
+  const expected = nativeTransferMessage({
+    chainId: SOLANA_DEVNET,
+    from: base58.encode(message.slice(offset + 4, offset + 36)),
+    to: base58.encode(message.slice(offset + 36, offset + 68)),
+    recentBlockhash: base58.encode(message.slice(offset + 100, offset + 132)),
+    lamports: new DataView(message.buffer, message.byteOffset)
+      .getBigUint64(offset + 142, true)
+      .toString(),
+    lastValidBlockHeight: 1,
+    ...(v0 ? { messageVersion: 'v0' as const } : {}),
+  });
+  if (
+    chainId !== SOLANA_DEVNET ||
+    bytes[0] !== 1 ||
+    message.length !== expected.length ||
+    !expected.every((b, i) => message[i] === b)
+  )
+    throw new Error('Invalid native SOL wire transaction');
   return adapter.clusterCall(
     chainId,
     'sendTransaction',

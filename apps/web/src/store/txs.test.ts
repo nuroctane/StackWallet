@@ -252,34 +252,48 @@ describe('Cosmos core lifecycle orchestration', () => {
 });
 
 describe('SOL core lifecycle orchestration', () => {
-  it('prepares native SOL with no EVM adapter and attaches the checked signer', async () => {
-    mocks.txPropose.mockImplementation(async (intent) => ({ ok: true, value: { ...tx, intent } }));
-    mocks.prepareSolana.mockResolvedValue({ unsigned, simulation: { ok: true } });
-    mocks.txAttach.mockResolvedValue({ ok: true, value: { ...tx, state: 'simulated' } });
-    mocks.txEvaluate.mockResolvedValue({ ok: true, value: tx });
-    const account = {
-      id: 'a',
-      walletId: 'w',
-      chainId,
-      family: 'solana',
-      address: 'from',
-      derivationPath: tx.signer!.path,
-    } as Account;
-    expect(
-      await proposeSend(registry, {
-        account,
-        to: 'to',
-        asset: `${chainId}:native`,
-        amount: '1000',
-      }),
-    ).toMatchObject({ ok: true });
-    expect(mocks.prepareEvm).not.toHaveBeenCalled();
-    expect(mocks.txAttach.mock.calls[0]![0]).toMatchObject({
-      signer: tx.signer,
-      unsigned,
-      simulationOk: true,
-    });
-  });
+  it.each([undefined, { messageVersion: 'v0' as const }])(
+    'preserves the SOL format option %j through preparation and attachment',
+    async (solana) => {
+      mocks.txPropose.mockImplementation(async (intent) => ({
+        ok: true,
+        value: { ...tx, intent },
+      }));
+      const prepared = { ...unsigned, ...(solana ?? {}) };
+      mocks.prepareSolana.mockResolvedValue({ unsigned: prepared, simulation: { ok: true } });
+      mocks.txAttach.mockResolvedValue({ ok: true, value: { ...tx, state: 'simulated' } });
+      mocks.txEvaluate.mockResolvedValue({ ok: true, value: tx });
+      const account = {
+        id: 'a',
+        walletId: 'w',
+        chainId,
+        family: 'solana',
+        address: 'from',
+        derivationPath: tx.signer!.path,
+      } as Account;
+      expect(
+        await proposeSend(registry, {
+          account,
+          to: 'to',
+          asset: `${chainId}:native`,
+          amount: '1000',
+          ...(solana ? { solana } : {}),
+        }),
+      ).toMatchObject({ ok: true });
+      expect(mocks.prepareEvm).not.toHaveBeenCalled();
+      expect(mocks.prepareSolana).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ chainId }),
+        account.address,
+        solana,
+      );
+      expect(mocks.txAttach.mock.calls[0]![0]).toMatchObject({
+        signer: tx.signer,
+        unsigned: prepared,
+        simulationOk: true,
+      });
+    },
+  );
 
   it('expires an approval before signing, and does not sign when expiry cannot be checked', async () => {
     mocks.solanaBlockhashValid.mockResolvedValue(false);

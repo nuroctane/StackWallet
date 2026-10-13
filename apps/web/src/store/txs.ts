@@ -14,6 +14,7 @@ import {
   solanaBlockhashValid,
   solanaTransferStatus,
   type SolanaAdapter,
+  type SolanaPrepareOptions,
 } from '@stackwallet/chains-solana';
 import type { Account, TxIntent, TxRecord } from '@stackwallet/core-client';
 import {
@@ -50,6 +51,7 @@ export interface SendRequest {
   /** Base units. */
   amount: string;
   bitcoin?: BitcoinPrepareOptions;
+  solana?: SolanaPrepareOptions;
 }
 function cosmosAdapter(registry: ChainRegistry, chainId: string): CosmosAdapter {
   const a = registry.adapterFor(chainId);
@@ -104,6 +106,7 @@ export async function proposeSend(
               solanaAdapter(registry, account.chainId),
               proposed.value.intent,
               account.address,
+              req.solana,
             )
           : account.family === 'cosmos'
             ? await prepareCosmos(

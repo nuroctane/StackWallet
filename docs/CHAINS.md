@@ -153,12 +153,16 @@ mainnet and other Bitcoin-family sends remain outside this increment.
 ### Solana (`chains-solana`, @solana/kit)
 
 Current send coverage is single-key native SOL on Devnet only. `prepareSolana` produces a bounded
-legacy transfer and simulation for the core ledger; the core independently constructs the wire
+legacy or v0 native transfer and simulation for the core ledger; the core independently constructs the wire
 message and signs after policy re-evaluation and passphrase approval. The adapter does not receive
 key bytes. Every signing-flow RPC verifies `getGenesisHash` against the requested CAIP-2 cluster.
 RPC integer amounts outside JavaScript's exact range are refused. Simulation errors and transfers
 to executable or non-System-owned accounts appear in approval. The native message has no priority
-fee instruction; its fee preview comes from `getFeeForMessage`.
+fee instruction; its fee preview comes from `getFeeForMessage` for the exact selected message.
+Legacy remains the default; existing saved records without a version field stay legacy. The v0
+increment keeps the sender, recipient and System Program inline and encodes zero lookup tables.
+Both formats contain exactly one native transfer, with no added signers or program instructions.
+Approval exposes the chosen format. Broadcast accepts only the core's bounded native wire shape.
 
 Before approval, a stale blockhash expires the proposal. A broadcast timeout retains the core's
 signature as pending; finality polling decides confirmed/failed, and finalized height beyond the
@@ -174,10 +178,10 @@ program and decimals must agree; duplicate accounts and overflowing integer sums
 Independent endpoints cross-check exact base-unit totals. Read errors stay on the token row.
 Frozen, withheld and confidential amounts can restrict spendability; displayed public amounts
 do not authorize transfers. Labels are local display metadata and mint addresses preserve case.
-Mainnet sends, TSS ceremonies, SPL transfers, versioned messages and swaps remain disabled/unimplemented.
+Mainnet sends, TSS ceremonies, SPL transfers, address lookup tables, v1 messages and swaps remain disabled/unimplemented.
 The remaining bullets describe target coverage:
 
-- Versioned transactions, address lookup tables, compute budget and priority fee instructions.
+- Address lookup tables, v1 messages, compute budget and priority fee instructions.
 - SPL and Token-2022 (transfer fees, hooks surfaced as warnings). Associated token account
   creation folded into the intent's fee preview.
 - Simulation: `simulateTransaction` with account diffs for asset deltas.

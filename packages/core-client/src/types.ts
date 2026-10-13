@@ -636,6 +636,7 @@ export const SolanaTx = z.strictObject({
   lamports: Amount,
   recentBlockhash: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
   lastValidBlockHeight: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  messageVersion: z.enum(['legacy', 'v0']).optional(),
 });
 export type SolanaTx = z.infer<typeof SolanaTx>;
 export const CosmosTx = z.strictObject({

@@ -216,7 +216,8 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
       )}
       {solana && (
         <p className="text-[11px] text-muted">
-          One System Program transfer · valid through block height {solana.lastValidBlockHeight}. If
+          {solana.messageVersion === 'v0' ? 'Versioned v0' : 'Legacy'} · one System Program transfer
+          · no address lookup tables · valid through block height {solana.lastValidBlockHeight}. If
           expired, propose again.
         </p>
       )}
