@@ -9,6 +9,8 @@ import { formatUnits } from '../../lib/format.js';
 import { useDirectory } from '../../store/persist.js';
 import { useRegistry } from '../../store/RegistryContext.js';
 import { useHeadline } from '../../shell/ApprovalRail.js';
+import { TransactionRecovery } from '../../shell/TransactionRecovery.js';
+import { auditEventLabel } from '../../lib/audit.js';
 import type { ElementBodyProps } from './types.js';
 
 export function mergeHistory(
@@ -253,14 +255,14 @@ export function TransactionsElement({ pane, setProps }: ElementBodyProps) {
                     <Field label="Policy decision">{JSON.stringify(t.decision, null, 2)}</Field>
                     <Field label="Simulation">{JSON.stringify(t.simulation, null, 2)}</Field>
                   </dl>
+                  <TransactionRecovery tx={t} />
                   <p className="mt-3 text-[11px] text-faint">Core-verified audit trail</p>
                   <ol className="mt-1 space-y-2 text-[11px]">
                     {(view.ledger?.audit ?? [])
                       .filter((e) => e.txId === t.id)
                       .map((e) => (
                         <li key={e.index} className="break-all">
-                          {new Date(e.atMs).toLocaleString()} · {e.event} · {e.from ?? '—'} →{' '}
-                          {e.to ?? '—'}
+                          {new Date(e.atMs).toLocaleString()} · {auditEventLabel(e)}
                           {e.note ? ' · ' + e.note : ''}
                           <span className="block text-faint">
                             row {e.index} · {e.hashHex}

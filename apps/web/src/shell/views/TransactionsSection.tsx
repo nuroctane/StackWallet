@@ -6,6 +6,8 @@ import { vault } from '../../core/bridge.js';
 import { useVaultView } from '../../core/vault.js';
 import { explorerTxUrl, findChain } from '../../lib/chains.js';
 import { relativeTime } from '../../lib/format.js';
+import { auditEventLabel } from '../../lib/audit.js';
+import { TransactionRecovery } from '../TransactionRecovery.js';
 import { useRegistry } from '../../store/RegistryContext.js';
 import { StateChip, useHeadline } from '../ApprovalRail.js';
 import { useShell } from '../ShellContext.js';
@@ -87,12 +89,12 @@ export function TransactionsSection({ wallet }: { wallet: Wallet }) {
                         .filter((e) => e.txId === t.id)
                         .map((e) => (
                           <li key={e.index} title={`row ${e.index} · ${e.hashHex}`}>
-                            {new Date(e.atMs).toISOString().slice(11, 19)}{' '}
-                            {e.event === 'txProposed' ? 'proposed' : `${e.from} → ${e.to}`}
+                            {new Date(e.atMs).toISOString().slice(11, 19)} {auditEventLabel(e)}
                             {e.note ? ` · ${e.note}` : ''}
                           </li>
                         ))}
                     </ol>
+                    <TransactionRecovery tx={t} />
                   </div>
                 )}
               </li>

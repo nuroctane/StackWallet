@@ -47,6 +47,10 @@ pub enum AuditEvent {
         to: TxState,
         note: Option<String>,
     },
+    TxBroadcastRetry {
+        tx_id: String,
+        hash: String,
+    },
     CeremonyStarted {
         session_id: String,
         /// Absent for key generation and refresh.

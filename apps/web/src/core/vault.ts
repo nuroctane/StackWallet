@@ -367,6 +367,10 @@ export class VaultStore {
     return this.ledgerOp((v, device, now) => v.txReject(txId, device, now));
   }
 
+  txRetryBroadcast(txId: string, passphrase: string) {
+    return this.ledgerOp((v, device, now) => v.txRetryBroadcast(txId, passphrase, device, now));
+  }
+
   txReport(txId: string, state: TxState, note: string | null) {
     return this.ledgerOp((v, device, now) => v.txReport(txId, state, note, device, now));
   }

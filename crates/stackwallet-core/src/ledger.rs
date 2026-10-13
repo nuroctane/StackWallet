@@ -556,6 +556,69 @@ pub fn approve(
     Ok(out)
 }
 
+/// Authorize resending the already approved bytes without creating a new signature or releasing spend.
+pub fn retry_broadcast(
+    vault: &mut EncryptedVault,
+    tx_id: &str,
+    passphrase: &Secret,
+    device_id: &str,
+    now_ms: i64,
+) -> Result<TxRecord> {
+    vault.verify_passphrase(passphrase)?;
+    let mut ledger = load_ledger(vault)?;
+    let i = ledger.index(tx_id)?;
+    let tx = &ledger.txs[i];
+    if !matches!(
+        tx.state,
+        TxState::Signed | TxState::Broadcast | TxState::Pending
+    ) {
+        return Err(invalid(
+            "only an unresolved signed transaction can be retried",
+        ));
+    }
+    if tx.raw_signed_hex.as_ref().is_none_or(|raw| raw.is_empty()) {
+        return Err(invalid("no saved signed transaction bytes"));
+    }
+    let hash = tx
+        .hash
+        .clone()
+        .filter(|hash| !hash.is_empty())
+        .ok_or_else(|| invalid("no saved transaction hash"))?;
+    tx.unsigned
+        .as_ref()
+        .ok_or_else(|| invalid("no saved unsigned transaction"))?
+        .check_matches_intent(&tx.intent)?;
+    let ctx = ledger.context(tx_id, now_ms, tx.simulation_ok);
+    match policy::evaluate(&ledger.policies, &tx.intent, &ctx) {
+        Decision::Deny { reasons, .. } => {
+            return Err(invalid(format!("policy at retry: {}", reasons.join("; "))))
+        }
+        Decision::Allow {
+            required_approvers, ..
+        } => {
+            if required_approvers.iter().any(|r| {
+                r.at_least > 1 || (r.at_least == 1 && !r.device_ids.iter().any(|d| d == device_id))
+            }) {
+                return Err(invalid("this policy needs approvals from other devices"));
+            }
+        }
+    }
+    let mut chain = ledger.chain()?;
+    chain.append(
+        now_ms,
+        device_actor(device_id),
+        AuditEvent::TxBroadcastRetry {
+            tx_id: tx_id.into(),
+            hash,
+        },
+    );
+    ledger.audit = chain.entries().to_vec();
+    ledger.txs[i].updated_at_ms = now_ms;
+    let out = ledger.txs[i].clone();
+    save_ledger(vault, &ledger)?;
+    Ok(out)
+}
+
 pub fn reject(
     vault: &mut EncryptedVault,
     tx_id: &str,
@@ -660,6 +723,76 @@ pub fn set_policies(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retries_keep_original_bytes_state_reservation_and_verified_audit() {
+        let mut v = vault();
+        to_awaiting(&mut v, "retry");
+        let original = approve(&mut v, "retry", &pw(), "d", 4).unwrap();
+        for (step, state) in [
+            (5, TxState::Signed),
+            (7, TxState::Broadcast),
+            (9, TxState::Pending),
+        ] {
+            if state != TxState::Signed {
+                report(&mut v, "retry", state, None, "d", step).unwrap();
+            }
+            let before = load_ledger(&v).unwrap().audit.len();
+            let retried = retry_broadcast(&mut v, "retry", &pw(), "d", step + 1).unwrap();
+            assert_eq!(retried.state, state);
+            assert!(retried.state.reserves_spend());
+            assert_eq!(retried.raw_signed_hex, original.raw_signed_hex);
+            assert_eq!(retried.hash, original.hash);
+            let ledger = load_ledger(&v).unwrap();
+            assert_eq!(ledger.audit.len(), before + 1);
+            assert!(
+                matches!(&ledger.audit.last().unwrap().event, AuditEvent::TxBroadcastRetry { tx_id, hash }
+                if tx_id == "retry" && Some(hash) == original.hash.as_ref())
+            );
+            ledger.validate().unwrap();
+        }
+        report(&mut v, "retry", TxState::Confirmed, None, "d", 11).unwrap();
+        let before = load_ledger(&v).unwrap();
+        assert!(retry_broadcast(&mut v, "retry", &pw(), "d", 12).is_err());
+        assert_eq!(load_ledger(&v).unwrap(), before);
+    }
+
+    #[test]
+    fn retry_requires_passphrase_and_current_policy_without_discarding_signed_spend() {
+        let mut v = vault();
+        to_awaiting(&mut v, "retry");
+        assert!(retry_broadcast(&mut v, "retry", &pw(), "d", 4).is_err());
+        approve(&mut v, "retry", &pw(), "d", 5).unwrap();
+        let before = load_ledger(&v).unwrap();
+        assert!(retry_broadcast(&mut v, "retry", &Secret::new(b"wrong".to_vec()), "d", 6).is_err());
+        assert_eq!(load_ledger(&v).unwrap(), before);
+        for rule in [
+            Rule::DestinationDeny {
+                addresses: vec![TO.into()],
+            },
+            Rule::RequireApprovers {
+                device_ids: vec!["other".into()],
+                at_least: 1,
+            },
+        ] {
+            set_policies(
+                &mut v,
+                vec![Policy {
+                    id: "retry-policy".into(),
+                    name: "retry-policy".into(),
+                    mode: PolicyMode::Enforce,
+                    rules: vec![rule],
+                }],
+                "d",
+                7,
+            )
+            .unwrap();
+            let before = load_ledger(&v).unwrap();
+            assert!(retry_broadcast(&mut v, "retry", &pw(), "d", 8).is_err());
+            assert_eq!(load_ledger(&v).unwrap(), before);
+            assert!(before.txs[0].state.reserves_spend());
+        }
+    }
+
     #[test]
     fn live_reservations_do_not_age_out_and_confirmed_spending_uses_confirmation_time() {
         let mut v = vault();

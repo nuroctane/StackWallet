@@ -399,6 +399,24 @@ impl WasmVault {
         Ok(serde_json::to_string(&rec)?)
     }
 
+    pub fn tx_retry_broadcast(
+        &mut self,
+        tx_id: &str,
+        passphrase: String,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let rec = ledger::retry_broadcast(
+            &mut self.inner,
+            tx_id,
+            &secret_from_string(passphrase),
+            device_id,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(serde_json::to_string(&rec)?)
+    }
+
     pub fn tx_reject(
         &mut self,
         tx_id: &str,

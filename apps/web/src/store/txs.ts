@@ -203,44 +203,64 @@ async function approveAndBroadcast(
   const signed = await vault.txApprove(tx.id, passphrase);
   if (!signed.ok) return signed;
   if (signed.value.state !== 'signed' || !signed.value.rawSignedHex) return signed;
-  const b = await vault.txReport(tx.id, 'broadcast', null);
-  if (!b.ok) return b;
+  return broadcastSaved(registry, signed.value);
+}
+
+/** The core authorizes the saved record; callers cannot supply replacement bytes or a new intent. */
+export async function retryBroadcast(
+  registry: ChainRegistry,
+  txId: string,
+  passphrase: string,
+): Promise<Result<TxRecord>> {
+  if (activeSends.has(txId)) return { ok: false, error: 'This transfer is already being sent' };
+  activeSends.add(txId);
+  try {
+    const authorized = await vault.txRetryBroadcast(txId, passphrase);
+    if (!authorized.ok) return authorized;
+    return await broadcastSaved(registry, authorized.value);
+  } finally {
+    activeSends.delete(txId);
+  }
+}
+
+async function broadcastSaved(
+  registry: ChainRegistry,
+  signed: TxRecord,
+): Promise<Result<TxRecord>> {
+  if (
+    !['signed', 'broadcast', 'pending'].includes(signed.state) ||
+    !signed.rawSignedHex ||
+    !signed.hash ||
+    !signed.unsigned
+  )
+    return { ok: false, error: 'No unresolved signed transaction is available to broadcast' };
+  const tx = signed;
+  const solana = tx.unsigned && 'recentBlockhash' in tx.unsigned ? tx.unsigned : null;
+  const cosmos = tx.unsigned && 'timeoutHeight' in tx.unsigned ? tx.unsigned : null;
+  const bitcoin = tx.unsigned && 'inputs' in tx.unsigned ? tx.unsigned : null;
+  const raw = signed.rawSignedHex;
+  if (signed.state === 'signed') {
+    const b = await vault.txReport(tx.id, 'broadcast', null);
+    if (!b.ok) return b;
+  }
   try {
     const hash = bitcoin
-      ? await broadcastBitcoin(
-          bitcoinAdapter(registry, tx.intent.chainId),
-          bitcoin,
-          signed.value.rawSignedHex,
-        )
+      ? await broadcastBitcoin(bitcoinAdapter(registry, tx.intent.chainId), bitcoin, raw)
       : solana
-        ? await broadcastSolana(
-            solanaAdapter(registry, tx.intent.chainId),
-            tx.intent.chainId,
-            signed.value.rawSignedHex,
-          )
+        ? await broadcastSolana(solanaAdapter(registry, tx.intent.chainId), tx.intent.chainId, raw)
         : cosmos
-          ? await broadcastCosmos(
-              cosmosAdapter(registry, tx.intent.chainId),
-              cosmos,
-              signed.value.rawSignedHex,
-            )
-          : await broadcastEvm(
-              evmAdapter(registry, tx.intent.chainId),
-              tx.intent.chainId,
-              signed.value.rawSignedHex,
-            );
-    const note = (
-      solana ? hash === signed.value.hash : hash.toLowerCase() === signed.value.hash?.toLowerCase()
-    )
+          ? await broadcastCosmos(cosmosAdapter(registry, tx.intent.chainId), cosmos, raw)
+          : await broadcastEvm(evmAdapter(registry, tx.intent.chainId), tx.intent.chainId, raw);
+    const note = (solana ? hash === signed.hash : hash.toLowerCase() === signed.hash?.toLowerCase())
       ? null
       : `node reported ${hash}; tracking the core signature`;
+    if (signed.state === 'pending')
+      return note ? { ok: false, error: note } : { ok: true, value: signed };
     return vault.txReport(tx.id, 'pending', note);
   } catch (err) {
-    return vault.txReport(
-      tx.id,
-      'pending',
-      `Broadcast response uncertain: ${nodeMessage(err)}; tracking the core signature`,
-    );
+    const note = `Broadcast response uncertain: ${nodeMessage(err)}; tracking the core signature`;
+    if (signed.state === 'pending') return { ok: false, error: note };
+    return vault.txReport(tx.id, 'pending', note);
   }
 }
 

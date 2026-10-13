@@ -141,6 +141,12 @@ export interface VaultHandle {
   txEvaluate(txId: string, deviceId: string, nowMs: number): Promise<TxRecord>;
   /** Step-up approval; the core re-checks policy and signs. */
   txApprove(txId: string, passphrase: string, deviceId: string, nowMs: number): Promise<TxRecord>;
+  txRetryBroadcast(
+    txId: string,
+    passphrase: string,
+    deviceId: string,
+    nowMs: number,
+  ): Promise<TxRecord>;
   txReject(txId: string, deviceId: string, nowMs: number): Promise<TxRecord>;
   txReport(
     txId: string,
@@ -278,6 +284,7 @@ export interface WasmVaultObject {
   ): string;
   tx_evaluate(txId: string, deviceId: string, nowMs: number): string;
   tx_approve(txId: string, passphrase: string, deviceId: string, nowMs: number): string;
+  tx_retry_broadcast(txId: string, passphrase: string, deviceId: string, nowMs: number): string;
   tx_reject(txId: string, deviceId: string, nowMs: number): string;
   tx_report(
     txId: string,
@@ -496,6 +503,11 @@ class WasmVaultHandle implements VaultHandle {
   }
   async txApprove(txId: string, passphrase: string, deviceId: string, nowMs: number) {
     return TxRecord.parse(JSON.parse(this.raw.tx_approve(txId, passphrase, deviceId, nowMs)));
+  }
+  async txRetryBroadcast(txId: string, passphrase: string, deviceId: string, nowMs: number) {
+    return TxRecord.parse(
+      JSON.parse(this.raw.tx_retry_broadcast(txId, passphrase, deviceId, nowMs)),
+    );
   }
   async txReject(txId: string, deviceId: string, nowMs: number) {
     return TxRecord.parse(JSON.parse(this.raw.tx_reject(txId, deviceId, nowMs)));

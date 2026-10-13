@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   txAttach: vi.fn(),
   txEvaluate: vi.fn(),
   txApprove: vi.fn(),
+  txRetryBroadcast: vi.fn(),
   txReport: vi.fn(),
   prepareSolana: vi.fn(),
   broadcastSolana: vi.fn(),
@@ -32,7 +33,7 @@ vi.mock('@stackwallet/chains-evm', async (original) => ({
   broadcastEvm: mocks.broadcastEvm,
   prepareEvm: mocks.prepareEvm,
 }));
-import { approveAndSend, pollPending, proposeSend } from './txs.js';
+import { approveAndSend, pollPending, proposeSend, retryBroadcast } from './txs.js';
 
 const chainId = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
 const unsigned: SolanaTx = {
@@ -83,6 +84,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.solanaBlockhashValid.mockResolvedValue(true);
   mocks.txApprove.mockResolvedValue({ ok: true, value: signed });
+  mocks.txRetryBroadcast.mockResolvedValue({ ok: true, value: signed });
   mocks.txReport.mockImplementation(
     async (_id: string, state: TxRecord['state'], error: string | null) => ({
       ok: true,
@@ -92,6 +94,152 @@ beforeEach(() => {
   mocks.broadcastSolana.mockResolvedValue(signed.hash);
   mocks.cosmosApprovalValid.mockResolvedValue(true);
   mocks.bitcoinInputsUnspent.mockResolvedValue(true);
+});
+
+describe('original broadcast recovery', () => {
+  it.each(['evm', 'bitcoin', 'solana', 'cosmos'])(
+    'retries the original saved transaction on %s',
+    async (family) => {
+      const byFamily = {
+        evm: {
+          chainId: 'eip155:1',
+          unsigned: {
+            chainId: 1,
+            nonce: 0,
+            maxPriorityFeePerGas: '1',
+            maxFeePerGas: '2',
+            gasLimit: 21000,
+            to: '0x' + '1'.repeat(40),
+            value: '1000',
+            dataHex: '',
+          },
+          broadcast: mocks.broadcastEvm,
+          hash: '0x' + 'a'.repeat(64),
+        },
+        bitcoin: {
+          chainId: 'bip122:00000008819873e925422c1ff0f99f7c',
+          unsigned: {
+            chainId: 'bip122:00000008819873e925422c1ff0f99f7c',
+            from: 'from',
+            to: 'to',
+            amount: '1000',
+            fee: '200',
+            inputs: [{ txid: 'a'.repeat(64), vout: 0, previousTxHex: '00' }],
+          },
+          broadcast: mocks.broadcastBitcoin,
+          hash: 'a'.repeat(64),
+        },
+        solana: { chainId, unsigned, broadcast: mocks.broadcastSolana, hash: signed.hash },
+        cosmos: {
+          chainId: 'cosmos:osmo-test-5',
+          unsigned: {
+            chainId: 'cosmos:osmo-test-5',
+            from: 'from',
+            to: 'to',
+            amount: '1000',
+            publicKeyHex: 'public',
+            accountNumber: '42',
+            sequence: '0',
+            gasLimit: 130000,
+            feeAmount: '3250',
+            timeoutHeight: 150,
+          },
+          broadcast: mocks.broadcastCosmos,
+          hash: 'A'.repeat(64),
+        },
+      };
+      const fixture = byFamily[family as keyof typeof byFamily];
+      const record = {
+        ...signed,
+        state: 'pending' as const,
+        hash: fixture.hash,
+        intent: { ...signed.intent, chainId: fixture.chainId },
+        unsigned: fixture.unsigned,
+      };
+      mocks.txRetryBroadcast.mockResolvedValue({ ok: true, value: record });
+      fixture.broadcast.mockResolvedValue(fixture.hash);
+      const registry = { adapterFor: () => ({ family }) } as unknown as ChainRegistry;
+      expect(await retryBroadcast(registry, record.id, 'pw')).toMatchObject({
+        ok: true,
+        value: { hash: fixture.hash, state: 'pending' },
+      });
+      expect(fixture.broadcast.mock.calls[0]?.at(-1)).toBe(record.rawSignedHex);
+      expect(mocks.txApprove).not.toHaveBeenCalled();
+      expect(mocks.txReport).not.toHaveBeenCalled();
+    },
+  );
+  it('honors a core authorization or persistence refusal before any network send', async () => {
+    mocks.txRetryBroadcast.mockResolvedValue({ ok: false, error: 'Unlock again' });
+    expect(await retryBroadcast(registry, tx.id, 'pw')).toEqual({
+      ok: false,
+      error: 'Unlock again',
+    });
+    expect(mocks.txReport).not.toHaveBeenCalled();
+    expect(mocks.broadcastSolana).not.toHaveBeenCalled();
+    expect(mocks.txApprove).not.toHaveBeenCalled();
+  });
+
+  it('resends the core-saved bytes without signing again or preparing a replacement', async () => {
+    await retryBroadcast(registry, tx.id, 'pw');
+    expect(mocks.txRetryBroadcast).toHaveBeenCalledWith(tx.id, 'pw');
+    expect(mocks.broadcastSolana).toHaveBeenCalledWith(
+      expect.anything(),
+      chainId,
+      signed.rawSignedHex,
+    );
+    expect(mocks.txReport.mock.calls.map((args) => args[1])).toEqual(['broadcast', 'pending']);
+    expect(mocks.txApprove).not.toHaveBeenCalled();
+    expect(mocks.prepareSolana).not.toHaveBeenCalled();
+  });
+
+  it('retains pending state after a timed-out retry instead of releasing spend or attempting an illegal transition', async () => {
+    mocks.txRetryBroadcast.mockResolvedValue({ ok: true, value: { ...signed, state: 'pending' } });
+    mocks.broadcastSolana.mockRejectedValue(new Error('timeout'));
+    expect(await retryBroadcast(registry, tx.id, 'pw')).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('tracking the core signature'),
+    });
+    expect(mocks.txReport).not.toHaveBeenCalled();
+  });
+
+  it('does not rewrite a pending hash when the node reports a different signature', async () => {
+    mocks.txRetryBroadcast.mockResolvedValue({ ok: true, value: { ...signed, state: 'pending' } });
+    mocks.broadcastSolana.mockResolvedValue('wrong-signature');
+    expect(await retryBroadcast(registry, tx.id, 'pw')).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('tracking the core signature'),
+    });
+    expect(mocks.txReport).not.toHaveBeenCalled();
+  });
+
+  it('refuses incomplete or terminal records even if the bridge returns them', async () => {
+    for (const record of [
+      { ...signed, state: 'confirmed' },
+      { ...signed, rawSignedHex: null },
+    ]) {
+      mocks.txRetryBroadcast.mockResolvedValue({ ok: true, value: record });
+      expect(await retryBroadcast(registry, tx.id, 'pw')).toMatchObject({ ok: false });
+    }
+    expect(mocks.broadcastSolana).not.toHaveBeenCalled();
+  });
+
+  it('serializes retries with active approvals and suspends the polling tick', async () => {
+    let resolve!: (result: unknown) => void;
+    mocks.txRetryBroadcast.mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const pending = retryBroadcast(registry, tx.id, 'pw');
+    await pollPending(registry, [signed]);
+    expect(mocks.txReport).not.toHaveBeenCalled();
+    expect(await retryBroadcast(registry, tx.id, 'pw')).toMatchObject({ ok: false });
+    expect(await approveAndSend(registry, tx, 'pw')).toMatchObject({ ok: false });
+    resolve({ ok: true, value: signed });
+    await pending;
+    expect(mocks.broadcastSolana).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('Bitcoin core lifecycle orchestration', () => {
@@ -152,6 +300,10 @@ describe('Bitcoin core lifecycle orchestration', () => {
     expect(mocks.txApprove).not.toHaveBeenCalled();
   });
   it('tracks the core txid after an ambiguous broadcast and a restart without resending', async () => {
+    mocks.txApprove.mockResolvedValue({
+      ok: true,
+      value: { ...bitcoinTx, state: 'signed', rawSignedHex: '0x0102', hash: 'a'.repeat(64) },
+    });
     mocks.broadcastBitcoin.mockRejectedValue(new Error('timeout'));
     expect(await approveAndSend(bitcoinRegistry, bitcoinTx, 'pw')).toMatchObject({
       ok: true,

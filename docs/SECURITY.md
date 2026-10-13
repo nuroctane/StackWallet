@@ -108,6 +108,15 @@ and reserved spend. Signed, Broadcast and Pending records are tracked after rest
 families without automatically sending a transaction again. EVM receipt and transaction lookup
 responses must contain the requested hash before they can change ledger state.
 
+Unresolved Signed, Broadcast and Pending records offer an explicit original-broadcast retry.
+The Rust core verifies the passphrase, checks the current policy and local-device approval
+requirements, validates the saved intent binding, and seals a hash-chained retry authorization
+before the browser can send. The action reuses the core's original signed bytes and hash on
+EVM, Bitcoin, Solana and Cosmos; it never prepares a replacement or creates a signature.
+Terminal and incomplete records cannot be retried. Uncertain retry responses keep the original
+signature tracked and its spend reserved; polling resolves the outcome. Retrying is not a
+transaction cancellation, fee replacement, or automatic rebroadcast on restart.
+
 Native balance reads verify the endpoint's EVM chain id, Solana genesis, Cosmos network, or
 Bitcoin-family genesis against the requested chain. Successful identity checks share a bounded
 per-adapter cache for one minute, and simultaneous checks share an in-flight request. Endpoint

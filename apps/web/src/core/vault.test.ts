@@ -181,6 +181,9 @@ class FakeVault implements VaultHandle {
   async txApprove(): Promise<never> {
     throw new Error('not used');
   }
+  async txRetryBroadcast(): Promise<never> {
+    throw new Error('not used');
+  }
   async txReject(): Promise<never> {
     throw new Error('not used');
   }
