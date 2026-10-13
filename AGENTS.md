@@ -85,8 +85,9 @@ runs `.github/workflows/deploy.yml`, which builds `apps/web` and deploys the ass
 Worker `stackwallet` (config in `apps/web/wrangler.jsonc`) to
 `https://stackwallet.civetadeicollegium.workers.dev`, then verifies the page is live and
 opens+closes a `deployment` issue. It needs the repo secrets `CLOUDFLARE_API_TOKEN`
-(Workers Scripts: Edit) and `CLOUDFLARE_ACCOUNT_ID`; without the token the run stays green
-and skips the deploy. Do not also run `wrangler deploy` by hand after a push (double deploy).
+(Workers Scripts: Edit) and `CLOUDFLARE_ACCOUNT_ID`; missing credentials fail the workflow.
+Successful deployments verify every published build file before notifying GitHub.
+Do not also run `wrangler deploy` by hand after a push (double deploy).
 Manual fallback: `pnpm --filter @stackwallet/web build; pnpm --filter @stackwallet/web run deploy`.
 
 **Windows shell note:** this machine's `PATH` is longer than cmd.exe's 8191-char limit, so pnpm
