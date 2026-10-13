@@ -61,6 +61,32 @@ export abstract class BaseAdapter<F extends ChainFamily = ChainFamily> implement
   readonly rpc: RpcPool;
   protected readonly fetchImpl: typeof fetch | undefined;
   protected readonly timeoutMs: number | undefined;
+  private readonly verified = new Map<string, number>();
+  private readonly verifying = new Map<string, Promise<void>>();
+
+  protected async verifyEndpoint(
+    chainId: ChainId,
+    url: string,
+    check: () => Promise<void>,
+  ): Promise<void> {
+    const key = JSON.stringify([chainId, url]);
+    const verifiedAt = this.verified.get(key);
+    if (verifiedAt !== undefined && Date.now() >= verifiedAt && Date.now() - verifiedAt < 60_000)
+      return;
+    let pending = this.verifying.get(key);
+    if (!pending) {
+      pending = check()
+        .then(() => {
+          if (this.verified.size >= 256) this.verified.clear();
+          this.verified.set(key, Date.now());
+        })
+        .finally(() => {
+          this.verifying.delete(key);
+        });
+      this.verifying.set(key, pending);
+    }
+    await pending;
+  }
 
   protected constructor(
     readonly family: F,

@@ -41,7 +41,23 @@ export function aggregateNative(
   const staleMs = options.staleMs ?? BALANCE_STALE_MS * 2;
 
   const byAsset = new Map<string, { total: NativeTotal; sum: bigint }>();
+  const unique = new Map<string, Account>();
   for (const account of accounts) {
+    const address = account.chainId.startsWith('eip155:')
+      ? account.address.toLowerCase()
+      : account.address;
+    const key = JSON.stringify([account.chainId, address]);
+    const previous = unique.get(key);
+    const entry = balancesByAccount.get(account.id);
+    const before = previous ? balancesByAccount.get(previous.id) : undefined;
+    // Prefer a successful, recent observation when duplicate wallet views disagree in age.
+    if (
+      !previous ||
+      (entry && !entry.error && (!before || before.error || entry.fetchedAtMs > before.fetchedAtMs))
+    )
+      unique.set(key, account);
+  }
+  for (const account of unique.values()) {
     const info = chainInfoLookup(account.chainId);
     if (!info) continue;
     const ref = info.nativeAsset.ref;

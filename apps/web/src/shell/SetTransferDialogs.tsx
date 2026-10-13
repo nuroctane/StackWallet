@@ -5,7 +5,8 @@ import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
 import { activeDevices, useDevices } from '../store/devices.js';
 import { directory, useDirectory } from '../store/persist.js';
-import { exportPayload, subtree } from '../store/sets.js';
+import { exportPayload, importPayload, subtree } from '../store/sets.js';
+import { defaultContext } from '../store/store.js';
 
 const MAX_BUNDLE_FILE_BYTES = 8 * 1024 * 1024;
 
@@ -200,7 +201,15 @@ function ImportForm({ onClose }: { onClose: () => void }) {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    const r = await vault.importSet(passphrase, text);
+    const r = await vault.importSet(passphrase, text, (set) => {
+      const checked = importPayload(
+        directory.getSnapshot(),
+        set.directory,
+        set.folderId,
+        defaultContext,
+      );
+      if (!checked.ok) throw new Error(checked.error);
+    });
     setPassphrase('');
     if (!r.ok) {
       setError(r.error);

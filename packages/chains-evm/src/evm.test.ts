@@ -17,7 +17,7 @@ const EXPECTED_FOR_G = ['0x7E5F4552', '091A69125d', '5DfCb7b8C2', '659029395Bdf'
 function rpcFetch(handler: (method: string, params: unknown[]) => unknown): typeof fetch {
   return async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as { method: string; params: unknown[] };
-    const result = handler(body.method, body.params);
+    const result = body.method === 'eth_chainId' ? '0x1' : handler(body.method, body.params);
     return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status: 200 });
   };
 }
@@ -67,6 +67,48 @@ describe('EvmAdapter addresses', () => {
 });
 
 describe('EvmAdapter reads', () => {
+  it('rejects balances on a different endpoint chain before reading them', async () => {
+    const methods: string[] = [];
+    const evm = createEvmAdapter({
+      fetch: async (_input, init) => {
+        const req = JSON.parse(String(init?.body));
+        methods.push(req.method);
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0x2' }));
+      },
+    });
+    await expect(evm.getBalances(EXPECTED_FOR_G, 'eip155:1')).rejects.toThrow(/chain id/);
+    expect(methods.every((m) => m === 'eth_chainId')).toBe(true);
+  });
+
+  it('fails over from a receipt for another hash to the correct receipt', async () => {
+    const hash = '0x' + 'aa'.repeat(32);
+    const pool = new MemoryRpcPool();
+    pool.setEndpoints('eip155:1', ['https://wrong.example', 'https://right.example']);
+    const evm = createEvmAdapter({
+      rpc: pool,
+      fetch: async (input, init) => {
+        const req = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            result:
+              req.method === 'eth_chainId'
+                ? '0x1'
+                : {
+                    transactionHash: String(input).includes('wrong')
+                      ? '0x' + 'bb'.repeat(32)
+                      : hash,
+                    status: '0x1',
+                    blockNumber: '0x10',
+                  },
+          }),
+        );
+      },
+    });
+    expect(await evm.status(hash, 'eip155:1')).toEqual({ state: 'confirmed', blockNumber: 16 });
+    expect(pool.endpoints('eip155:1').find((e) => e.url.includes('wrong'))?.healthy).toBe(false);
+  });
   it('reads tracked ERC-20 balances with cross-checks and isolates contract failures', async () => {
     const contract = '0x' + 'ab'.repeat(20);
     const bad = '0x' + 'cd'.repeat(20);
@@ -135,17 +177,25 @@ describe('EvmAdapter reads', () => {
     let calls = 0;
     const evm = createEvmAdapter({
       rpc: pool,
-      fetch: async () => {
+      fetch: async (_input, init) => {
         calls++;
         if (calls === 1) return new Response('bad gateway', { status: 502 });
-        return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0x2a' }), {
-          status: 200,
-        });
+        const method = JSON.parse(String(init?.body)).method;
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            result: method === 'eth_chainId' ? '0x1' : '0x2a',
+          }),
+          {
+            status: 200,
+          },
+        );
       },
     });
     const [h] = await evm.getBalances(EXPECTED_FOR_G, 'eip155:1');
     expect(h?.amount).toBe('42');
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     expect(pool.endpoints('eip155:1').filter((e) => !e.healthy)).toHaveLength(1);
 
     const bad = createEvmAdapter({ fetch: rpcFetch(() => 'not-hex') });
@@ -156,27 +206,37 @@ describe('EvmAdapter reads', () => {
 
   it('maps receipts to tx status', async () => {
     const confirmed = createEvmAdapter({
-      fetch: rpcFetch(() => ({ status: '0x1', blockNumber: '0x10', transactionHash: '0xaa' })),
+      fetch: rpcFetch(() => ({
+        status: '0x1',
+        blockNumber: '0x10',
+        transactionHash: '0x' + 'aa'.repeat(32),
+      })),
     });
-    expect(await confirmed.status('0xaa', 'eip155:1')).toEqual({
+    expect(await confirmed.status('0x' + 'aa'.repeat(32), 'eip155:1')).toEqual({
       state: 'confirmed',
       blockNumber: 16,
     });
 
     const reverted = createEvmAdapter({
-      fetch: rpcFetch(() => ({ status: '0x0', blockNumber: '0x10' })),
+      fetch: rpcFetch(() => ({
+        status: '0x0',
+        blockNumber: '0x10',
+        transactionHash: '0x' + 'aa'.repeat(32),
+      })),
     });
-    expect(await reverted.status('0xaa', 'eip155:1')).toMatchObject({ state: 'failed' });
+    expect(await reverted.status('0x' + 'aa'.repeat(32), 'eip155:1')).toMatchObject({
+      state: 'failed',
+    });
 
     const pending = createEvmAdapter({
       fetch: rpcFetch((method) =>
-        method === 'eth_getTransactionReceipt' ? null : { hash: '0xaa' },
+        method === 'eth_getTransactionReceipt' ? null : { hash: '0x' + 'aa'.repeat(32) },
       ),
     });
-    expect(await pending.status('0xaa', 'eip155:1')).toEqual({ state: 'pending' });
+    expect(await pending.status('0x' + 'aa'.repeat(32), 'eip155:1')).toEqual({ state: 'pending' });
 
     const unknown = createEvmAdapter({ fetch: rpcFetch(() => null) });
-    expect(await unknown.status('0xaa', 'eip155:1')).toEqual({ state: 'unknown' });
+    expect(await unknown.status('0x' + 'aa'.repeat(32), 'eip155:1')).toEqual({ state: 'unknown' });
   });
 
   it('refuses to pretend unimplemented capabilities work', async () => {

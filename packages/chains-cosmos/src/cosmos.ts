@@ -214,6 +214,15 @@ export class CosmosAdapter extends BaseAdapter<'cosmos'> {
         this.rpc,
         chainId,
         async (base) => {
+          await this.verifyEndpoint(chainId, base, async () => {
+            const info = await this.rest(
+              '/cosmos/base/tendermint/v1beta1/node_info',
+              z.object({ default_node_info: z.object({ network: z.string().max(64) }) }),
+              NOT_FOUND,
+            )(base);
+            if (!info || `cosmos:${info.default_node_info.network}` !== chainId)
+              throw new Error('LCD network does not match the requested Cosmos chain');
+          });
           const res = await balancesFor(base);
           if (res === null) return null;
           const map: BalanceMap = new Map();

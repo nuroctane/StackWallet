@@ -36,6 +36,7 @@ function rpc(answers: Record<string, unknown>, failing: string[] = []): typeof f
 }
 
 const ANSWERS = {
+  eth_chainId: '0xaa36a7',
   eth_getTransactionCount: '0x5',
   eth_getBlockByNumber: { baseFeePerGas: '0x3b9aca00' },
   eth_getBalance: '0xde0b6b3a7640000',

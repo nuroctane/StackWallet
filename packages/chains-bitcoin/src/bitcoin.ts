@@ -217,6 +217,16 @@ export class BitcoinAdapter extends BaseAdapter<'bitcoin'> {
         this.rpc,
         chainId,
         async (base) => {
+          await this.verifyEndpoint(chainId, base, async () => {
+            const genesis = z
+              .string()
+              .regex(/^[0-9a-fA-F]{64}$/)
+              .parse(
+                await fetchText(`${base.replace(/\/$/, '')}/block-height/0`, this.fetchOptions()),
+              );
+            if (`bip122:${genesis.slice(0, 32).toLowerCase()}` !== chainId)
+              throw new Error('Esplora genesis does not match the requested Bitcoin chain');
+          });
           const stats = await statsFor(base);
           return stats === null ? null : balanceFromStats(stats).toString();
         },

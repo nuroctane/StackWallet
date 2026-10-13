@@ -197,6 +197,11 @@ export class SolanaAdapter extends BaseAdapter<'solana'> {
       this.rpc,
       chainId,
       async (url) => {
+        await this.verifyEndpoint(chainId, url, async () => {
+          const genesis = await this.jsonRpc('getGenesisHash', [], SolAddress)(url);
+          if (`solana:${genesis.slice(0, 32)}` !== chainId)
+            throw new Error('RPC genesis hash does not match this Solana cluster');
+        });
         const res = await getBalance(url);
         // getBalance carries the slot it was evaluated at, so the head comes for free.
         this.noteBlock(url, res.context.slot);

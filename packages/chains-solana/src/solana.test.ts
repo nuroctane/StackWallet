@@ -20,7 +20,14 @@ function rpcFetch(handler: (method: string, params: unknown[]) => unknown): type
   return async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as { method: string; params: unknown[] };
     return new Response(
-      JSON.stringify({ jsonrpc: '2.0', id: 1, result: handler(body.method, body.params) }),
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        result:
+          body.method === 'getGenesisHash'
+            ? '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
+            : handler(body.method, body.params),
+      }),
     );
   };
 }

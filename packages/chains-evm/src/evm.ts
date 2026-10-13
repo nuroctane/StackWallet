@@ -27,14 +27,15 @@ const HexQuantity = z
   .regex(/^0x[0-9a-fA-F]+$/)
   .max(66);
 const Wei = HexQuantity.transform((h) => BigInt(h));
+const TxHashHex = z.string().regex(/^0x[0-9a-fA-F]{64}$/);
 const Receipt = z
   .object({
-    status: HexQuantity.optional(),
-    blockNumber: HexQuantity.nullable(),
-    transactionHash: z.string().optional(),
+    status: HexQuantity.refine((v) => BigInt(v) === 0n || BigInt(v) === 1n).optional(),
+    blockNumber: HexQuantity.refine((v) => BigInt(v) <= BigInt(Number.MAX_SAFE_INTEGER)).nullable(),
+    transactionHash: TxHashHex,
   })
   .nullable();
-const TxByHash = z.object({ hash: z.string() }).nullable();
+const TxByHash = z.object({ hash: TxHashHex }).nullable();
 
 const ascii = (s: string) => new TextEncoder().encode(s);
 
@@ -98,7 +99,18 @@ export class EvmAdapter extends BaseAdapter<'evm'> {
 
   /** One JSON-RPC call with endpoint failover; the result is validated by `schema`. */
   call<T>(chainId: ChainId, method: string, params: unknown[], schema: z.ZodType<T>): Promise<T> {
-    return withFailover(this.rpc, chainId, this.jsonRpc(method, params, schema));
+    return withFailover(this.rpc, chainId, this.checkedRpc(chainId, method, params, schema));
+  }
+
+  private checkedRpc<T>(chainId: ChainId, method: string, params: unknown[], schema: z.ZodType<T>) {
+    return async (url: string) => {
+      await this.verifyEndpoint(chainId, url, async () => {
+        const id = await this.jsonRpc('eth_chainId', [], Wei)(url);
+        if (`eip155:${id}` !== chainId)
+          throw new Error('RPC chain id does not match the requested EVM chain');
+      });
+      return this.jsonRpc(method, params, schema)(url);
+    };
   }
 
   /** One JSON-RPC call against a specific endpoint, for callers that run their own failover. */
@@ -112,7 +124,7 @@ export class EvmAdapter extends BaseAdapter<'evm'> {
     const { value, provenance } = await withCrossCheck(
       this.rpc,
       chainId,
-      this.jsonRpc('eth_getBalance', [addr, 'latest'], Wei),
+      this.checkedRpc(chainId, 'eth_getBalance', [addr, 'latest'], Wei),
       { equal: (a, b) => a === b, describe: (v) => v.toString() },
     );
     const tokens: Holding[] = [];
@@ -124,7 +136,8 @@ export class EvmAdapter extends BaseAdapter<'evm'> {
         const balance = await withCrossCheck(
           this.rpc,
           chainId,
-          this.jsonRpc(
+          this.checkedRpc(
+            chainId,
             'eth_call',
             [
               {
@@ -162,7 +175,16 @@ export class EvmAdapter extends BaseAdapter<'evm'> {
 
   async status(hash: TxHash, chainId: ChainId): Promise<TxStatus> {
     this.requireChain(chainId);
-    const receipt = await this.call(chainId, 'eth_getTransactionReceipt', [hash], Receipt);
+    TxHashHex.parse(hash);
+    const receipt = await this.call(
+      chainId,
+      'eth_getTransactionReceipt',
+      [hash],
+      Receipt.refine(
+        (r) => r === null || r.transactionHash.toLowerCase() === hash.toLowerCase(),
+        'Receipt transaction hash does not match the requested transaction',
+      ),
+    );
     if (receipt && receipt.blockNumber) {
       const blockNumber = Number(BigInt(receipt.blockNumber));
       // Pre-Byzantium receipts have no status field; treat inclusion as success.
@@ -171,7 +193,15 @@ export class EvmAdapter extends BaseAdapter<'evm'> {
       }
       return { state: 'failed', reason: 'reverted' };
     }
-    const pending = await this.call(chainId, 'eth_getTransactionByHash', [hash], TxByHash);
+    const pending = await this.call(
+      chainId,
+      'eth_getTransactionByHash',
+      [hash],
+      TxByHash.refine(
+        (r) => r === null || r.hash.toLowerCase() === hash.toLowerCase(),
+        'Transaction hash does not match the requested transaction',
+      ),
+    );
     return pending ? { state: 'pending' } : { state: 'unknown' };
   }
 }

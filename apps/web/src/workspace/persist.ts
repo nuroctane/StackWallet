@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { reportStorageSave } from '../store/storageStatus.js';
 
 import type { StorageLike } from '../store/persist.js';
 import { defaultWorkspace } from './defaults.js';
@@ -88,28 +89,38 @@ export function createPersistedWorkspace(
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let dirty = false;
+  let failures = 0;
+  let disposed = false;
   const flush = () => {
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
-    if (!dirty || !storage) return;
-    dirty = false;
-    saveWorkspace(storage, store.getSnapshot());
+    if (!dirty) return;
+    const ok = !!storage && saveWorkspace(storage, store.getSnapshot());
+    reportStorageSave('layout', ok);
+    if (ok) {
+      dirty = false;
+      failures = 0;
+    } else if (!disposed && ++failures < 3) timer = setTimeout(flush, 5_000);
   };
   const unsubscribe = store.subscribe(() => {
     dirty = true;
+    failures = 0;
     if (timer !== undefined) clearTimeout(timer);
     timer = setTimeout(flush, debounceMs);
   });
 
   const hasWindow = typeof window !== 'undefined';
   if (hasWindow) window.addEventListener('pagehide', flush);
+  if (hasWindow) window.addEventListener('focus', flush);
 
   const result: PersistedWorkspace = {
     store,
     flush,
     dispose() {
+      disposed = true;
       unsubscribe();
       if (hasWindow) window.removeEventListener('pagehide', flush);
+      if (hasWindow) window.removeEventListener('focus', flush);
       flush();
     },
   };

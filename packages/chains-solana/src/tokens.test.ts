@@ -153,6 +153,10 @@ describe('explicit Solana token reads', () => {
       }
       return r;
     });
+    if (fault === 'cluster') {
+      await expect(sol.getBalances(WALLET, CHAIN)).rejects.toThrow(/genesis hash/);
+      return;
+    }
     const rows = await sol.getBalances(WALLET, CHAIN);
     expect(rows[0]?.amount).toBe('123');
     expect(rows[1]?.error).toBeTruthy();

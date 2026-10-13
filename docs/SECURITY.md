@@ -67,6 +67,32 @@ other paired devices (their own core)
 | Time-of-check / time-of-use on caps                        | Caps count reserved spend (`Awaiting`, `Signing`) in addition to confirmed transactions.                                                                                                                                                                                                                                                                                                                          |
 | Audit log tampering                                        | Hash-chained rows; UI verifies the chain and shows breaks.                                                                                                                                                                                                                                                                                                                                                        |
 
+### Browser persistence and transaction recovery
+
+Vault creation and mutation require durable storage. Browser mutations hold an origin-wide Web
+Lock and compare the loaded ciphertext with the current stored ciphertext before writing. A
+stale tab refuses the mutation and reloads the committed vault locked; it must be unlocked again.
+Browsers without Web Locks cannot write vaults. A failed save discards the unsaved live handle
+and restores committed ciphertext, so failed passphrase rotation cannot leave two active
+credentials. Device-table writes, key imports, signing, exposure records and policy edits use
+the same guard. Invalid set directory graphs are rejected before committing imported keys.
+
+Directory and layout saves retain dirty state on failure, retry with a bounded timer and on
+window focus/page exit, and expose unsaved changes in the status bar. Portfolio totals count a
+unique chain/address once even when several wallet views refer to it.
+
+Live spend reservations remain counted across every spend-cap window until resolved; they do
+not age out with the draft. Confirmed spend uses the recorded confirmation time. Aggregated
+USD amounts saturate instead of overflowing. Ambiguous broadcasts retain the core-computed hash
+and reserved spend. Signed, Broadcast and Pending records are tracked after restart on all four
+families without automatically sending a transaction again. EVM receipt and transaction lookup
+responses must contain the requested hash before they can change ledger state.
+
+Native balance reads verify the endpoint's EVM chain id, Solana genesis, Cosmos network, or
+Bitcoin-family genesis against the requested chain. Successful identity checks share a bounded
+per-adapter cache for one minute, and simultaneous checks share an in-flight request. Endpoint
+agreement alone is not chain identity or cryptographic proof of balance/finality.
+
 ## 4. Cryptography
 
 - Encryption at rest: XChaCha20-Poly1305. KDF: Argon2id (memory-hard parameters tuned per

@@ -236,13 +236,11 @@ async function approveAndBroadcast(
       : `node reported ${hash}; tracking the core signature`;
     return vault.txReport(tx.id, 'pending', note);
   } catch (err) {
-    if (solana || cosmos || bitcoin)
-      return vault.txReport(
-        tx.id,
-        'pending',
-        `Broadcast response uncertain: ${nodeMessage(err)}; tracking the core signature`,
-      );
-    return vault.txReport(tx.id, 'failed', `network refused it: ${nodeMessage(err)}`);
+    return vault.txReport(
+      tx.id,
+      'pending',
+      `Broadcast response uncertain: ${nodeMessage(err)}; tracking the core signature`,
+    );
   }
 }
 
@@ -263,7 +261,6 @@ export async function pollPending(
         const bitcoin = t.unsigned && 'inputs' in t.unsigned ? t.unsigned : null;
         // Resume tracking after a crash between signing, broadcast and the saved response.
         if (t.state !== 'pending') {
-          if (!solana && !cosmos && !bitcoin) continue;
           if (t.state === 'signed') {
             const resumed = await vault.txReport(
               t.id,

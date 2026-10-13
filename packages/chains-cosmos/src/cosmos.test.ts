@@ -28,9 +28,15 @@ const ETH20 = '7e5f4552091a69125d5dfcb7b8c2659029395bdf';
 const expectBech32 = (prefix: string, hex: string) =>
   bech32.encode(prefix, bech32.toWords(hexToBytes(hex)));
 
-function restFetch(handler: (url: URL) => unknown | Response): typeof fetch {
+function restFetch(
+  handler: (url: URL) => unknown | Response,
+  network = 'cosmoshub-4',
+): typeof fetch {
   return async (input) => {
-    const out = handler(new URL(String(input)));
+    const url = new URL(String(input));
+    const out = url.pathname.endsWith('/node_info')
+      ? { default_node_info: { network } }
+      : handler(url);
     return out instanceof Response ? out : new Response(JSON.stringify(out));
   };
 }
@@ -114,6 +120,17 @@ describe('CosmosAdapter addresses', () => {
 
 describe('CosmosAdapter reads', () => {
   const hubAddr = expectBech32('cosmos', H160);
+  it('rejects a foreign network before reading bank balances', async () => {
+    const paths: string[] = [];
+    const cosmos = createCosmosAdapter({
+      fetch: async (input) => {
+        paths.push(new URL(String(input)).pathname);
+        return new Response(JSON.stringify({ default_node_info: { network: 'osmosis-1' } }));
+      },
+    });
+    await expect(cosmos.getBalances(hubAddr, HUB)).rejects.toThrow(/network/);
+    expect(paths.every((path) => path.endsWith('/node_info'))).toBe(true);
+  });
 
   it('reads bank balances and maps denoms', async () => {
     const cosmos = createCosmosAdapter({
@@ -196,7 +213,7 @@ describe('CosmosAdapter reads', () => {
 
   it('adds a zero native holding when the account holds only other denoms', async () => {
     const cosmos = createCosmosAdapter({
-      fetch: restFetch(() => ({ balances: [{ denom: 'uion', amount: '7' }] })),
+      fetch: restFetch(() => ({ balances: [{ denom: 'uion', amount: '7' }] }), 'osmosis-1'),
     });
     const holdings = await cosmos.getBalances(expectBech32('osmo', H160), OSMO);
     expect(holdings[0]).toMatchObject({ assetRef: `${OSMO}:native`, amount: '0' });

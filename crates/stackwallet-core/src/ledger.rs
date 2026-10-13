@@ -258,8 +258,11 @@ impl Ledger {
                 last = Some(last.map_or(t.updated_at_ms, |l| l.max(t.updated_at_ms)));
                 let usd = t.intent.usd_micros.unwrap_or(0);
                 for (w, span) in windows {
-                    if now_ms - t.created_at_ms <= span {
-                        *spent.entry(w).or_default() += usd;
+                    // Live signatures and proposals reserve allowance until resolved.
+                    // Confirmed spending starts at confirmation, never at draft creation.
+                    if t.state.reserves_spend() || now_ms.saturating_sub(t.updated_at_ms) <= span {
+                        let total = spent.entry(w).or_default();
+                        *total = total.saturating_add(usd);
                     }
                 }
             }
@@ -657,6 +660,34 @@ pub fn set_policies(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn live_reservations_do_not_age_out_and_confirmed_spending_uses_confirmation_time() {
+        let mut v = vault();
+        let mut tx = to_awaiting(&mut v, "old");
+        tx.state = TxState::Signed;
+        let later = 7_200_001;
+        let mut ledger = Ledger {
+            txs: vec![tx],
+            ..Ledger::default()
+        };
+        assert_eq!(
+            ledger.context("new", later, None).spent_usd_micros[&Window::H1],
+            5_000_000
+        );
+        ledger.txs[0].state = TxState::Confirmed;
+        ledger.txs[0].updated_at_ms = later;
+        assert_eq!(
+            ledger.context("new", later + 1, None).spent_usd_micros[&Window::H1],
+            5_000_000
+        );
+        assert_eq!(
+            ledger
+                .context("new", later + 3_600_001, None)
+                .spent_usd_micros
+                .get(&Window::H1),
+            None
+        );
+    }
     use super::*;
     use crate::intent::{Amount, Proposer, TxIntentKind};
     use crate::model::{AssetRef, ChainId};
@@ -677,6 +708,49 @@ mod tests {
 
     fn pw() -> Secret {
         Secret::new(b"pw".to_vec())
+    }
+
+    #[test]
+    fn signing_an_old_proposal_does_not_open_new_spend_allowance() {
+        let mut v = vault();
+        set_policies(
+            &mut v,
+            vec![Policy {
+                id: "cap".into(),
+                name: "cap".into(),
+                mode: PolicyMode::Enforce,
+                rules: vec![Rule::SpendCap {
+                    window: Window::H1,
+                    usd_micros: 5_000_000,
+                }],
+            }],
+            "d",
+            0,
+        )
+        .unwrap();
+        assert_eq!(to_awaiting(&mut v, "old").state, TxState::Awaiting);
+        let later = 7_200_001;
+        assert_eq!(
+            approve(&mut v, "old", &pw(), "d", later).unwrap().state,
+            TxState::Signed
+        );
+        propose(&mut v, intent("new", TO, "1000"), "d", later + 1).unwrap();
+        attach(
+            &mut v,
+            "new",
+            signer(),
+            unsigned(TO, "1000"),
+            serde_json::json!({"ok": true}),
+            true,
+            "d",
+            later + 2,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluate(&mut v, "new", "d", later + 3).unwrap().state,
+            TxState::Denied
+        );
+        load_ledger(&v).unwrap().validate().unwrap();
     }
 
     #[test]

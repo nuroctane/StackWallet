@@ -77,14 +77,7 @@ export function Recorders() {
     if (count) activityLog.record('transaction', count);
   }, [ledger]);
   const pending =
-    ledger?.txs.filter(
-      (t) =>
-        t.state === 'pending' ||
-        ((t.intent.chainId.startsWith('solana:') ||
-          t.intent.chainId.startsWith('cosmos:') ||
-          t.intent.chainId.startsWith('bip122:')) &&
-          ['signed', 'broadcast'].includes(t.state)),
-    ) ?? [];
+    ledger?.txs.filter((t) => ['signed', 'broadcast', 'pending'].includes(t.state)) ?? [];
   const pendingKey = pending.map((t) => t.id).join('|');
   useEffect(() => {
     if (pendingKey === '') return;

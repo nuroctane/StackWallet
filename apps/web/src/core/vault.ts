@@ -37,6 +37,24 @@ export const PROVENANCE_CACHE_KEY = 'stackwallet.provenance.v1';
 export const IDENTITY_LABEL = 'device-identity';
 export const MIN_PASSPHRASE_CHARS = 10;
 
+const writers = new WeakMap<StorageLike, Promise<unknown>>();
+class DurabilityError extends Error {}
+
+async function withVaultWriter<T>(storage: StorageLike, op: () => Promise<T>): Promise<T> {
+  if (typeof navigator !== 'undefined' && navigator.locks) {
+    return navigator.locks.request(VAULT_STORAGE_KEY, op);
+  }
+  // Browser writes need a lock shared by every tab, not just this JavaScript realm.
+  if (typeof window !== 'undefined' && storage === window.localStorage) {
+    throw new Error(
+      'This browser cannot coordinate vault writes. Use a browser with Web Locks support.',
+    );
+  }
+  const pending = (writers.get(storage) ?? Promise.resolve()).catch(() => undefined).then(op);
+  writers.set(storage, pending);
+  return pending;
+}
+
 export type VaultStatus =
   | { kind: 'loading' }
   | { kind: 'unavailable'; reason: string }
@@ -130,6 +148,7 @@ export class VaultStore {
   };
   private client: CoreClient | null = null;
   private vault: VaultHandle | null = null;
+  private committed: string | null = null;
   private readonly listeners = new Set<() => void>();
   private readonly now: () => number;
 
@@ -174,45 +193,118 @@ export class VaultStore {
   }
 
   /** Bind the core once it has loaded and open whatever ciphertext is stored. */
-  async attach(client: CoreClient): Promise<void> {
+  async attach(client: CoreClient, quarantineInvalid = true): Promise<void> {
     this.client = client;
     if (client.backend === 'unavailable') {
       const reason = 'reason' in client ? String(client.reason) : 'unknown';
       this.set({ status: { kind: 'unavailable', reason } });
       return;
     }
-    const raw = this.deps.storage?.getItem(VAULT_STORAGE_KEY) ?? null;
+    if (!this.deps.storage) {
+      this.set({
+        status: {
+          kind: 'unavailable',
+          reason: 'Durable local storage is unavailable. Wallet creation and signing are disabled.',
+        },
+      });
+      return;
+    }
+    let raw: string | null;
+    try {
+      raw = this.deps.storage.getItem(VAULT_STORAGE_KEY);
+    } catch {
+      this.set({ status: { kind: 'unavailable', reason: 'Cannot read durable vault storage' } });
+      return;
+    }
+    this.committed = raw;
     if (raw === null) {
       this.set({ status: { kind: 'absent' } });
       return;
     }
     const bytes = decodeBytes(raw);
     if (!bytes) {
-      this.quarantine(raw);
+      if (quarantineInvalid) await this.quarantine(raw);
+      else this.set({ status: { kind: 'corrupt', quarantinedKey: VAULT_STORAGE_KEY } });
       return;
     }
     try {
       this.vault = await client.openVault(bytes);
       this.set({ status: { kind: 'locked', labels: await this.vault.labels() } });
     } catch {
-      this.quarantine(raw);
+      if (quarantineInvalid) await this.quarantine(raw);
+      else this.set({ status: { kind: 'corrupt', quarantinedKey: VAULT_STORAGE_KEY } });
     }
   }
 
-  private quarantine(raw: string): void {
+  private async quarantine(raw: string): Promise<void> {
     const quarantinedKey = `${VAULT_STORAGE_KEY}.corrupt-${this.now()}`;
+    let changed = false;
     try {
-      this.deps.storage?.setItem(quarantinedKey, raw);
-      this.deps.storage?.removeItem(VAULT_STORAGE_KEY);
+      if (this.deps.storage)
+        await withVaultWriter(this.deps.storage, async () => {
+          if (this.deps.storage!.getItem(VAULT_STORAGE_KEY) !== raw) {
+            changed = true;
+            return;
+          }
+          this.deps.storage!.setItem(quarantinedKey, raw);
+          this.deps.storage!.removeItem(VAULT_STORAGE_KEY);
+          this.committed = null;
+        });
     } catch {
       // Nothing more to do; the vault is unreadable either way.
+    }
+    if (changed && this.client) {
+      await this.attach(this.client);
+      return;
     }
     this.set({ status: { kind: 'corrupt', quarantinedKey } });
   }
 
   private async persist(): Promise<void> {
-    if (!this.vault || !this.deps.storage) return;
-    this.deps.storage.setItem(VAULT_STORAGE_KEY, encodeBytes(await this.vault.toBytes()));
+    if (!this.vault || !this.deps.storage)
+      throw new DurabilityError('Durable vault storage is unavailable');
+    const raw = encodeBytes(await this.vault.toBytes());
+    try {
+      if (this.deps.storage.getItem(VAULT_STORAGE_KEY) !== this.committed)
+        throw new Error('The vault changed in another tab. Unlock again before continuing.');
+      this.deps.storage.setItem(VAULT_STORAGE_KEY, raw);
+      this.committed = raw;
+    } catch (err) {
+      throw new DurabilityError(`Vault was not saved: ${message(err)}`);
+    }
+  }
+
+  private async restoreCommitted(): Promise<void> {
+    this.vault?.free();
+    this.vault = null;
+    this.deps.onIdentity?.(null);
+    this.deps.onDevices?.(null, null);
+    this.set({ ledger: null, ledgerError: null, provenance: this.cachedProvenance() });
+    if (this.client) await this.attach(this.client, false);
+  }
+
+  private async run<T>(op: () => Promise<T>, mutating: boolean): Promise<T> {
+    const execute = async () => {
+      if (mutating && this.deps.storage?.getItem(VAULT_STORAGE_KEY) !== this.committed) {
+        await this.restoreCommitted();
+        throw new Error('The vault changed in another tab. Unlock again before continuing.');
+      }
+      try {
+        return await op();
+      } catch (err) {
+        if (
+          mutating &&
+          this.vault &&
+          (err instanceof DurabilityError ||
+            encodeBytes(await this.vault.toBytes()) !== this.committed)
+        )
+          await this.restoreCommitted();
+        throw err;
+      }
+    };
+    if (!mutating) return execute();
+    if (!this.deps.storage) throw new Error('Durable vault storage is unavailable');
+    return withVaultWriter(this.deps.storage, execute);
   }
 
   private async refreshUnlocked(): Promise<void> {
@@ -302,16 +394,19 @@ export class VaultStore {
   private readonly writeDevices = async (devices: Device[]): Promise<void> => {
     if (!this.vault || this.view.status.kind !== 'unlocked')
       throw new Error('Unlock the vault first');
-    await this.vault.setDevices(devices);
-    await this.persist();
-    this.set({ status: { ...this.view.status, labels: await this.vault.labels() } });
+    const result = await this.guarded(async () => {
+      await this.unlockedVault().setDevices(devices);
+      await this.persist();
+      await this.refreshUnlocked();
+    });
+    if (!result.ok) throw new Error(result.error);
   };
 
-  private async guarded(op: () => Promise<void>): Promise<VaultResult> {
+  private async guarded(op: () => Promise<void>, mutating = true): Promise<VaultResult> {
     if (this.view.busy) return { ok: false, error: 'The vault is busy' };
     this.set({ busy: true });
     try {
-      await op();
+      await this.run(op, mutating);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: message(err) };
@@ -330,8 +425,8 @@ export class VaultStore {
       const problem = passphraseProblem(passphrase);
       if (problem) throw new Error(problem);
       const vault = await this.client.createVault(passphrase);
-      await vault.createIdentity(IDENTITY_LABEL);
       this.vault = vault;
+      await vault.createIdentity(IDENTITY_LABEL);
       await this.persist();
       await this.refreshUnlocked();
     });
@@ -339,10 +434,12 @@ export class VaultStore {
 
   unlock(passphrase: string): Promise<VaultResult> {
     return this.guarded(async () => {
+      if (this.deps.storage?.getItem(VAULT_STORAGE_KEY) !== this.committed)
+        await this.restoreCommitted();
       if (!this.vault) throw new Error('No vault to unlock');
       await this.vault.unlock(passphrase);
       await this.refreshUnlocked();
-    });
+    }, false);
   }
 
   lock(): Promise<VaultResult> {
@@ -352,7 +449,7 @@ export class VaultStore {
       this.deps.onDevices?.(null, null);
       this.set({ ledger: null, ledgerError: null });
       this.set({ status: { kind: 'locked', labels: await this.vault.labels() } });
-    });
+    }, false);
   }
 
   changePassphrase(current: string, next: string): Promise<VaultResult> {
@@ -379,7 +476,7 @@ export class VaultStore {
     if (this.view.busy) return { ok: false, error: 'The vault is busy' };
     this.set({ busy: true });
     try {
-      return { ok: true, value: await op() };
+      return { ok: true, value: await this.run(op, true) };
     } catch (err) {
       return { ok: false, error: message(err) };
     } finally {
@@ -444,10 +541,12 @@ export class VaultStore {
   importSet(
     passphrase: string,
     bundle: string,
+    validate?: (set: ImportedSet) => void,
   ): Promise<{ ok: true; value: ImportedSet } | { ok: false; error: string }> {
     return this.guardedValue(async () => {
       const v = this.unlockedVault();
       const got = await v.importSet(IDENTITY_LABEL, passphrase, bundle, this.now());
+      validate?.(got);
       await this.persist();
       await this.refreshProvenance();
       return got;

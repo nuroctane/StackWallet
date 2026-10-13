@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { emptyState, type ReducerContext } from './reducers.js';
 import { DirectoryState } from './schema.js';
 import { defaultContext, DirectoryStore } from './store.js';
+import { reportStorageSave } from './storageStatus.js';
 
 export const STORAGE_KEY = 'stackwallet.directory.v1';
 export const SAVE_DEBOUNCE_MS = 150;
@@ -79,28 +80,38 @@ export function createPersistedStore(
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let dirty = false;
+  let failures = 0;
+  let disposed = false;
   const flush = () => {
     if (timer !== undefined) clearTimeout(timer);
     timer = undefined;
-    if (!dirty || !storage) return;
-    dirty = false;
-    saveDirectory(storage, store.getSnapshot());
+    if (!dirty) return;
+    const ok = !!storage && saveDirectory(storage, store.getSnapshot());
+    reportStorageSave('directory', ok);
+    if (ok) {
+      dirty = false;
+      failures = 0;
+    } else if (!disposed && ++failures < 3) timer = setTimeout(flush, 5_000);
   };
   const unsubscribe = store.subscribe(() => {
     dirty = true;
+    failures = 0;
     if (timer !== undefined) clearTimeout(timer);
     timer = setTimeout(flush, debounceMs);
   });
 
   const hasWindow = typeof window !== 'undefined';
   if (hasWindow) window.addEventListener('pagehide', flush);
+  if (hasWindow) window.addEventListener('focus', flush);
 
   const result: PersistedStore = {
     store,
     flush,
     dispose() {
+      disposed = true;
       unsubscribe();
       if (hasWindow) window.removeEventListener('pagehide', flush);
+      if (hasWindow) window.removeEventListener('focus', flush);
       flush();
     },
   };

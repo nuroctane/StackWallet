@@ -23,8 +23,19 @@ const fail = (error: string) => ({ ok: false as const, error });
 /** Ids of `folderId` and every folder beneath it, parent first. */
 export function subtree(state: DirectoryState, folderId: string): string[] {
   const out = [folderId];
+  const seen = new Set(out);
+  const children = new Map<string | null, string[]>();
+  for (const f of state.folders) {
+    const list = children.get(f.parentId) ?? [];
+    list.push(f.id);
+    children.set(f.parentId, list);
+  }
   for (let i = 0; i < out.length; i++) {
-    for (const f of state.folders) if (f.parentId === out[i]) out.push(f.id);
+    for (const id of children.get(out[i]!) ?? [])
+      if (!seen.has(id)) {
+        seen.add(id);
+        out.push(id);
+      }
   }
   return out;
 }
@@ -72,6 +83,8 @@ export function importPayload(
     }
   }
   const walletIds = new Set(p.wallets.map((w) => w.id));
+  if (subtree({ ...state, folders: p.folders }, setFolderId).length !== p.folders.length)
+    return fail('The set has cyclic or disconnected folders');
   if (walletIds.size !== p.wallets.length) return fail('The set repeats a wallet');
   for (const w of p.wallets) {
     if (!folderIds.has(w.folderId)) return fail('The set has a wallet outside itself');
@@ -89,6 +102,7 @@ export function importPayload(
     ...state.accounts.map((a) => a.id),
   ]);
   const incoming = [...folderIds, ...walletIds, ...p.accounts.map((a) => a.id)];
+  if (new Set(incoming).size !== incoming.length) return fail('The set repeats an entity id');
   if (incoming.some((id) => taken.has(id))) return fail('Part of this set is already here');
 
   const t = ctx.now();

@@ -3,6 +3,7 @@ import { Kbd, StatusDot } from '@stackwallet/ui';
 import type { CoreStatus } from '../core/bridge.js';
 import { listChains, listFamilies } from '../lib/chains.js';
 import { activeDevices, useDevices } from '../store/devices.js';
+import { useStorageFailures } from '../store/storageStatus.js';
 import { useRegistry } from '../store/RegistryContext.js';
 import { MOD_KEY, useShell } from './ShellContext.js';
 
@@ -14,6 +15,7 @@ export function StatusBar({
   registryError?: string | undefined;
 }) {
   const registry = useRegistry();
+  const storageFailures = useStorageFailures();
   const shell = useShell();
   const chains = listChains(registry).length;
   const families = listFamilies(registry).length;
@@ -34,6 +36,15 @@ export function StatusBar({
   return (
     <footer className="flex min-w-0 items-center justify-between gap-4 border-t border-edge px-4 py-1.5 text-[11px] text-faint">
       <div className="flex min-w-0 items-center gap-3">
+        {storageFailures && (
+          <span
+            role="alert"
+            className="text-danger"
+            title={`Could not save ${storageFailures}. Changes will be retried.`}
+          >
+            changes unsaved
+          </span>
+        )}
         <span className="hidden min-[560px]:inline-flex">
           <StatusDot state={core.backend === 'unavailable' ? 'offline' : 'online'} label={label} />
         </span>

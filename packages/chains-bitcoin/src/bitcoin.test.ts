@@ -41,6 +41,8 @@ const P2TR_MAIN = 'bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrc
 function restFetch(routes: Record<string, unknown | (() => Response)>): typeof fetch {
   return async (input) => {
     const url = new URL(String(input));
+    if (url.pathname.endsWith('/block-height/0'))
+      return new Response('000000000019d6689c085ae165831e93' + '4ff763ae46a2a6c172b3f1b60a8ce26f');
     for (const [suffix, body] of Object.entries(routes)) {
       if (url.pathname.endsWith(suffix)) {
         return typeof body === 'function'
@@ -147,6 +149,17 @@ describe('BitcoinAdapter addresses', () => {
 });
 
 describe('BitcoinAdapter reads', () => {
+  it('rejects a foreign genesis before requesting account balances', async () => {
+    const paths: string[] = [];
+    const btc = createBitcoinAdapter({
+      fetch: async (input) => {
+        paths.push(new URL(String(input)).pathname);
+        return new Response('f'.repeat(64));
+      },
+    });
+    await expect(btc.getBalances(P2WPKH_MAIN, BTC)).rejects.toThrow(/genesis/);
+    expect(paths.every((path) => path.endsWith('/block-height/0'))).toBe(true);
+  });
   it('sums confirmed and mempool stats into one native holding', async () => {
     const btc = createBitcoinAdapter({
       fetch: restFetch({
@@ -170,6 +183,10 @@ describe('BitcoinAdapter reads', () => {
     const btc = createBitcoinAdapter({
       rpc: pool,
       fetch: async (input) => {
+        if (String(input).endsWith('/block-height/0'))
+          return new Response(
+            '000000000019d6689c085ae165831e93' + '4ff763ae46a2a6c172b3f1b60a8ce26f',
+          );
         if (new URL(String(input)).hostname === 'behind.example') {
           return new Response('Address not found', { status: 404 });
         }
@@ -223,9 +240,13 @@ describe('BitcoinAdapter reads', () => {
     let calls = 0;
     const btc = createBitcoinAdapter({
       rpc: pool,
-      fetch: async () => {
+      fetch: async (input) => {
         calls++;
         if (calls === 1) throw new TypeError('network down');
+        if (String(input).endsWith('/block-height/0'))
+          return new Response(
+            '000000000019d6689c085ae165831e93' + '4ff763ae46a2a6c172b3f1b60a8ce26f',
+          );
         return new Response(
           JSON.stringify({
             chain_stats: { funded_txo_sum: 5, spent_txo_sum: 0 },
@@ -236,7 +257,7 @@ describe('BitcoinAdapter reads', () => {
     });
     const [h] = await btc.getBalances(P2WPKH_MAIN, BTC);
     expect(h?.amount).toBe('5');
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     expect(pool.endpoints(BTC).filter((e) => !e.healthy)).toHaveLength(1);
   });
 
