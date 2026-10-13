@@ -16,6 +16,7 @@ export const elementDefaults: Record<ElementKind, { w: number; h: number }> = {
   devices: { w: 760, h: 520 },
   network: { w: 640, h: 420 },
   agent: { w: 520, h: 560 },
+  automations: { w: 520, h: 480 },
   collectibles: { w: 640, h: 480 },
 };
 

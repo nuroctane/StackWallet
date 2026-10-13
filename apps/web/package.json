@@ -24,6 +24,7 @@
     "@stackwallet/collectibles": "workspace:*",
     "@stackwallet/core-client": "workspace:*",
     "@stackwallet/agent": "workspace:*",
+    "@stackwallet/automations": "workspace:*",
     "@stackwallet/market": "workspace:*",
     "@stackwallet/names": "workspace:*",
     "@stackwallet/ui": "workspace:*",

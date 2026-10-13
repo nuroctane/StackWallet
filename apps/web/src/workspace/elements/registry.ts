@@ -9,6 +9,7 @@ import { ActivityLogElement } from './ActivityLogElement.js';
 import { TerrainElement } from './TerrainElement.js';
 import { TransactionsElement } from './TransactionsElement.js';
 import { AgentElement } from './AgentElement.js';
+import { AutomationsElement } from './AutomationsElement.js';
 import type { ElementDefinition, ElementRegistry } from './types.js';
 import {
   ApprovalsElement,
@@ -238,6 +239,14 @@ export const registry: ElementRegistry = {
     minSize: { w: 320, h: 280 },
     defaultProps: { provider: 'anthropic', model: '' },
     body: AgentElement,
+  }),
+  automations: def({
+    kind: 'automations',
+    title: 'automations',
+    hint: 'scheduled and balance-triggered transfers, each one a proposal you approve',
+    defaultSize: elementDefaults.automations,
+    minSize: { w: 320, h: 240 },
+    body: AutomationsElement,
   }),
   network: def({
     kind: 'network',

@@ -32,6 +32,7 @@ import {
 } from '@stackwallet/chains-cosmos';
 
 import { vault } from '../core/bridge.js';
+import type { ProposedBy } from '../core/vault.js';
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 const activeSends = new Set<string>();
@@ -51,8 +52,8 @@ function solanaAdapter(registry: ChainRegistry, chainId: string): SolanaAdapter 
 
 export interface SendRequest {
   account: Account;
-  /** Set when the agent proposed it; the approval card shows who and why. */
-  agent?: { sessionId: string; grantId: string; rationale: string };
+  /** Set when an agent or automation proposed it; the approval card shows who and why. */
+  by?: ProposedBy;
   /** Destinations that came from model output rather than the user. */
   untrustedDestinations?: string[];
   /** EVM only: replace the stuck transaction with this nonce and fees. */
@@ -114,7 +115,7 @@ async function proposeIntent(
   registry: ChainRegistry,
   req: Pick<
     SendRequest,
-    'account' | 'bitcoin' | 'solana' | 'replace' | 'agent' | 'untrustedDestinations'
+    'account' | 'bitcoin' | 'solana' | 'replace' | 'by' | 'untrustedDestinations'
   >,
   kind:
     | { kind: 'transfer'; to: string; asset: string; amount: string }
@@ -132,7 +133,7 @@ async function proposeIntent(
     usdMicros: null,
     untrustedDestinations: req.untrustedDestinations ?? [],
   } as Omit<TxIntent, 'proposer' | 'createdAtMs'>;
-  const proposed = await vault.txPropose(intent, req.agent);
+  const proposed = await vault.txPropose(intent, req.by);
   if (!proposed.ok) return proposed;
   let prepared;
   try {

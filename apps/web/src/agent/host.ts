@@ -89,7 +89,7 @@ export function createAgentHost(
         to: input.to,
         asset: native ? `${input.chainId}:native` : `${input.chainId}:erc20:${input.asset}`,
         amount: units,
-        agent: { ...session, rationale: input.rationale.slice(0, 500) },
+        by: { kind: 'agent', ...session, rationale: input.rationale.slice(0, 500) },
         untrustedDestinations: input.untrustedDestination ? [input.to] : [],
       });
       return r.ok

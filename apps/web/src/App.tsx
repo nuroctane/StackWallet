@@ -43,6 +43,7 @@ import { RegistryContext, useRegistry } from './store/RegistryContext.js';
 import { applyRpcSettings, rpcSettings, rpcSettingsQuarantinedKey } from './store/rpcSettings.js';
 import { collectiblesStore } from './store/collectibles.js';
 import { approvalsStore } from './store/approvals.js';
+import { automationStore, startAutomations } from './store/automations.js';
 import { namesStore } from './store/names.js';
 import { themeQuarantinedKey } from './store/theme.js';
 import { ThemeApplier } from './store/ThemeApplier.js';
@@ -88,9 +89,11 @@ export function App() {
     if (registryError) return;
     const unconfigure = tokenStore.configure(registry);
     const unsubscribe = tokenStore.subscribe(() => balanceCache.invalidate());
+    const stopAutomations = startAutomations(registry);
     return () => {
       unconfigure();
       unsubscribe();
+      stopAutomations();
     };
   }, [registry, registryError]);
   return (
@@ -140,6 +143,7 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       [workspaceQuarantinedKey, 'Saved workspace'],
       [themeQuarantinedKey, 'Saved theme'],
       [tokenStore.quarantinedKey, 'Tracked tokens'],
+      [automationStore.quarantinedKey, 'Automations'],
     ];
     for (const [key, what] of quarantined) {
       if (key) toasts.push(`${what} could not be read; kept under ${key}`, 'danger');

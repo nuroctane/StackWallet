@@ -87,6 +87,11 @@ export interface VaultView {
   exportKeys: ExportKeyRef[];
 }
 
+/** Who other than the person at this device made a proposal. */
+export type ProposedBy =
+  | { kind: 'agent'; sessionId: string; grantId: string; rationale: string }
+  | { kind: 'automation'; automationId: string; runId: string };
+
 /** How the person proves the session for an export: never a PIN. */
 export type SessionChoice =
   | { kind: 'passphrase'; passphrase: string }
@@ -368,16 +373,13 @@ export class VaultStore {
     });
   }
 
-  /** `agent` marks a proposal the agent made; approvers see it and its rationale. */
-  txPropose(
-    intent: Omit<TxIntent, 'proposer' | 'createdAtMs'>,
-    agent?: { sessionId: string; grantId: string; rationale: string },
-  ) {
+  /** `by` marks a proposal an agent or automation made; approvers see who and why. */
+  txPropose(intent: Omit<TxIntent, 'proposer' | 'createdAtMs'>, by?: ProposedBy) {
     return this.ledgerOp((v, device, now) =>
       v.txPropose(
         {
           ...intent,
-          proposer: agent ? { kind: 'agent', ...agent } : { kind: 'human', deviceId: device },
+          proposer: by ?? { kind: 'human', deviceId: device },
           createdAtMs: now,
         } as TxIntent,
         device,
