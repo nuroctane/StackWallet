@@ -151,6 +151,15 @@
   color: var(--sw-ink);
   background: var(--sw-edge);
 }
+.sw-pane-collapse-toggle {
+  width: 12px;
+}
+.sw-pane-collapse-toggle > span {
+  display: block;
+}
+.sw-pane-collapse-toggle[aria-expanded='true'] > span {
+  transform: rotate(90deg);
+}
 
 .sw-pane-body {
   position: relative;

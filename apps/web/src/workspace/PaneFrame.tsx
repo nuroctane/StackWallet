@@ -14,7 +14,7 @@ import { Chip, OverflowChip } from '@stackwallet/ui';
 import { isTypingTarget } from '../shell/ShellContext.js';
 import type { ElementDefinition, RenderElement } from './elements/types.js';
 import { workspace } from './persist.js';
-import { PaneControls } from './PaneControls.js';
+import { PaneCollapseToggle, PaneControls } from './PaneControls.js';
 import type { Pane, PaneProps } from './schema.js';
 import type { Rect } from './store.js';
 import { useElementSize } from './useElementSize.js';
@@ -183,9 +183,7 @@ function PaneFrameImpl({
       onKeyDown={onKeyDown}
     >
       <div className="sw-pane-title" onPointerDown={gesture.onTitlePointerDown}>
-        <span aria-hidden className="text-faint">
-          &gt;
-        </span>
+        <PaneCollapseToggle pane={pane} />
         <span className="sw-pane-title-text">{title}</span>
         {scope.slice(0, MAX_SCOPE_CHIPS).map((s, i) => (
           <Chip key={`${s.label}-${i}`} tone={s.tone ?? 'default'} title={s.label}>

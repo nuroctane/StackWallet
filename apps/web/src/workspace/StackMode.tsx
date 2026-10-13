@@ -5,7 +5,7 @@ import { isTypingTarget } from '../shell/ShellContext.js';
 
 import type { ElementDefinition } from './elements/types.js';
 import { useWorkspace, workspace } from './persist.js';
-import { PaneControls } from './PaneControls.js';
+import { PaneCollapseToggle, PaneControls } from './PaneControls.js';
 import type { Layout, Pane, PaneProps } from './schema.js';
 import { useElementSize } from './useElementSize.js';
 import { useWorkspaceApi } from './WorkspaceContext.js';
@@ -73,9 +73,7 @@ const StackPane = memo(function StackPane({ pane, def }: StackPaneProps) {
       }
     >
       <div className="sw-pane-title">
-        <span aria-hidden className="text-faint">
-          &gt;
-        </span>
+        <PaneCollapseToggle pane={pane} />
         <span className="sw-pane-title-text">{title}</span>
         {scope.slice(0, 2).map((s, i) => (
           <Chip key={`${s.label}-${i}`} tone={s.tone ?? 'default'}>

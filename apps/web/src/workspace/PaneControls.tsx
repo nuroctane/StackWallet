@@ -12,23 +12,26 @@ const ICON = {
   'aria-hidden': true,
 };
 
-export function PaneControls({ pane }: { pane: Pane }) {
-  const fullscreen = pane.fullscreen === true;
+export function PaneCollapseToggle({ pane }: { pane: Pane }) {
   const collapsed = pane.collapsed === true;
   return (
+    <button
+      type="button"
+      className="sw-pressable sw-pane-icon-btn sw-pane-collapse-toggle"
+      aria-label={collapsed ? 'expand element' : 'collapse element'}
+      aria-expanded={!collapsed}
+      title={collapsed ? 'expand element (c)' : 'collapse element (c)'}
+      onClick={() => workspace.toggleCollapsed(pane.id)}
+    >
+      <span aria-hidden>&gt;</span>
+    </button>
+  );
+}
+
+export function PaneControls({ pane }: { pane: Pane }) {
+  const fullscreen = pane.fullscreen === true;
+  return (
     <>
-      <button
-        type="button"
-        className="sw-pressable sw-pane-icon-btn"
-        aria-label={collapsed ? 'expand element' : 'collapse element'}
-        aria-expanded={!collapsed}
-        title={collapsed ? 'expand element (c)' : 'collapse element (c)'}
-        onClick={() => workspace.toggleCollapsed(pane.id)}
-      >
-        <svg {...ICON}>
-          <path d={collapsed ? 'M3 4.5l3 3 3-3' : 'M3 7.5l3-3 3 3'} />
-        </svg>
-      </button>
       <button
         type="button"
         className="sw-pressable sw-pane-icon-btn"
