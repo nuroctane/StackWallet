@@ -460,6 +460,24 @@ impl WasmVault {
         Ok(Some(key))
     }
 
+    /// An app record the page wrote itself and may read back: agent session
+    /// transcripts (`agent-session:<id>`). Sealed at rest like everything in
+    /// the vault; the prefix allowlist keeps key material out of reach.
+    pub fn app_record(&self, label: &str) -> Result<Option<String>, JsError> {
+        if !label.starts_with("agent-session:") || label.len() > 128 {
+            return Err(JsError::new("not an app record"));
+        }
+        let Some(handle) = self.inner.handle_for(label) else {
+            return Ok(None);
+        };
+        let text = self
+            .inner
+            .with_secret(&handle, &mut |s| String::from_utf8(s.expose().to_vec()))
+            .map_err(core_err)?
+            .map_err(|_| JsError::new("app record is not utf-8"))?;
+        Ok(Some(text))
+    }
+
     /// Device-local unlock methods (`SlotInfo[]` JSON). Readable while locked.
     pub fn slots_json(&self) -> Result<String, JsError> {
         Ok(serde_json::to_string(&self.inner.slots())?)

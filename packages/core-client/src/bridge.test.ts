@@ -214,6 +214,11 @@ describe.skipIf(!built)('wasm bridge against the built core', () => {
     );
     expect((await v.ledger()).audit.at(-1)?.event).toBe('messageSigned');
 
+    await v.put('agent-session:s1', new TextEncoder().encode('{"id":"s1"}'));
+    expect(await v.appRecord('agent-session:s1')).toBe('{"id":"s1"}');
+    await expect(v.appRecord('mnemonic:dev')).rejects.toThrow(/not an app record/);
+    await expect(v.providerKey('../mnemonic')).rejects.toThrow();
+
     await v.createSingle('fresh', 4);
     const sol = await v.singlePublicKey('fresh', 'ed25519', "m/44'/501'/0'/0'");
     expect(sol).toMatch(/^[0-9a-f]{64}$/);

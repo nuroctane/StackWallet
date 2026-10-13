@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { AgentGrant, ModelMessage, ToolTrace } from '@stackwallet/agent';
 import { PROVIDERS, isProviderId, type ProviderId } from '@stackwallet/agent/catalog';
 
@@ -15,6 +15,40 @@ interface Entry {
   role: 'user' | 'agent' | 'error';
   text: string;
   trace?: ToolTrace[];
+}
+
+/** One transcript as sealed in the vault (`agent-session:<id>`). */
+interface SavedSession {
+  id: string;
+  title: string;
+  provider: string;
+  model: string;
+  startedAtMs: number;
+  updatedAtMs: number;
+  entries: Entry[];
+  history: ModelMessage[];
+}
+
+function parseSaved(text: string): SavedSession | null {
+  try {
+    const v = JSON.parse(text) as Partial<SavedSession>;
+    if (typeof v.id !== 'string' || !Array.isArray(v.entries)) return null;
+    return {
+      id: v.id,
+      title: typeof v.title === 'string' ? v.title : 'session',
+      provider: String(v.provider ?? ''),
+      model: String(v.model ?? ''),
+      startedAtMs: Number(v.startedAtMs ?? 0),
+      updatedAtMs: Number(v.updatedAtMs ?? 0),
+      entries: v.entries.filter(
+        (e): e is Entry =>
+          !!e && typeof e.text === 'string' && ['user', 'agent', 'error'].includes(e.role),
+      ),
+      history: Array.isArray(v.history) ? v.history : [],
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -42,10 +76,17 @@ export function AgentElement({ pane, setProps }: ElementBodyProps) {
   const history = useRef<ModelMessage[]>([]);
   const counter = useRef({ proposals: 0 });
   const abort = useRef<AbortController | null>(null);
-  const session = useMemo(
-    () => ({ sessionId: crypto.randomUUID(), grantId: crypto.randomUUID() }),
-    [],
-  );
+  const [session, setSession] = useState<{
+    sessionId: string;
+    grantId: string;
+    startedAtMs: number;
+  }>(() => ({
+    sessionId: crypto.randomUUID(),
+    grantId: crypto.randomUUID(),
+    startedAtMs: Date.now(),
+  }));
+  const [past, setPast] = useState<SavedSession[] | null>(null);
+  const [query, setQuery] = useState('');
   useEffect(() => () => abort.current?.abort(), []);
 
   if (view.status.kind !== 'unlocked')
@@ -144,6 +185,97 @@ export function AgentElement({ pane, setProps }: ElementBodyProps) {
           </Button>
         </form>
       )}
+      <details
+        className="rounded-sw-sm border border-edge px-2 py-1"
+        onToggle={(e) => {
+          if ((e.target as HTMLDetailsElement).open)
+            void vault.agentSessions().then((list) =>
+              setPast(
+                list
+                  .map(parseSaved)
+                  .filter((x): x is SavedSession => x !== null)
+                  .sort((a, b) => b.updatedAtMs - a.updatedAtMs),
+              ),
+            );
+        }}
+      >
+        <summary className="cursor-pointer text-muted">Sessions</summary>
+        <div className="flex flex-col gap-1 py-1">
+          <div className="flex gap-2">
+            <Input
+              aria-label="search sessions"
+              placeholder="search transcripts"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setSession({
+                  sessionId: crypto.randomUUID(),
+                  grantId: crypto.randomUUID(),
+                  startedAtMs: Date.now(),
+                });
+                setEntries([]);
+                history.current = [];
+                counter.current = { proposals: 0 };
+              }}
+            >
+              New
+            </Button>
+          </div>
+          {past === null ? (
+            <LoadingWord label="opening" />
+          ) : (
+            <ul className="max-h-40 overflow-auto">
+              {past
+                .filter(
+                  (p) =>
+                    !query.trim() ||
+                    p.entries.some((e) =>
+                      e.text.toLowerCase().includes(query.trim().toLowerCase()),
+                    ),
+                )
+                .map((p) => (
+                  <li key={p.id} className="flex items-center justify-between gap-2 py-0.5">
+                    <button
+                      type="button"
+                      className="sw-pressable min-w-0 truncate text-left text-ink"
+                      title={`${p.provider} · ${p.model}`}
+                      onClick={() => {
+                        setSession({
+                          sessionId: p.id,
+                          grantId: crypto.randomUUID(),
+                          startedAtMs: p.startedAtMs,
+                        });
+                        setEntries(p.entries);
+                        history.current = p.history;
+                        counter.current = { proposals: 0 };
+                      }}
+                    >
+                      {p.title}
+                      <span className="ml-2 text-faint">
+                        {new Date(p.updatedAtMs).toISOString().slice(0, 16).replace('T', ' ')}
+                      </span>
+                    </button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        void vault
+                          .deleteAgentSession(p.id)
+                          .then(() => setPast((x) => (x ? x.filter((y) => y.id !== p.id) : x)))
+                      }
+                    >
+                      Delete
+                    </Button>
+                  </li>
+                ))}
+            </ul>
+          )}
+        </div>
+      </details>
       <details className="rounded-sw-sm border border-edge px-2 py-1">
         <summary className="cursor-pointer text-muted">
           Grant: {granted.length} wallet{granted.length === 1 ? '' : 's'}

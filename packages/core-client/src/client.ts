@@ -152,6 +152,8 @@ export interface VaultHandle {
     deviceId: string;
     nowMs: number;
   }): Promise<SignedMessage>;
+  /** An app record the page sealed itself (`agent-session:<id>`); nothing else is readable. */
+  appRecord(label: string): Promise<string | null>;
   /** A model provider's API key sealed under `provider-key:<id>`; nothing else is readable. */
   providerKey(provider: string): Promise<string | null>;
   /** Step-up check; `allowPin` stays false for anything that takes material out. */
@@ -342,6 +344,7 @@ export interface WasmVaultObject {
     nowMs: number,
   ): string;
   provider_key(provider: string): string | undefined;
+  app_record(label: string): string | undefined;
   sign_message(
     walletId: string,
     path: string,
@@ -628,6 +631,9 @@ class WasmVaultHandle implements VaultHandle {
         ),
       ),
     );
+  }
+  async appRecord(label: string) {
+    return this.raw.app_record(label) ?? null;
   }
   async providerKey(provider: string) {
     return this.raw.provider_key(provider) ?? null;

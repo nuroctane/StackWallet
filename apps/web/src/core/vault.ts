@@ -52,6 +52,7 @@ export const VAULT_STORAGE_KEY = 'stackwallet.vault.v1';
 export const PROVENANCE_CACHE_KEY = 'stackwallet.provenance.v1';
 export const IDENTITY_LABEL = 'device-identity';
 export const MIN_PASSPHRASE_CHARS = 10;
+export const MAX_AGENT_SESSIONS = 50;
 
 class DurabilityError extends Error {}
 
@@ -405,6 +406,43 @@ export class VaultStore {
         `provider-key:${provider}`,
         new TextEncoder().encode(key.trim()),
       );
+      await this.persist();
+      await this.refreshUnlocked();
+    });
+  }
+
+  /** Seal one agent session transcript; the newest MAX_AGENT_SESSIONS are kept. */
+  saveAgentSession(id: string, json: string): Promise<VaultResult> {
+    return this.guarded(async () => {
+      if (!/^[0-9a-f-]{8,64}$/.test(id)) throw new Error('bad session id');
+      if (json.length > 256 * 1024) throw new Error('session too large to keep');
+      const v = this.unlockedVault();
+      await v.put(`agent-session:${id}`, new TextEncoder().encode(json));
+      const labels = (await v.labels()).filter((l) => l.label.startsWith('agent-session:'));
+      // Oldest first by insertion order; drop beyond the cap.
+      for (const l of labels.slice(0, Math.max(0, labels.length - MAX_AGENT_SESSIONS)))
+        await v.delete(l.handle);
+      await this.persist();
+      await this.refreshUnlocked();
+    });
+  }
+
+  async agentSessions(): Promise<string[]> {
+    const v = this.unlockedVault();
+    const out: string[] = [];
+    for (const l of await v.labels())
+      if (l.label.startsWith('agent-session:')) {
+        const text = await v.appRecord(l.label);
+        if (text) out.push(text);
+      }
+    return out;
+  }
+
+  deleteAgentSession(id: string): Promise<VaultResult> {
+    return this.guarded(async () => {
+      const v = this.unlockedVault();
+      const handle = await v.handleFor(`agent-session:${id}`);
+      if (handle) await v.delete(handle);
       await this.persist();
       await this.refreshUnlocked();
     });
