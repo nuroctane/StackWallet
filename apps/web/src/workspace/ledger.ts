@@ -2,7 +2,8 @@ import { useSyncExternalStore } from 'react';
 import { z } from 'zod';
 
 import type { StorageLike } from '../store/persist.js';
-import { reportStorageSave } from '../store/storageStatus.js';
+import { createMetadataPersistence } from '../store/metadataPersistence.js';
+import { mergeHistoryRecords } from './historyMerge.js';
 import type { NativeTotal } from '../store/totals.js';
 
 export const LEDGER_STORAGE_KEY = 'stackwallet.ledger.v1';
@@ -12,7 +13,8 @@ export const LEDGER_MAX_POINTS = 5000;
 export const LEDGER_DEDUPE_MS = 60_000;
 
 export const LedgerPoint = z.object({
-  t: z.number().int().min(0),
+  id: z.string().uuid().optional(),
+  t: z.number().int().nonnegative().safe(),
   assetRef: z.string().min(1),
   /** Base units as a decimal string so 18-decimal chains survive JSON. */
   amount: z.string().regex(/^\d+$/),
@@ -41,6 +43,17 @@ export const emptyLedger = (): LedgerState => ({ version: 1, points: [] });
 
 const capPoints = (points: readonly LedgerPoint[]): LedgerPoint[] =>
   points.length > LEDGER_MAX_POINTS ? points.slice(points.length - LEDGER_MAX_POINTS) : [...points];
+
+export function mergeLedger(left: LedgerState, right: LedgerState): LedgerState {
+  return {
+    version: 1,
+    points: capPoints(
+      mergeHistoryRecords(left.points, right.points).sort(
+        (a, b) => a.t - b.t || (a.id ?? '').localeCompare(b.id ?? ''),
+      ),
+    ),
+  };
+}
 
 /**
  * Split the integer and fractional parts with bigint before converting so the
@@ -84,7 +97,7 @@ export function loadLedger(storage: StorageLike | null): LedgerState {
   const result = LedgerState.safeParse(parsed);
   // History is re-derivable from live balances, so a broken blob is dropped rather than kept.
   if (!result.success) return emptyLedger();
-  return { ...result.data, points: capPoints(result.data.points) };
+  return mergeLedger(emptyLedger(), result.data);
 }
 
 export function saveLedger(storage: StorageLike, state: LedgerState): boolean {
@@ -99,16 +112,29 @@ export function saveLedger(storage: StorageLike, state: LedgerState): boolean {
 export class TotalsLedger {
   private state: LedgerState;
   private readonly listeners = new Set<() => void>();
-  private timer: ReturnType<typeof setTimeout> | undefined;
-  private dirty = false;
-  private saveFailures = 0;
+  private readonly persistence: ReturnType<typeof createMetadataPersistence<LedgerState>>;
 
   constructor(
-    private readonly storage: StorageLike | null,
+    storage: StorageLike | null,
     private readonly now: () => number = () => Date.now(),
-    private readonly debounceMs = LEDGER_SAVE_DEBOUNCE_MS,
+    debounceMs = LEDGER_SAVE_DEBOUNCE_MS,
   ) {
     this.state = loadLedger(storage);
+    this.persistence = createMetadataPersistence({
+      storage,
+      key: LEDGER_STORAGE_KEY,
+      name: 'balance history',
+      debounceMs,
+      retryMs: debounceMs,
+      snapshot: this.getSnapshot,
+      subscribe: this.subscribe,
+      adopt: (state) => {
+        this.state = state;
+        for (const listener of this.listeners) listener();
+      },
+      parse: (raw) => LedgerState.parse(JSON.parse(raw)),
+      merge: (_base, local, remote) => mergeLedger(local, remote),
+    });
   }
 
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -122,22 +148,27 @@ export class TotalsLedger {
 
   /** Append one point per complete total; partial sums would draw false dips in the chart. */
   record(totals: readonly NativeTotal[], now = this.now()): void {
+    if (!Number.isSafeInteger(now) || now < 0) return;
     const added: LedgerPoint[] = [];
     for (const total of totals) {
       if (total.incomplete || !/^\d+$/.test(total.amount)) continue;
       const last = this.lastFor(total.assetRef);
-      if (last && last.amount === total.amount && now - last.t < LEDGER_DEDUPE_MS) continue;
-      added.push({
+      if (last && last.amount === total.amount && now >= last.t && now - last.t < LEDGER_DEDUPE_MS)
+        continue;
+      const point = LedgerPoint.safeParse({
+        id: crypto.randomUUID(),
         t: now,
         assetRef: total.assetRef,
         amount: total.amount,
         decimals: total.decimals,
         symbol: total.symbol,
       });
+      if (point.success) added.push(point.data);
     }
     if (added.length === 0) return;
-    this.state = { ...this.state, points: capPoints([...this.state.points, ...added]) };
-    this.scheduleSave();
+    const points = [...this.state.points, ...added];
+    if ((this.state.points.at(-1)?.t ?? 0) > now) points.sort((a, b) => a.t - b.t);
+    this.state = { version: 1, points: capPoints(points) };
     for (const l of this.listeners) l();
   }
 
@@ -161,25 +192,11 @@ export class TotalsLedger {
     return [...seen.values()];
   }
 
-  flush(): void {
-    if (this.timer !== undefined) clearTimeout(this.timer);
-    this.timer = undefined;
-    if (!this.dirty) return;
-    const saved = this.storage !== null && saveLedger(this.storage, this.state);
-    this.dirty = !saved;
-    reportStorageSave(
-      'balance history',
-      saved,
-      saved
-        ? undefined
-        : {
-            filename: 'stackwallet-balances.json',
-            text: JSON.stringify(this.state),
-          },
-    );
-    if (saved) this.saveFailures = 0;
-    else if (++this.saveFailures < 3 && this.storage)
-      this.timer = setTimeout(() => this.flush(), this.debounceMs);
+  flush(): Promise<void> {
+    return this.persistence.flush();
+  }
+  dispose(): Promise<void> {
+    return this.persistence.dispose();
   }
 
   private lastFor(assetRef: string): LedgerPoint | undefined {
@@ -188,13 +205,6 @@ export class TotalsLedger {
       if (p.assetRef === assetRef) return p;
     }
     return undefined;
-  }
-
-  private scheduleSave(): void {
-    this.dirty = true;
-    this.saveFailures = 0;
-    if (this.timer !== undefined) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.flush(), this.debounceMs);
   }
 }
 
@@ -212,10 +222,6 @@ function safeStorage(): StorageLike | null {
 }
 
 export const totalsLedger = new TotalsLedger(safeStorage());
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => totalsLedger.flush());
-}
 
 export function useLedger(): LedgerState {
   return useSyncExternalStore(

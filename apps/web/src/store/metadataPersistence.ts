@@ -10,6 +10,7 @@ export function createMetadataPersistence<T>(options: {
   key: string;
   name: string;
   debounceMs: number;
+  retryMs?: number;
   snapshot: () => T;
   subscribe: (callback: () => void) => () => void;
   adopt: (state: T) => void;
@@ -148,7 +149,7 @@ export function createMetadataPersistence<T>(options: {
     } catch (err) {
       archive(err instanceof Error ? err.message : String(err));
       if (dirty && !(err instanceof MetadataConflict) && !disposed && ++failures < 3)
-        timer = setTimeout(() => void flush(), 5_000);
+        timer = setTimeout(() => void flush(), options.retryMs ?? 5_000);
     }
   };
   const unsubscribe = options.subscribe(() => {

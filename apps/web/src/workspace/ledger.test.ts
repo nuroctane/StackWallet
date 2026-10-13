@@ -38,7 +38,7 @@ const total = (over: Partial<NativeTotal> = {}): NativeTotal => ({
 });
 
 describe('toUnits', () => {
-  it('converts base units with 18 decimals and keeps whole units exact', () => {
+  it('converts base units with 18 decimals and keeps whole units exact', async () => {
     expect(toUnits('1000000000000000000', 18)).toBe(1);
     expect(toUnits('1500000000000000000', 18)).toBe(1.5);
     expect(toUnits('123456789000000000000000000', 18)).toBe(123_456_789);
@@ -49,14 +49,14 @@ describe('toUnits', () => {
 });
 
 describe('exact ledger readouts', () => {
-  it('retains fractional base units lost by the plotting approximation', () => {
+  it('retains fractional base units lost by the plotting approximation', async () => {
     expect(toUnits('1000000000000000001', 18)).toBe(1);
     expect(formatLedgerAmount('1000000000000000001', 18)).toBe('1.000000000000000001');
     expect(formatLedgerAmount('9007199254740993', 0)).toBe('9007199254740993');
     expect(formatLedgerAmount('1', 77)).toBe(`0.${'0'.repeat(76)}1`);
   });
 
-  it('normalizes zeros without rounding and rejects malformed quantities', () => {
+  it('normalizes zeros without rounding and rejects malformed quantities', async () => {
     expect(formatLedgerAmount('0000', 18)).toBe('0');
     expect(formatLedgerAmount('000123400', 6)).toBe('0.1234');
     expect(formatLedgerAmount('12345678', 8)).toBe('0.12345678');
@@ -70,7 +70,7 @@ describe('TotalsLedger', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('skips incomplete totals and repeats of the same amount inside the dedupe window', () => {
+  it('skips incomplete totals and repeats of the same amount inside the dedupe window', async () => {
     let now = 1_000_000;
     const ledger = new TotalsLedger(null, () => now);
     let notified = 0;
@@ -99,7 +99,7 @@ describe('TotalsLedger', () => {
     expect(ledger.getSnapshot().points).toHaveLength(3);
   });
 
-  it('dedupes per asset, not globally', () => {
+  it('dedupes per asset, not globally', async () => {
     const ledger = new TotalsLedger(null, () => 5_000);
     ledger.record([total()]);
     ledger.record([
@@ -117,7 +117,7 @@ describe('TotalsLedger', () => {
     ]);
   });
 
-  it('caps at LEDGER_MAX_POINTS by dropping the oldest', () => {
+  it('caps at LEDGER_MAX_POINTS by dropping the oldest', async () => {
     let now = 0;
     const ledger = new TotalsLedger(null, () => now);
     for (let i = 0; i < LEDGER_MAX_POINTS + 10; i++) {
@@ -130,7 +130,7 @@ describe('TotalsLedger', () => {
     expect(points[points.length - 1]?.amount).toBe(String(LEDGER_MAX_POINTS + 9));
   });
 
-  it('seriesFor converts amounts and filters by asset and time', () => {
+  it('seriesFor converts amounts and filters by asset and time', async () => {
     let now = 10_000;
     const ledger = new TotalsLedger(null, () => now);
     ledger.record([total({ amount: '1000000000000000000' })]);
@@ -150,15 +150,15 @@ describe('TotalsLedger', () => {
     expect(ledger.seriesFor('missing')).toEqual([]);
   });
 
-  it('persists after the debounce and reloads', () => {
+  it('persists after the debounce and reloads', async () => {
     const storage = new MemoryStorage();
     const ledger = new TotalsLedger(storage, () => 42, 500);
     ledger.record([total()]);
-    vi.advanceTimersByTime(499);
+    await vi.advanceTimersByTimeAsync(499);
     expect(storage.getItem(LEDGER_STORAGE_KEY)).toBeNull();
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     const saved = LedgerState.parse(JSON.parse(storage.getItem(LEDGER_STORAGE_KEY)!));
-    expect(saved.points).toEqual([
+    expect(saved.points).toMatchObject([
       {
         t: 42,
         assetRef: 'eip155:1/slip44:60',
@@ -172,7 +172,7 @@ describe('TotalsLedger', () => {
     expect(reloaded.seriesFor('eip155:1/slip44:60')).toEqual([{ t: 42, v: 1 }]);
   });
 
-  it('starts fresh from corrupt or invalid blobs', () => {
+  it('starts fresh from corrupt or invalid blobs', async () => {
     for (const bad of ['{nope', JSON.stringify({ version: 1, points: [{ t: 1 }] })]) {
       const storage = new MemoryStorage();
       storage.setItem(LEDGER_STORAGE_KEY, bad);
@@ -181,30 +181,30 @@ describe('TotalsLedger', () => {
     expect(loadLedger(null)).toEqual({ version: 1, points: [] });
   });
 
-  it('retains dirty observations through quota failures and retries without a new balance', () => {
+  it('retains dirty observations through quota failures and retries without a new balance', async () => {
     const storage = new MemoryStorage();
     const write = vi.spyOn(storage, 'setItem').mockImplementation(() => {
       throw new Error('quota');
     });
     const ledger = new TotalsLedger(storage, () => 42, 500);
     ledger.record([total()]);
-    vi.advanceTimersByTime(500 * 10);
-    expect(write).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(500 * 10);
+    expect(write.mock.calls.filter(([key]) => key === LEDGER_STORAGE_KEY)).toHaveLength(3);
     expect(storage.getItem(LEDGER_STORAGE_KEY)).toBeNull();
     write.mockRestore();
-    ledger.flush();
+    await ledger.flush();
     expect(loadLedger(storage)).toEqual(ledger.getSnapshot());
     expect(loadLedger(storage).points).toHaveLength(1);
   });
 
-  it('automatically recovers after a transient storage failure', () => {
+  it('automatically recovers after a transient storage failure', async () => {
     const storage = new MemoryStorage();
     vi.spyOn(storage, 'setItem').mockImplementationOnce(() => {
       throw new Error('busy');
     });
     const ledger = new TotalsLedger(storage, () => 42, 500);
     ledger.record([total()]);
-    vi.advanceTimersByTime(1000);
+    await vi.advanceTimersByTimeAsync(1000);
     expect(loadLedger(storage)).toEqual(ledger.getSnapshot());
     expect(vi.getTimerCount()).toBe(0);
   });

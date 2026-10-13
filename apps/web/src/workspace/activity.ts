@@ -2,7 +2,8 @@ import { useSyncExternalStore } from 'react';
 import { z } from 'zod';
 
 import type { StorageLike } from '../store/persist.js';
-import { reportStorageSave } from '../store/storageStatus.js';
+import { createMetadataPersistence } from '../store/metadataPersistence.js';
+import { mergeHistoryRecords } from './historyMerge.js';
 
 export const ACTIVITY_STORAGE_KEY = 'stackwallet.activity.v1';
 export const ACTIVITY_SAVE_DEBOUNCE_MS = 500;
@@ -20,14 +21,18 @@ export type ActivityKind = z.infer<typeof ActivityKind>;
 
 const DayKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
-export const ActivityDayRecord = z.object({
-  n: z.number().int().min(0),
-  kinds: z.record(z.string(), z.number().int().min(0)),
+const ActivityCounts = z.object({
+  n: z.number().int().nonnegative().safe(),
+  kinds: z.record(z.string(), z.number().int().nonnegative().safe()),
+});
+export const ActivityDayRecord = ActivityCounts.extend({
+  sources: z.record(z.union([z.string().uuid(), z.literal('legacy')]), ActivityCounts).optional(),
 });
 export type ActivityDayRecord = z.infer<typeof ActivityDayRecord>;
 
 export const ACTIVITY_MAX_EVENTS = 1000;
 export const ActivityEvent = z.object({
+  id: z.string().uuid().optional(),
   atMs: z.number().int().nonnegative().safe(),
   kind: ActivityKind,
   count: z.number().int().positive().safe(),
@@ -70,6 +75,45 @@ function capDays(days: Record<string, ActivityDayRecord>): Record<string, Activi
   return next;
 }
 
+const addCount = (a: number, b: number) => Math.min(Number.MAX_SAFE_INTEGER, a + b);
+function countsFromSources(sources: NonNullable<ActivityDayRecord['sources']>): ActivityDayRecord {
+  let n = 0;
+  const kinds: Record<string, number> = Object.create(null) as Record<string, number>;
+  for (const count of Object.values(sources)) {
+    n = addCount(n, count.n);
+    for (const [kind, value] of Object.entries(count.kinds))
+      kinds[kind] = addCount(kinds[kind] ?? 0, value);
+  }
+  return { n, kinds, sources };
+}
+
+/** Per-writer counters make replayed recovery copies idempotent after event retention expires. */
+export function mergeActivity(left: ActivityState, right: ActivityState): ActivityState {
+  const days: Record<string, ActivityDayRecord> = {};
+  for (const state of [left, right]) {
+    for (const [key, day] of Object.entries(state.days)) {
+      const sources = { ...days[key]?.sources };
+      for (const [id, counts] of Object.entries(
+        day.sources ?? { legacy: { n: day.n, kinds: day.kinds } },
+      )) {
+        const previous = sources[id];
+        const kinds = { ...previous?.kinds };
+        for (const [kind, value] of Object.entries(counts.kinds))
+          kinds[kind] = Math.max(kinds[kind] ?? 0, value);
+        sources[id] = { n: Math.max(previous?.n ?? 0, counts.n), kinds };
+      }
+      days[key] = countsFromSources(sources);
+    }
+  }
+  return {
+    version: 1,
+    days: capDays(days),
+    events: mergeHistoryRecords(left.events, right.events)
+      .sort((a, b) => b.atMs - a.atMs || (a.id ?? '').localeCompare(b.id ?? ''))
+      .slice(0, ACTIVITY_MAX_EVENTS),
+  };
+}
+
 export function loadActivity(storage: StorageLike | null): ActivityState {
   if (!storage) return emptyActivity();
   let raw: string | null = null;
@@ -103,16 +147,30 @@ export function saveActivity(storage: StorageLike, state: ActivityState): boolea
 export class ActivityLog {
   private state: ActivityState;
   private readonly listeners = new Set<() => void>();
-  private timer: ReturnType<typeof setTimeout> | undefined;
-  private dirty = false;
-  private saveFailures = 0;
+  private readonly writerId = crypto.randomUUID();
+  private readonly persistence: ReturnType<typeof createMetadataPersistence<ActivityState>>;
 
   constructor(
-    private readonly storage: StorageLike | null,
+    storage: StorageLike | null,
     private readonly now: () => number = () => Date.now(),
-    private readonly debounceMs = ACTIVITY_SAVE_DEBOUNCE_MS,
+    debounceMs = ACTIVITY_SAVE_DEBOUNCE_MS,
   ) {
     this.state = loadActivity(storage);
+    this.persistence = createMetadataPersistence({
+      storage,
+      key: ACTIVITY_STORAGE_KEY,
+      name: 'activity history',
+      debounceMs,
+      retryMs: debounceMs,
+      snapshot: this.getSnapshot,
+      subscribe: this.subscribe,
+      adopt: (state) => {
+        this.state = state;
+        for (const listener of this.listeners) listener();
+      },
+      parse: (raw) => ActivityState.parse(JSON.parse(raw)),
+      merge: (_base, local, remote) => mergeActivity(local, remote),
+    });
   }
 
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -127,18 +185,25 @@ export class ActivityLog {
   record(kind: ActivityKind, count = 1): void {
     if (!Number.isSafeInteger(count) || count <= 0) return;
     const atMs = this.now();
+    if (!Number.isSafeInteger(atMs) || atMs < 0 || !Number.isFinite(new Date(atMs).getTime()))
+      return;
     const key = dayKey(atMs);
     const day = this.state.days[key] ?? { n: 0, kinds: {} };
-    const next: ActivityDayRecord = {
-      n: day.n + count,
-      kinds: { ...day.kinds, [kind]: (day.kinds[kind] ?? 0) + count },
+    const sources = { ...(day.sources ?? { legacy: { n: day.n, kinds: day.kinds } }) };
+    const own = sources[this.writerId] ?? { n: 0, kinds: {} };
+    sources[this.writerId] = {
+      n: addCount(own.n, count),
+      kinds: { ...own.kinds, [kind]: addCount(own.kinds[kind] ?? 0, count) },
     };
+    const next = countsFromSources(sources);
     this.state = {
       ...this.state,
       days: capDays({ ...this.state.days, [key]: next }),
-      events: [{ atMs, kind, count }, ...this.state.events].slice(0, ACTIVITY_MAX_EVENTS),
+      events: [{ id: crypto.randomUUID(), atMs, kind, count }, ...this.state.events].slice(
+        0,
+        ACTIVITY_MAX_EVENTS,
+      ),
     };
-    this.scheduleSave();
     for (const l of this.listeners) l();
   }
 
@@ -156,32 +221,11 @@ export class ActivityLog {
     return out;
   }
 
-  flush(): void {
-    if (this.timer !== undefined) clearTimeout(this.timer);
-    this.timer = undefined;
-    if (!this.dirty) return;
-    const saved = this.storage !== null && saveActivity(this.storage, this.state);
-    this.dirty = !saved;
-    reportStorageSave(
-      'activity history',
-      saved,
-      saved
-        ? undefined
-        : {
-            filename: 'stackwallet-activity.json',
-            text: JSON.stringify(this.state),
-          },
-    );
-    if (saved) this.saveFailures = 0;
-    else if (++this.saveFailures < 3 && this.storage)
-      this.timer = setTimeout(() => this.flush(), this.debounceMs);
+  flush(): Promise<void> {
+    return this.persistence.flush();
   }
-
-  private scheduleSave(): void {
-    this.dirty = true;
-    this.saveFailures = 0;
-    if (this.timer !== undefined) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.flush(), this.debounceMs);
+  dispose(): Promise<void> {
+    return this.persistence.dispose();
   }
 }
 
@@ -199,10 +243,6 @@ function safeStorage(): StorageLike | null {
 }
 
 export const activityLog = new ActivityLog(safeStorage());
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('pagehide', () => activityLog.flush());
-}
 
 export function useActivity(): ActivityState {
   return useSyncExternalStore(

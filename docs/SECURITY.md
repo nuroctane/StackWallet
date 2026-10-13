@@ -91,6 +91,16 @@ the original copies remain available, so a newer revision from an active tab can
 Unresolved copies remain downloadable. These copies contain directory/layout metadata, not vault
 key material. Legacy cyclic folder graphs are repaired on load so their wallets remain visible.
 
+Workspace activity and balance-history saves use the same coordinated writes and recovery
+copies. Stable record identities preserve distinct observations and make replay idempotent.
+Daily activity uses per-writer counters so replay cannot duplicate totals after individual
+events have aged out. Legacy totals and duplicate observations remain readable. Merged histories
+retain the newest 400 activity days, 1,000 events and 5,000 balance observations. Storage events
+and window focus synchronize open views without requiring a new local event. Activity is UI
+history, separate from the Rust audit chain and wallet transaction history. Reload tabs running
+an older release before using cross-tab history synchronization; older code cannot participate
+in this coordination protocol.
+
 Live spend reservations remain counted across every spend-cap window until resolved; they do
 not age out with the draft. Confirmed spend uses the recorded confirmation time. Aggregated
 USD amounts saturate instead of overflowing. Ambiguous broadcasts retain the core-computed hash

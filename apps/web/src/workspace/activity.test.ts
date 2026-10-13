@@ -27,12 +27,12 @@ const local = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d,
 const DAY = 86_400_000;
 
 describe('dayKey', () => {
-  it('uses the local calendar day and zero-pads', () => {
+  it('uses the local calendar day and zero-pads', async () => {
     expect(dayKey(local(2024, 3, 5))).toBe('2024-03-05');
     expect(dayKey(local(2024, 12, 31))).toBe('2024-12-31');
   });
 
-  it('rolls over at local midnight, not UTC midnight', () => {
+  it('rolls over at local midnight, not UTC midnight', async () => {
     const lastTick = new Date(2024, 2, 10, 23, 59, 59, 999).getTime();
     expect(dayKey(lastTick)).toBe('2024-03-10');
     expect(dayKey(lastTick + 1)).toBe('2024-03-11');
@@ -44,7 +44,7 @@ describe('ActivityLog', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('records counts per day and per kind', () => {
+  it('records counts per day and per kind', async () => {
     let now = local(2024, 3, 5);
     const log = new ActivityLog(null, () => now);
     let notified = 0;
@@ -57,13 +57,13 @@ describe('ActivityLog', () => {
     log.record('device', 0);
     log.record('device', -3);
     expect(notified).toBe(4);
-    expect(log.getSnapshot().days).toEqual({
+    expect(log.getSnapshot().days).toMatchObject({
       '2024-03-05': { n: 4, kinds: { directory: 3, balance: 1 } },
       '2024-03-06': { n: 1, kinds: { layout: 1 } },
     });
   });
 
-  it('series has weeks*7 entries, oldest first, aligned so the last entry is today', () => {
+  it('series has weeks*7 entries, oldest first, aligned so the last entry is today', async () => {
     const now = local(2024, 3, 10, 15);
     const log = new ActivityLog(null, () => now);
     log.record('ceremony', 2);
@@ -83,7 +83,7 @@ describe('ActivityLog', () => {
     expect(log.series(52)).toHaveLength(364);
   });
 
-  it('series can be aligned to an explicit now', () => {
+  it('series can be aligned to an explicit now', async () => {
     const log = new ActivityLog(null, () => local(2024, 3, 10));
     const s = log.series(1, local(2023, 1, 1));
     expect(s.map((p) => p.dayKey)).toEqual([
@@ -97,7 +97,7 @@ describe('ActivityLog', () => {
     ]);
   });
 
-  it('caps history at the newest ACTIVITY_MAX_DAYS days', () => {
+  it('caps history at the newest ACTIVITY_MAX_DAYS days', async () => {
     let now = local(2023, 1, 1);
     const log = new ActivityLog(null, () => now);
     for (let i = 0; i < ACTIVITY_MAX_DAYS + 5; i++) {
@@ -110,53 +110,53 @@ describe('ActivityLog', () => {
     expect(keys[keys.length - 1]).toBe(dayKey(now - DAY));
   });
 
-  it('persists after the debounce and reloads', () => {
+  it('persists after the debounce and reloads', async () => {
     const storage = new MemoryStorage();
     const now = local(2024, 3, 5);
     const log = new ActivityLog(storage, () => now, 500);
     log.record('directory');
-    vi.advanceTimersByTime(499);
+    await vi.advanceTimersByTimeAsync(499);
     expect(storage.getItem(ACTIVITY_STORAGE_KEY)).toBeNull();
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     const saved = ActivityState.parse(JSON.parse(storage.getItem(ACTIVITY_STORAGE_KEY)!));
     expect(saved.days['2024-03-05']?.n).toBe(1);
 
     log.record('device');
-    log.flush();
+    await log.flush();
     const reloaded = new ActivityLog(storage, () => now);
     expect(reloaded.getSnapshot()).toEqual(log.getSnapshot());
     expect(reloaded.series(1)[6]?.n).toBe(2);
   });
 
-  it('retains dirty history through quota failures and retries without new events', () => {
+  it('retains dirty history through quota failures and retries without new events', async () => {
     const storage = new MemoryStorage();
     const write = vi.spyOn(storage, 'setItem').mockImplementation(() => {
       throw new Error('quota');
     });
     const log = new ActivityLog(storage, () => local(2024, 3, 5), 500);
     log.record('transaction');
-    vi.advanceTimersByTime(500 * 10);
-    expect(write).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(500 * 10);
+    expect(write.mock.calls.filter(([key]) => key === ACTIVITY_STORAGE_KEY)).toHaveLength(3);
     expect(storage.getItem(ACTIVITY_STORAGE_KEY)).toBeNull();
     write.mockRestore();
-    log.flush();
+    await log.flush();
     expect(loadActivity(storage)).toEqual(log.getSnapshot());
     expect(loadActivity(storage).days['2024-03-05']?.n).toBe(1);
   });
 
-  it('automatically recovers after a transient storage failure', () => {
+  it('automatically recovers after a transient storage failure', async () => {
     const storage = new MemoryStorage();
     vi.spyOn(storage, 'setItem').mockImplementationOnce(() => {
       throw new Error('busy');
     });
     const log = new ActivityLog(storage, () => local(2024, 3, 5), 500);
     log.record('directory', 2);
-    vi.advanceTimersByTime(1000);
+    await vi.advanceTimersByTimeAsync(1000);
     expect(loadActivity(storage)).toEqual(log.getSnapshot());
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('starts fresh from corrupt or invalid blobs without quarantining', () => {
+  it('starts fresh from corrupt or invalid blobs without quarantining', async () => {
     for (const bad of [
       '{nope',
       JSON.stringify({ version: 2 }),
@@ -171,7 +171,7 @@ describe('ActivityLog', () => {
   });
 });
 describe('individual event history', () => {
-  it('preserves legacy terrain totals without fabricating old timestamps', () => {
+  it('preserves legacy terrain totals without fabricating old timestamps', async () => {
     const storage = new MemoryStorage();
     storage.setItem(
       ACTIVITY_STORAGE_KEY,
@@ -181,12 +181,12 @@ describe('individual event history', () => {
     expect(loaded.getSnapshot().events).toEqual([]);
     expect(loaded.getSnapshot().days['2024-03-05']?.n).toBe(3);
     loaded.record('layout');
-    loaded.flush();
-    expect(new ActivityLog(storage).getSnapshot().events).toEqual([
+    await loaded.flush();
+    expect(new ActivityLog(storage).getSnapshot().events).toMatchObject([
       { atMs: local(2024, 3, 6), kind: 'layout', count: 1 },
     ]);
   });
-  it('retains bounded timestamped entries while keeping aggregate counts in parity', () => {
+  it('retains bounded timestamped entries while keeping aggregate counts in parity', async () => {
     const log = new ActivityLog(null, () => local(2024, 3, 6));
     for (let i = 0; i < 1005; i++) log.record('directory', 2);
     expect(log.getSnapshot().events).toHaveLength(1000);
@@ -195,6 +195,6 @@ describe('individual event history', () => {
     expect(log.getSnapshot().events[0]).toMatchObject({ kind: 'transaction', count: 4 });
     log.record('layout', 1.5);
     expect(log.getSnapshot().days['2024-03-06']?.n).toBe(2014);
-    log.flush();
+    await log.flush();
   });
 });
