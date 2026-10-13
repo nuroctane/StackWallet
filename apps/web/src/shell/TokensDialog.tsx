@@ -1,5 +1,12 @@
 import { useState, type FormEvent } from 'react';
-import { tokenInfo, isValidEvmAddress, type EvmAdapter } from '@stackwallet/chains-evm';
+import {
+  discoverTokens,
+  tokenInfo,
+  isValidEvmAddress,
+  type DiscoveredToken,
+  type EvmAdapter,
+} from '@stackwallet/chains-evm';
+import { BLOCKSCOUT_HOSTS } from '@stackwallet/collectibles';
 import {
   solanaTokenInfo,
   isValidSolanaAddress,
@@ -8,6 +15,8 @@ import {
 } from '@stackwallet/chains-solana';
 import { Button, Dialog, Field, Input, Select } from '@stackwallet/ui';
 import { findChain, listChains } from '../lib/chains.js';
+import { formatUnits } from '../lib/format.js';
+import { useDirectory } from '../store/persist.js';
 import { useRegistry } from '../store/RegistryContext.js';
 import { tokenStore, useTokens } from '../store/tokens.js';
 
@@ -15,6 +24,7 @@ export function TokensDialog({ open, onClose }: { open: boolean; onClose: () => 
   return (
     <Dialog open={open} onClose={onClose} title="Tracked tokens" meta="ERC-20 / SPL · public reads">
       {open && <TokensBody />}
+      {open && <DiscoverTokens />}
     </Dialog>
   );
 }
@@ -152,6 +162,111 @@ function TokensBody() {
           {busy ? 'reading…' : 'Track token'}
         </Button>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Tokens the indexer sees on this directory's EVM addresses. Each is only a
+ * suggestion; tracking re-reads symbol and decimals from the contract.
+ */
+function DiscoverTokens() {
+  const registry = useRegistry();
+  const tokens = useTokens();
+  const { accounts } = useDirectory();
+  const [found, setFound] = useState<DiscoveredToken[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [errors, setErrors] = useState(0);
+  const targets = [
+    ...new Map(
+      accounts
+        .filter((a) => a.family === 'evm' && a.chainId in BLOCKSCOUT_HOSTS)
+        .map((a) => [`${a.chainId}|${a.address.toLowerCase()}`, a] as const),
+    ).values(),
+  ];
+  const scan = async () => {
+    setBusy(true);
+    setErrors(0);
+    const results = await Promise.allSettled(
+      targets.map((a) =>
+        discoverTokens({
+          chainId: a.chainId,
+          owner: a.address,
+          indexer: BLOCKSCOUT_HOSTS[a.chainId]!,
+        }),
+      ),
+    );
+    const all = new Map<string, DiscoveredToken>();
+    for (const r of results)
+      if (r.status === 'fulfilled')
+        for (const t of r.value) all.set(`${t.chainId}|${t.address}`, t);
+    setErrors(results.filter((r) => r.status === 'rejected').length);
+    setFound([...all.values()].sort((a, b) => Number(a.flagged) - Number(b.flagged)));
+    setBusy(false);
+  };
+  const tracked = (t: DiscoveredToken) =>
+    tokens.some((x) => x.chainId === t.chainId && x.address.toLowerCase() === t.address);
+  const track = async (t: DiscoveredToken) => {
+    try {
+      const metadata = await tokenInfo(
+        registry.adapterFor(t.chainId) as unknown as EvmAdapter,
+        t.chainId,
+        t.address,
+      );
+      tokenStore.track({ chainId: t.chainId, address: t.address, ...metadata });
+    } catch {
+      setErrors((n) => n + 1);
+    }
+  };
+  return (
+    <div className="space-y-2 border-t border-edge p-4 text-[12px]">
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-semibold tracking-[0.12em] text-muted uppercase">
+          Found on your addresses
+        </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy || targets.length === 0}
+          onClick={() => void scan()}
+        >
+          {busy ? 'scanning…' : found ? 'rescan' : 'scan'}
+        </Button>
+      </div>
+      <p className="text-faint">
+        Asks the chain's public indexer which ERC-20 tokens your EVM addresses hold. Names are
+        whatever the token's creator chose; flagged ones are likely scams. Nothing is tracked until
+        you pick it.
+      </p>
+      {found && found.length === 0 && <p className="text-faint">No token balances found.</p>}
+      {found && found.length > 0 && (
+        <ul className="divide-y divide-edge">
+          {found.map((t) => (
+            <li
+              key={`${t.chainId}|${t.address}`}
+              className="flex items-center justify-between gap-2 py-1.5"
+            >
+              <span className="flex min-w-0 flex-col">
+                <span className={t.flagged ? 'text-danger' : 'text-ink'}>
+                  {formatUnits(t.balance, t.decimals)} {t.symbol}
+                  {t.flagged ? ' · flagged' : ''}
+                </span>
+                <span className="truncate font-mono text-[10px] text-faint">
+                  {findChain(registry, t.chainId)?.name ?? t.chainId} · {t.address}
+                </span>
+              </span>
+              <Button size="sm" variant="ghost" disabled={tracked(t)} onClick={() => void track(t)}>
+                {tracked(t) ? 'tracked' : 'Track'}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {errors > 0 && (
+        <p className="text-faint">
+          {errors} lookup{errors === 1 ? '' : 's'} failed.
+        </p>
+      )}
     </div>
   );
 }
