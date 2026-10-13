@@ -10,7 +10,8 @@
 //! - [`policy`]    deterministic rule evaluation
 //! - [`lifecycle`] the transaction state machine
 //! - [`audit`]     hash-chained audit log
-//! - [`vault`]     encrypted storage of shares and secrets
+//! - [`vault`]     encrypted storage of shares and secrets, device-local unlock slots
+//! - [`export_gate`] session, directory and wallet keys every export must present
 //! - [`identity`]  Ed25519 device identity and message authentication
 //! - [`tss`]       threshold signing parties and ceremonies
 //! - [`transport`] pairing, Noise channel and session framing (sans-IO)
@@ -20,6 +21,7 @@ pub mod audit;
 pub mod bitcoin;
 pub mod cosmos;
 pub mod evm;
+pub mod export_gate;
 pub mod hd;
 pub mod identity;
 pub mod intent;

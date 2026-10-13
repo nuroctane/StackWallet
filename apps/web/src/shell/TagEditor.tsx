@@ -40,12 +40,15 @@ export function TagEditor({ wallet }: { wallet: Wallet }) {
     if (!result.ok && result.error) toasts.push(result.error, 'danger');
   };
 
+  // A refused name stays in the box to edit, but blurring away must not refuse it twice.
+  const refused = useRef<string | null>(null);
   const add = () => {
     const tag = draft.trim();
-    if (tag === '') return;
+    if (tag === '' || tag === refused.current) return;
     const result = directory.addTag(wallet.id, tag);
     report(result);
     if (result.ok) setDraft('');
+    else refused.current = tag;
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -107,7 +110,10 @@ export function TagEditor({ wallet }: { wallet: Wallet }) {
       <input
         ref={inputRef}
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          refused.current = null;
+          setDraft(e.target.value);
+        }}
         onKeyDown={onKeyDown}
         onBlur={add}
         disabled={full}

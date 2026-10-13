@@ -3999,6 +3999,7 @@ dependencies = [
  "sha2 0.11.0",
  "sha3",
  "snow",
+ "subtle",
  "thiserror 2.0.21",
  "x25519-dalek",
  "zeroize",

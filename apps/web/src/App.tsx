@@ -22,7 +22,12 @@ import { SendDialog } from './shell/SendDialog.js';
 import { PoliciesDialog } from './shell/PoliciesDialog.js';
 import { TokensDialog } from './shell/TokensDialog.js';
 import { tokenStore } from './store/tokens.js';
-import { ImportSetDialog, TransferSetDialog } from './shell/SetTransferDialogs.js';
+import {
+  ExportKeyDialog,
+  ImportSetDialog,
+  TransferSetDialog,
+  TransferWalletDialog,
+} from './shell/SetTransferDialogs.js';
 import { StatusBar } from './shell/StatusBar.js';
 import { ThemeStudio } from './shell/ThemeStudio.js';
 import { VaultDialog } from './shell/VaultDialog.js';
@@ -303,6 +308,16 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       <TransferSetDialog
         open={dialog?.kind === 'transferSet'}
         folderId={dialog?.kind === 'transferSet' ? dialog.folderId : undefined}
+        onClose={closeDialog}
+      />
+      <TransferWalletDialog
+        open={dialog?.kind === 'transferWallet'}
+        walletId={dialog?.kind === 'transferWallet' ? dialog.walletId : undefined}
+        onClose={closeDialog}
+      />
+      <ExportKeyDialog
+        open={dialog?.kind === 'exportKey'}
+        target={dialog?.kind === 'exportKey' ? { scope: dialog.scope, id: dialog.id } : undefined}
         onClose={closeDialog}
       />
       <ImportSetDialog open={dialog?.kind === 'importSet'} onClose={closeDialog} />

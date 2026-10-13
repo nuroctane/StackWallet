@@ -92,6 +92,16 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
           <Badge>{kindLabel(wallet)}</Badge>
           <WalletTags wallet={wallet} />
           <span className="flex-1" />
+          {wallet.kind !== 'single' && (
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Seal this wallet alone for a paired device; nothing else in its folder changes"
+              onClick={() => shell.openDialog({ kind: 'transferWallet', walletId: wallet.id })}
+            >
+              Export…
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"

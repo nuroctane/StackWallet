@@ -4,6 +4,7 @@
 
 mod transport;
 
+use stackwallet_core::export_gate::{self, ExportGate, KeyScope};
 use stackwallet_core::identity::{DeviceIdentity, SignedCeremonyMessage};
 use stackwallet_core::intent::TxIntent;
 use stackwallet_core::lifecycle::TxState;
@@ -12,7 +13,9 @@ use stackwallet_core::policy::Policy;
 use stackwallet_core::store::devices::{load_device_table, save_device_table};
 use stackwallet_core::store::Device;
 use stackwallet_core::tss::CeremonyMessage;
-use stackwallet_core::vault::{EncryptedVault, KdfParams, Secret, SecretHandle, Vault};
+use stackwallet_core::vault::{
+    EncryptedVault, KdfParams, Secret, SecretHandle, SessionProof, SlotKind, SlotSecret, Vault,
+};
 use stackwallet_core::{ledger, provenance, transfer};
 use wasm_bindgen::prelude::*;
 
@@ -73,6 +76,28 @@ pub struct WasmVault {
 /// buffer that is freed unwiped after the call.
 fn secret_from_string(s: String) -> Secret {
     Secret::new(s.into_bytes())
+}
+
+/// A session proof from its three parts: no slot id means `secret` is the
+/// passphrase's UTF-8 bytes; otherwise it is the PIN digits or PRF output and
+/// `device` the device-held secret a PIN slot is bound to.
+fn session_from(slot_id: Option<String>, secret: Vec<u8>, device: Option<Vec<u8>>) -> SessionProof {
+    match slot_id {
+        None => SessionProof::Passphrase(Secret::new(secret)),
+        Some(id) => SessionProof::Slot {
+            id,
+            secret: SlotSecret {
+                secret: Secret::new(secret),
+                device: device.map(Secret::new),
+            },
+        },
+    }
+}
+
+fn scope_from(scope: &str) -> Result<KeyScope, JsError> {
+    Ok(serde_json::from_value(serde_json::Value::String(
+        scope.into(),
+    ))?)
 }
 
 fn core_err(e: stackwallet_core::CoreError) -> JsError {
@@ -241,12 +266,19 @@ impl WasmVault {
         provenance::public_key(&self.inner, wallet_id, curve, path).map_err(core_err)
     }
 
-    /// Step-up reveal. The exposure is sealed before this returns
-    /// `{ what, secret, publicHex }`; a wrong passphrase reveals and records nothing.
+    /// Gated reveal: session proof, the parent directory's export key and the
+    /// wallet's export key. The exposure is sealed before this returns
+    /// `{ what, secret, publicHex }`; any failed check reveals and records nothing.
+    #[allow(clippy::too_many_arguments)]
     pub fn reveal(
         &mut self,
         wallet_id: &str,
-        passphrase: String,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        folder_id: &str,
+        folder_key: String,
+        wallet_key: String,
         what_json: &str,
         channel: &str,
         now_ms: f64,
@@ -254,10 +286,18 @@ impl WasmVault {
         let what: provenance::Revealed = serde_json::from_str(what_json)?;
         let channel: provenance::Channel =
             serde_json::from_value(serde_json::Value::String(channel.into()))?;
+        let session = session_from(session_slot, session_secret, session_device);
+        let folder_key = secret_from_string(folder_key);
+        let wallet_key = secret_from_string(wallet_key);
         let r = provenance::reveal(
             &mut self.inner,
             wallet_id,
-            &secret_from_string(passphrase),
+            &ExportGate {
+                session: &session,
+                folder_id,
+                folder_key: &folder_key,
+                wallet_key: Some(&wallet_key),
+            },
             what,
             channel,
             now_ms as i64,
@@ -278,12 +318,19 @@ impl WasmVault {
         )?)
     }
 
-    /// Seal a directory set for one paired device; returns the `stackwallet-set:` text.
+    /// Seal a directory (`scope = "set"`) or one wallet (`"wallet"`) for one
+    /// paired device; returns the `stackwallet-set:` text. `folder_id` is the
+    /// exported directory, or the folder the wallet sits in.
     #[allow(clippy::too_many_arguments)]
-    pub fn export_set(
+    pub fn export_bundle(
         &mut self,
         identity_label: &str,
-        passphrase: String,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        folder_key: String,
+        wallet_key: Option<String>,
+        scope: &str,
         to_device_id: &str,
         folder_id: &str,
         wallet_ids_json: &str,
@@ -291,11 +338,22 @@ impl WasmVault {
         now_ms: f64,
     ) -> Result<String, JsError> {
         let wallet_ids: Vec<String> = serde_json::from_str(wallet_ids_json)?;
-        transfer::export_set(
+        let scope: transfer::BundleScope =
+            serde_json::from_value(serde_json::Value::String(scope.into()))?;
+        let session = session_from(session_slot, session_secret, session_device);
+        let folder_key = secret_from_string(folder_key);
+        let wallet_key = wallet_key.map(secret_from_string);
+        transfer::export_bundle(
             &mut self.inner,
             transfer::ExportRequest {
                 identity_label,
-                passphrase: &secret_from_string(passphrase),
+                gate: ExportGate {
+                    session: &session,
+                    folder_id,
+                    folder_key: &folder_key,
+                    wallet_key: wallet_key.as_ref(),
+                },
+                scope,
                 to_device_id,
                 folder_id,
                 wallet_ids: &wallet_ids,
@@ -310,19 +368,128 @@ impl WasmVault {
     pub fn import_set(
         &mut self,
         identity_label: &str,
-        passphrase: String,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
         bundle: &str,
         now_ms: f64,
     ) -> Result<String, JsError> {
+        let session = session_from(session_slot, session_secret, session_device);
         let got = transfer::import_set(
             &mut self.inner,
             identity_label,
-            &secret_from_string(passphrase),
+            &session,
             bundle,
             now_ms as i64,
         )
         .map_err(core_err)?;
         Ok(serde_json::to_string(&got)?)
+    }
+
+    /// Step-up check with any session factor; `allow_pin` is false for anything
+    /// that takes material out of the vault.
+    pub fn verify_session(
+        &self,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        allow_pin: bool,
+    ) -> Result<(), JsError> {
+        let session = session_from(session_slot, session_secret, session_device);
+        self.inner
+            .verify_session(&session, allow_pin)
+            .map_err(core_err)
+    }
+
+    /// Device-local unlock methods (`SlotInfo[]` JSON). Readable while locked.
+    pub fn slots_json(&self) -> Result<String, JsError> {
+        Ok(serde_json::to_string(&self.inner.slots())?)
+    }
+
+    /// Add a PIN (`kind = "pin"`, `secret` = 6 ASCII digits, `device` = 32
+    /// bytes) or a passkey (`"passkey"`, `secret` = 32-byte PRF output,
+    /// `credential_id` base64url). Only the passphrase can add one.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_slot(
+        &mut self,
+        passphrase: String,
+        kind: &str,
+        label: &str,
+        credential_id: Option<String>,
+        secret: Vec<u8>,
+        device: Option<Vec<u8>>,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let kind: SlotKind = serde_json::from_value(serde_json::Value::String(kind.into()))?;
+        self.inner
+            .add_slot(
+                &secret_from_string(passphrase),
+                kind,
+                label,
+                credential_id,
+                &SlotSecret {
+                    secret: Secret::new(secret),
+                    device: device.map(Secret::new),
+                },
+                now_ms as i64,
+            )
+            .map_err(core_err)
+    }
+
+    pub fn remove_slot(&mut self, id: &str) -> Result<(), JsError> {
+        self.inner.remove_slot(id).map_err(core_err)
+    }
+
+    pub fn unlock_with_slot(
+        &mut self,
+        id: &str,
+        secret: Vec<u8>,
+        device: Option<Vec<u8>>,
+    ) -> Result<(), JsError> {
+        self.inner
+            .unlock_with_slot(
+                id,
+                &SlotSecret {
+                    secret: Secret::new(secret),
+                    device: device.map(Secret::new),
+                },
+            )
+            .map_err(core_err)
+    }
+
+    /// `[{ scope, id }]` for every folder and wallet that has an export key.
+    pub fn export_keys_json(&self) -> Result<String, JsError> {
+        let ids: Vec<_> = export_gate::export_key_ids(&self.inner)
+            .into_iter()
+            .map(|(scope, id)| serde_json::json!({ "scope": scope, "id": id }))
+            .collect();
+        Ok(serde_json::to_string(&ids)?)
+    }
+
+    /// Set or change one export key (`scope` is `"folder"` or `"wallet"`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_export_key(
+        &mut self,
+        scope: &str,
+        id: &str,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        current: Option<String>,
+        next: String,
+    ) -> Result<(), JsError> {
+        let scope = scope_from(scope)?;
+        let session = session_from(session_slot, session_secret, session_device);
+        let current = current.map(secret_from_string);
+        export_gate::set_export_key(
+            &mut self.inner,
+            scope,
+            id,
+            &session,
+            current.as_ref(),
+            &secret_from_string(next),
+        )
+        .map_err(core_err)
     }
 
     /// The sealed ledger (`Ledger` JSON): transactions, policies, audit log.

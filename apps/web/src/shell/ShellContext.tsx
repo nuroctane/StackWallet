@@ -13,6 +13,8 @@ export type ShellDialog =
   | { kind: 'newWallet'; folderId?: string }
   | { kind: 'reveal'; walletId: string }
   | { kind: 'transferSet'; folderId: string }
+  | { kind: 'transferWallet'; walletId: string }
+  | { kind: 'exportKey'; scope: 'folder' | 'wallet'; id: string }
   | { kind: 'importSet' }
   | { kind: 'send'; accountId?: string };
 

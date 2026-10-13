@@ -1,4 +1,5 @@
-import { buildLayoutDirectory, remapProps } from '../store/layoutBundle.js';
+import { buildLayoutDirectory, referencedIds, remapProps } from '../store/layoutBundle.js';
+import { subtree } from '../store/sets.js';
 import type { DirectoryStore } from '../store/store.js';
 import { LayoutExport } from './schema.js';
 import type { WorkspaceStore } from './store.js';
@@ -83,4 +84,29 @@ export function importLayoutBundle(
     ok: true,
     value: { layoutId: added.value, createdWallets, matchedWallets, createdFolders, unresolved },
   };
+}
+
+/**
+ * Layouts that show anything inside a directory, for a directory export.
+ * They travel inside the sealed set with their ids intact, since the set
+ * keeps its folder and wallet ids on the receiving device.
+ */
+export function associatedLayouts(
+  workspace: WorkspaceStore,
+  directory: DirectoryStore,
+  folderId: string,
+): LayoutExport[] {
+  const state = directory.getSnapshot();
+  const folders = new Set(subtree(state, folderId));
+  const wallets = new Set(state.wallets.filter((w) => folders.has(w.folderId)).map((w) => w.id));
+  const out: LayoutExport[] = [];
+  for (const layout of workspace.getSnapshot().layouts) {
+    const refs = referencedIds(layout.panes);
+    const touches =
+      [...refs.walletIds].some((id) => wallets.has(id)) ||
+      [...refs.folderIds].some((id) => folders.has(id));
+    const data = touches ? workspace.exportLayout(layout.id) : undefined;
+    if (data) out.push(data);
+  }
+  return out;
 }

@@ -599,6 +599,8 @@ export const RevealedSecret = z.object({
 export type RevealedSecret = z.infer<typeof RevealedSecret>;
 
 export const ImportedSet = z.object({
+  /** `set`: a whole directory. `wallet`: one wallet exported on its own. */
+  scope: z.enum(['set', 'wallet']).default('set'),
   bundleId: z.string(),
   folderId: z.string(),
   fromDeviceId: z.string(),
@@ -608,6 +610,49 @@ export const ImportedSet = z.object({
   walletsWithKeys: z.array(z.string()),
 });
 export type ImportedSet = z.infer<typeof ImportedSet>;
+
+// ---------------------------------------------------------------------------
+// Session factors and the export gate (core `vault` slots, `export_gate`)
+// ---------------------------------------------------------------------------
+
+/** Device-local ways to open the session besides the passphrase. Never exported. */
+export const SlotKind = z.enum(['pin', 'passkey']);
+export type SlotKind = z.infer<typeof SlotKind>;
+
+export const SlotInfo = z.object({
+  id: z.string().regex(/^[0-9a-f]{16}$/),
+  kind: SlotKind,
+  label: z.string().max(80),
+  saltHex: z.string().regex(/^[0-9a-f]{32}$/),
+  credentialId: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{1,1024}$/)
+    .nullable(),
+  createdAtMs: z.number().int(),
+});
+export type SlotInfo = z.infer<typeof SlotInfo>;
+
+/**
+ * Proof the person at this device can open the session now. The passphrase,
+ * or a slot: PIN digits plus the device secret, or a passkey's PRF output.
+ */
+export type SessionProof =
+  | { kind: 'passphrase'; passphrase: string }
+  | { kind: 'slot'; slotId: string; secret: Uint8Array; device?: Uint8Array };
+
+export const ExportKeyScope = z.enum(['folder', 'wallet']);
+export type ExportKeyScope = z.infer<typeof ExportKeyScope>;
+
+export const ExportKeyRef = z.object({ scope: ExportKeyScope, id: z.string().max(128) });
+export type ExportKeyRef = z.infer<typeof ExportKeyRef>;
+
+/** What every export presents: session, the directory's key, and for one wallet its key. */
+export interface ExportGateInput {
+  session: SessionProof;
+  folderId: string;
+  folderKey: string;
+  walletKey?: string;
+}
 
 // ---------------------------------------------------------------------------
 // Transaction ledger (core `evm`, `ledger`, `audit`)

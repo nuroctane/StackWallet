@@ -172,8 +172,8 @@ function SearchBody({
       {
         id: 'a:importset',
         type: 'action',
-        label: 'import set',
-        dim: 'from a paired device',
+        label: 'import directory or wallet',
+        dim: 'sealed by a paired device',
         run: () => shell.openDialog({ kind: 'importSet' }),
       },
       {

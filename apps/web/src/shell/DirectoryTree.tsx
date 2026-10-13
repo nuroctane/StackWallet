@@ -317,7 +317,9 @@ function Row({
       {renaming ? (
         <RenameInput initial={row.name} onCommit={onRename} onCancel={onCancelRename} />
       ) : (
-        <span className={`flex-1 truncate ${row.kind === 'folder' ? 'text-ink' : 'text-muted'}`}>
+        <span
+          className={`min-w-[6ch] flex-1 truncate ${row.kind === 'folder' ? 'text-ink' : 'text-muted'}`}
+        >
           {wallet ? <WalletName wallet={wallet} className="max-w-full" /> : row.name}
         </span>
       )}
@@ -329,7 +331,10 @@ function Row({
       {wallet && !renaming && (
         <>
           {families.length > 0 && (
-            <span className="shrink-0 text-[10px] tracking-[0.06em] text-faint uppercase">
+            <span
+              className="min-w-0 shrink truncate text-[10px] tracking-[0.06em] text-faint uppercase"
+              title={families.map((f) => FAMILY_LABEL[f]).join(' · ')}
+            >
               {families.map((f) => FAMILY_LABEL[f]).join('·')}
             </span>
           )}

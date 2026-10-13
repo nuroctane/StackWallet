@@ -19,6 +19,12 @@ import {
   ExposureChannel,
   Frame,
   ImportedSet,
+  ExportKeyRef,
+  ExportKeyScope,
+  SlotInfo,
+  SlotKind,
+  type ExportGateInput,
+  type SessionProof,
   Hex32,
   KeyGroup,
   Ledger,
@@ -102,30 +108,62 @@ export interface VaultHandle {
   importPhrase(walletId: string, phrase: string, nowMs: number): Promise<void>;
   hasSingleKey(walletId: string): Promise<boolean>;
   singlePublicKey(walletId: string, curve: Curve, path: string): Promise<string>;
-  /** Step-up reveal; the core marks the wallet exposed before returning the secret. */
+  /**
+   * Gated reveal (session, parent directory key, wallet key); the core marks
+   * this wallet exposed before returning the secret.
+   */
   reveal(
     walletId: string,
-    passphrase: string,
+    gate: ExportGateInput,
     what: Revealed,
     channel: ExposureChannel,
     nowMs: number,
   ): Promise<RevealedSecret>;
   provenance(): Promise<ProvenanceTable>;
-  exportSet(req: {
+  /**
+   * Seal a directory (`scope: 'set'`, gate folder = the directory) or one wallet
+   * (`'wallet'`, gate folder = the folder it is in, wallet key required).
+   */
+  exportBundle(req: {
     identityLabel: string;
-    passphrase: string;
+    gate: ExportGateInput;
+    scope: 'set' | 'wallet';
     toDeviceId: string;
-    folderId: string;
     walletIds: string[];
     directory: unknown;
     nowMs: number;
   }): Promise<string>;
   importSet(
     identityLabel: string,
-    passphrase: string,
+    session: SessionProof,
     bundle: string,
     nowMs: number,
   ): Promise<ImportedSet>;
+  /** Step-up check; `allowPin` stays false for anything that takes material out. */
+  verifySession(session: SessionProof, allowPin: boolean): Promise<void>;
+  /** Device-local unlock methods; readable while locked. */
+  slots(): Promise<SlotInfo[]>;
+  /** Only the passphrase can add a PIN or passkey. A new PIN replaces the old one. */
+  addSlot(req: {
+    passphrase: string;
+    kind: SlotKind;
+    label: string;
+    credentialId?: string;
+    secret: Uint8Array;
+    device?: Uint8Array;
+    nowMs: number;
+  }): Promise<string>;
+  removeSlot(id: string): Promise<void>;
+  unlockWithSlot(id: string, secret: Uint8Array, device?: Uint8Array): Promise<void>;
+  /** Folders and wallets that have an export key. */
+  exportKeys(): Promise<ExportKeyRef[]>;
+  setExportKey(req: {
+    scope: ExportKeyScope;
+    id: string;
+    session: SessionProof;
+    current?: string;
+    next: string;
+  }): Promise<void>;
   /** Transactions, policies and the hash-chained audit log, as the core sealed them. */
   ledger(): Promise<Ledger>;
   txPropose(intent: TxIntent, deviceId: string, nowMs: number): Promise<TxRecord>;
@@ -255,22 +293,67 @@ export interface WasmVaultObject {
   single_public_key(walletId: string, curve: string, path: string): string;
   reveal(
     walletId: string,
-    passphrase: string,
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    folderId: string,
+    folderKey: string,
+    walletKey: string,
     whatJson: string,
     channel: string,
     nowMs: number,
   ): string;
   provenance_json(): string;
-  export_set(
+  export_bundle(
     identityLabel: string,
-    passphrase: string,
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    folderKey: string,
+    walletKey: string | undefined,
+    scope: string,
     toDeviceId: string,
     folderId: string,
     walletIdsJson: string,
     directoryJson: string,
     nowMs: number,
   ): string;
-  import_set(identityLabel: string, passphrase: string, bundle: string, nowMs: number): string;
+  import_set(
+    identityLabel: string,
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    bundle: string,
+    nowMs: number,
+  ): string;
+  verify_session(
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    allowPin: boolean,
+  ): void;
+  slots_json(): string;
+  add_slot(
+    passphrase: string,
+    kind: string,
+    label: string,
+    credentialId: string | undefined,
+    secret: Uint8Array,
+    device: Uint8Array | undefined,
+    nowMs: number,
+  ): string;
+  remove_slot(id: string): void;
+  unlock_with_slot(id: string, secret: Uint8Array, device: Uint8Array | undefined): void;
+  export_keys_json(): string;
+  set_export_key(
+    scope: string,
+    id: string,
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    current: string | undefined,
+    next: string,
+  ): void;
   ledger_json(): string;
   tx_propose(intentJson: string, deviceId: string, nowMs: number): string;
   tx_attach(
@@ -370,6 +453,13 @@ function rawIdentity(identity: IdentityHandle): WasmIdentityObject {
   return identity.raw;
 }
 
+/** The wasm surface takes a session proof as (slot id, secret bytes, device bytes). */
+function sessionArgs(p: SessionProof): [string | undefined, Uint8Array, Uint8Array | undefined] {
+  return p.kind === 'passphrase'
+    ? [undefined, new TextEncoder().encode(p.passphrase), undefined]
+    : [p.slotId, p.secret, p.device];
+}
+
 class WasmVaultHandle implements VaultHandle {
   constructor(private readonly raw: WasmVaultObject) {}
   async isUnlocked() {
@@ -435,14 +525,20 @@ class WasmVaultHandle implements VaultHandle {
   }
   async reveal(
     walletId: string,
-    passphrase: string,
+    gate: ExportGateInput,
     what: Revealed,
     channel: ExposureChannel,
     nowMs: number,
   ) {
+    const [slot, secret, device] = sessionArgs(gate.session);
     const out = this.raw.reveal(
       walletId,
-      passphrase,
+      slot,
+      secret,
+      device,
+      gate.folderId,
+      gate.folderKey,
+      gate.walletKey ?? '',
       JSON.stringify(Revealed.parse(what)),
       ExposureChannel.parse(channel),
       nowMs,
@@ -452,23 +548,82 @@ class WasmVaultHandle implements VaultHandle {
   async provenance() {
     return ProvenanceTable.parse(JSON.parse(this.raw.provenance_json()));
   }
-  async exportSet(req: {
+  async exportBundle(req: {
     identityLabel: string;
-    passphrase: string;
+    gate: ExportGateInput;
+    scope: 'set' | 'wallet';
     toDeviceId: string;
-    folderId: string;
     walletIds: string[];
     directory: unknown;
     nowMs: number;
   }) {
-    return this.raw.export_set(
+    const [slot, secret, device] = sessionArgs(req.gate.session);
+    return this.raw.export_bundle(
       req.identityLabel,
-      req.passphrase,
+      slot,
+      secret,
+      device,
+      req.gate.folderKey,
+      req.gate.walletKey,
+      req.scope,
       req.toDeviceId,
-      req.folderId,
+      req.gate.folderId,
       JSON.stringify(req.walletIds),
       JSON.stringify(req.directory),
       req.nowMs,
+    );
+  }
+  async verifySession(session: SessionProof, allowPin: boolean) {
+    const [slot, secret, device] = sessionArgs(session);
+    this.raw.verify_session(slot, secret, device, allowPin);
+  }
+  async slots() {
+    return SlotInfo.array().parse(JSON.parse(this.raw.slots_json()));
+  }
+  async addSlot(req: {
+    passphrase: string;
+    kind: SlotKind;
+    label: string;
+    credentialId?: string;
+    secret: Uint8Array;
+    device?: Uint8Array;
+    nowMs: number;
+  }) {
+    return this.raw.add_slot(
+      req.passphrase,
+      SlotKind.parse(req.kind),
+      req.label,
+      req.credentialId,
+      req.secret,
+      req.device,
+      req.nowMs,
+    );
+  }
+  async removeSlot(id: string) {
+    this.raw.remove_slot(id);
+  }
+  async unlockWithSlot(id: string, secret: Uint8Array, device?: Uint8Array) {
+    this.raw.unlock_with_slot(id, secret, device);
+  }
+  async exportKeys() {
+    return ExportKeyRef.array().parse(JSON.parse(this.raw.export_keys_json()));
+  }
+  async setExportKey(req: {
+    scope: ExportKeyScope;
+    id: string;
+    session: SessionProof;
+    current?: string;
+    next: string;
+  }) {
+    const [slot, secret, device] = sessionArgs(req.session);
+    this.raw.set_export_key(
+      ExportKeyScope.parse(req.scope),
+      req.id,
+      slot,
+      secret,
+      device,
+      req.current,
+      req.next,
     );
   }
   async ledger() {
@@ -525,9 +680,10 @@ class WasmVaultHandle implements VaultHandle {
   async setPolicies(policies: Policy[], deviceId: string, nowMs: number) {
     this.raw.set_policies_json(JSON.stringify(Policy.array().parse(policies)), deviceId, nowMs);
   }
-  async importSet(identityLabel: string, passphrase: string, bundle: string, nowMs: number) {
+  async importSet(identityLabel: string, session: SessionProof, bundle: string, nowMs: number) {
+    const [slot, secret, device] = sessionArgs(session);
     return ImportedSet.parse(
-      JSON.parse(this.raw.import_set(identityLabel, passphrase, bundle, nowMs)),
+      JSON.parse(this.raw.import_set(identityLabel, slot, secret, device, bundle, nowMs)),
     );
   }
   free() {

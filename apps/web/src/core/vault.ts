@@ -12,6 +12,9 @@ import {
   type CoreClient,
   type Curve,
   type Device,
+  type ExportGateInput,
+  type ExportKeyRef,
+  type ExportKeyScope,
   type ExposureChannel,
   type IdentityHandle,
   type IdentityInfo,
@@ -21,7 +24,9 @@ import {
   type Policy,
   type Revealed,
   type RevealedSecret,
+  type SessionProof,
   type Signer,
+  type SlotInfo,
   type TxIntent,
   type TxRecord,
   type TxState,
@@ -31,6 +36,15 @@ import {
 
 import type { StorageLike } from '../store/persist.js';
 import { withStorageWriter } from '../store/storageWriter.js';
+import {
+  MAX_PIN_FAILURES,
+  createDeviceSecret,
+  destroyDeviceSecret,
+  loadDeviceSecret,
+  pinFailures,
+  setPinFailures,
+} from './deviceSecret.js';
+import { createPasskey, passkeySecret } from './passkey.js';
 
 export const VAULT_STORAGE_KEY = 'stackwallet.vault.v1';
 /** Read-only mirror of the sealed provenance table, so tags stay visible while locked. */
@@ -66,7 +80,16 @@ export interface VaultView {
   ledger: Ledger | null;
   /** Set when the sealed ledger failed to load: a broken audit chain is a red banner, not silence. */
   ledgerError: string | null;
+  /** This device's PIN and passkey unlock methods; readable while locked. */
+  slots: SlotInfo[];
+  /** Folders and wallets with an export key; readable while locked. */
+  exportKeys: ExportKeyRef[];
 }
+
+/** How the person proves the session for an export: never a PIN. */
+export type SessionChoice =
+  | { kind: 'passphrase'; passphrase: string }
+  | { kind: 'passkey'; slotId: string };
 
 export type VaultResult = { ok: true } | { ok: false; error: string };
 
@@ -134,6 +157,8 @@ export class VaultStore {
     provenance: { wallets: [], sets: [] },
     ledger: null,
     ledgerError: null,
+    slots: [],
+    exportKeys: [],
   };
   private client: CoreClient | null = null;
   private vault: VaultHandle | null = null;
@@ -218,6 +243,7 @@ export class VaultStore {
     }
     try {
       this.vault = await client.openVault(bytes);
+      await this.refreshFactors();
       this.set({ status: { kind: 'locked', labels: await this.vault.labels() } });
     } catch {
       if (quarantineInvalid) await this.quarantine(raw);
@@ -296,8 +322,14 @@ export class VaultStore {
     return withVaultWriter(this.deps.storage, execute);
   }
 
+  private async refreshFactors(): Promise<void> {
+    if (!this.vault) return;
+    this.set({ slots: await this.vault.slots(), exportKeys: await this.vault.exportKeys() });
+  }
+
   private async refreshUnlocked(): Promise<void> {
     if (!this.vault) return;
+    await this.refreshFactors();
     const labels = await this.vault.labels();
     let identity: IdentityInfo | null = null;
     if (labels.some((l) => l.label === IDENTITY_LABEL)) {
@@ -435,6 +467,136 @@ export class VaultStore {
     }, false);
   }
 
+  /**
+   * Open the session with this device's PIN. Wrong PINs count; at the limit
+   * the device secret the PIN is bound to is destroyed, which retires the
+   * PIN for good (the passphrase still works and can set a new one).
+   */
+  unlockWithPin(pin: string): Promise<VaultResult> {
+    return this.guarded(async () => {
+      if (this.deps.storage?.getItem(VAULT_STORAGE_KEY) !== this.committed)
+        await this.restoreCommitted();
+      if (!this.vault) throw new Error('No vault to unlock');
+      const slot = this.view.slots.find((s) => s.kind === 'pin');
+      if (!slot) throw new Error('No PIN is set on this device');
+      const failures = pinFailures(this.deps.storage);
+      if (failures >= MAX_PIN_FAILURES)
+        throw new Error('Too many wrong PINs; unlock with the passphrase');
+      const device = await loadDeviceSecret().catch(() => null);
+      if (!device)
+        throw new Error('This device no longer holds its PIN binding; use the passphrase');
+      try {
+        await this.vault.unlockWithSlot(slot.id, new TextEncoder().encode(pin), device);
+      } catch (err) {
+        const next = failures + 1;
+        setPinFailures(this.deps.storage, next);
+        if (next >= MAX_PIN_FAILURES) {
+          await destroyDeviceSecret().catch(() => undefined);
+          throw new Error(
+            'Too many wrong PINs: the PIN is retired on this device. Use the passphrase.',
+          );
+        }
+        throw new Error(
+          /6 digits/.test(message(err))
+            ? 'A PIN is exactly 6 digits'
+            : `Wrong PIN; ${MAX_PIN_FAILURES - next} tries left`,
+        );
+      }
+      setPinFailures(this.deps.storage, 0);
+      await this.refreshUnlocked();
+    }, false);
+  }
+
+  /** Open the session with a passkey (Face ID, Touch ID, Windows Hello, security key). */
+  unlockWithPasskey(slotId: string): Promise<VaultResult> {
+    return this.guarded(async () => {
+      if (this.deps.storage?.getItem(VAULT_STORAGE_KEY) !== this.committed)
+        await this.restoreCommitted();
+      if (!this.vault) throw new Error('No vault to unlock');
+      const slot = this.view.slots.find((s) => s.id === slotId && s.kind === 'passkey');
+      if (!slot?.credentialId) throw new Error('That passkey is not set on this device');
+      await this.vault.unlockWithSlot(slot.id, await passkeySecret(slot.credentialId));
+      await this.refreshUnlocked();
+    }, false);
+  }
+
+  /** Six digits bound to a fresh device secret. Only the passphrase can add one. */
+  addPin(passphrase: string, pin: string): Promise<VaultResult> {
+    return this.guarded(async () => {
+      if (!/^\d{6}$/.test(pin)) throw new Error('A PIN is exactly 6 digits');
+      const v = this.unlockedVault();
+      const device = await createDeviceSecret();
+      await v.addSlot({
+        passphrase,
+        kind: 'pin',
+        label: 'PIN',
+        secret: new TextEncoder().encode(pin),
+        device,
+        nowMs: this.now(),
+      });
+      setPinFailures(this.deps.storage, 0);
+      await this.persist();
+      await this.refreshFactors();
+    });
+  }
+
+  addPasskey(passphrase: string, label: string): Promise<VaultResult> {
+    return this.guarded(async () => {
+      const v = this.unlockedVault();
+      // Check the passphrase before the biometric prompt, so a typo costs no ceremony.
+      await v.verifySession({ kind: 'passphrase', passphrase }, false);
+      const { credentialId, secret } = await createPasskey(label);
+      await v.addSlot({
+        passphrase,
+        kind: 'passkey',
+        label,
+        credentialId,
+        secret,
+        nowMs: this.now(),
+      });
+      await this.persist();
+      await this.refreshFactors();
+    });
+  }
+
+  removeSlot(id: string): Promise<VaultResult> {
+    return this.guarded(async () => {
+      const v = this.unlockedVault();
+      const slot = this.view.slots.find((s) => s.id === id);
+      await v.removeSlot(id);
+      if (slot?.kind === 'pin') await destroyDeviceSecret().catch(() => undefined);
+      await this.persist();
+      await this.refreshFactors();
+    });
+  }
+
+  /** Turn the person's choice into a proof the core checks; a passkey prompts here. */
+  async proveSession(choice: SessionChoice): Promise<SessionProof> {
+    if (choice.kind === 'passphrase') return choice;
+    const slot = this.view.slots.find((s) => s.id === choice.slotId && s.kind === 'passkey');
+    if (!slot?.credentialId) throw new Error('That passkey is not set on this device');
+    return { kind: 'slot', slotId: slot.id, secret: await passkeySecret(slot.credentialId) };
+  }
+
+  /** Set or change the export key of a directory or a wallet. */
+  setExportKey(req: {
+    scope: ExportKeyScope;
+    id: string;
+    session: SessionProof;
+    current?: string;
+    next: string;
+  }): Promise<VaultResult> {
+    return this.guarded(async () => {
+      await this.unlockedVault().setExportKey(req);
+      await this.persist();
+      await this.refreshFactors();
+    });
+  }
+
+  hasExportKey(scope: ExportKeyScope, id: string): boolean {
+    return this.view.exportKeys.some((k) => k.scope === scope && k.id === id);
+  }
+
   lock(): Promise<VaultResult> {
     return this.guarded(async () => {
       if (!this.vault) throw new Error('No vault to lock');
@@ -493,34 +655,36 @@ export class VaultStore {
   }
 
   /**
-   * Take a phrase or key out. The core re-checks the passphrase and seals the
-   * exposure before it returns anything, so the tag cannot be skipped.
+   * Take a phrase or key out. The core checks the export gate (session,
+   * parent directory key, wallet key) and seals the exposure before it
+   * returns anything, so the tag cannot be skipped.
    */
   reveal(
     walletId: string,
-    passphrase: string,
+    gate: ExportGateInput,
     what: Revealed,
     channel: ExposureChannel,
   ): Promise<{ ok: true; value: RevealedSecret } | { ok: false; error: string }> {
     return this.guardedValue(async () => {
       const v = this.unlockedVault();
-      const out = await v.reveal(walletId, passphrase, what, channel, this.now());
+      const out = await v.reveal(walletId, gate, what, channel, this.now());
       await this.persist();
       await this.refreshProvenance();
       return out;
     });
   }
 
-  exportSet(req: {
-    passphrase: string;
+  /** A directory (`set`) or one wallet (`wallet`), sealed for one paired device. */
+  exportBundle(req: {
+    gate: ExportGateInput;
+    scope: 'set' | 'wallet';
     toDeviceId: string;
-    folderId: string;
     walletIds: string[];
     directory: unknown;
   }): Promise<{ ok: true; value: string } | { ok: false; error: string }> {
     return this.guardedValue(async () => {
       const v = this.unlockedVault();
-      const bundle = await v.exportSet({
+      const bundle = await v.exportBundle({
         identityLabel: IDENTITY_LABEL,
         nowMs: this.now(),
         ...req,
@@ -532,13 +696,13 @@ export class VaultStore {
   }
 
   importSet(
-    passphrase: string,
+    session: SessionProof,
     bundle: string,
     validate?: (set: ImportedSet) => void,
   ): Promise<{ ok: true; value: ImportedSet } | { ok: false; error: string }> {
     return this.guardedValue(async () => {
       const v = this.unlockedVault();
-      const got = await v.importSet(IDENTITY_LABEL, passphrase, bundle, this.now());
+      const got = await v.importSet(IDENTITY_LABEL, session, bundle, this.now());
       validate?.(got);
       await this.persist();
       await this.refreshProvenance();

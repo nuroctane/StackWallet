@@ -14,7 +14,7 @@ import { TagChips } from '../ProvenanceTags.js';
  */
 export function KeysSection({ wallet }: { wallet: Wallet }) {
   const shell = useShell();
-  const { status, provenance } = useVaultView(vault);
+  const { status, provenance, exportKeys } = useVaultView(vault);
   const tags = walletTags(provenance, wallet, useWalletApprovals(wallet.id));
   const p = provenance.wallets.find((w) => w.walletId === wallet.id);
   return (
@@ -46,7 +46,7 @@ export function KeysSection({ wallet }: { wallet: Wallet }) {
             ))}
           </ul>
         )}
-        <div className="flex gap-2 pt-1">
+        <div className="flex flex-wrap gap-2 pt-1">
           <Button
             size="sm"
             variant="danger"
@@ -56,7 +56,31 @@ export function KeysSection({ wallet }: { wallet: Wallet }) {
           >
             Export phrase or key…
           </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={status.kind !== 'unlocked'}
+            title="Seal this wallet alone for a paired device; nothing else in its folder changes"
+            onClick={() => shell.openDialog({ kind: 'transferWallet', walletId: wallet.id })}
+          >
+            Export wallet…
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={status.kind !== 'unlocked'}
+            title="The key every export of this wallet needs, with its directory's key and a fresh sign-in"
+            onClick={() => shell.openDialog({ kind: 'exportKey', scope: 'wallet', id: wallet.id })}
+          >
+            {exportKeys.some((k) => k.scope === 'wallet' && k.id === wallet.id)
+              ? 'Wallet key ✓'
+              : 'Wallet key…'}
+          </Button>
         </div>
+        <p className="text-[11px] text-faint">
+          Every export needs a fresh sign-in (passphrase or passkey, never the PIN), the key of the
+          directory this wallet is in, and this wallet&apos;s own key.
+        </p>
       </div>
     </section>
   );

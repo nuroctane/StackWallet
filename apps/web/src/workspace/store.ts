@@ -377,6 +377,23 @@ export class WorkspaceStore {
     };
   }
 
+  /** Point every pane that shows one wallet at another (a watch stand-in replaced by its keys). */
+  replaceWalletRefs(map: ReadonlyMap<string, string>): void {
+    if (map.size === 0) return;
+    let changed = false;
+    const layouts = this.state.layouts.map((l) => ({
+      ...l,
+      panes: l.panes.map((p) => {
+        const id = p.props['walletId'];
+        const next = typeof id === 'string' ? map.get(id) : undefined;
+        if (next === undefined) return p;
+        changed = true;
+        return { ...p, props: { ...p.props, walletId: next } };
+      }),
+    }));
+    if (changed) this.commit({ ...this.state, layouts });
+  }
+
   importLayout(data: LayoutExport): Result<string> {
     const panes: Pane[] = data.panes.map((p, i) => ({ ...p, id: this.ctx.newId(), z: i }));
     return this.addLayout(data.name, panes);

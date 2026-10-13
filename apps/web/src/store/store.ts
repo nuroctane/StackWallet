@@ -84,6 +84,18 @@ export class DirectoryStore {
     return this.apply(sets.importPayload(this.state, payload, setFolderId, this.ctx));
   }
 
+  /** Place one wallet that arrived on its own under the root folder. */
+  importWallet(payload: unknown): ActionResult<string> {
+    return this.apply(sets.importWalletPayload(this.state, payload, this.ctx));
+  }
+
+  /** Fold watch-only stand-ins into wallets whose keys just arrived; returns old id -> new id. */
+  absorbWatchDuplicates(keyedWalletIds: readonly string[]): Map<string, string> {
+    const out = sets.absorbWatchDuplicates(this.state, keyedWalletIds);
+    this.commit(out.state);
+    return out.remap;
+  }
+
   /** Watch-only wallets and folders a layout points at; see `layoutBundle.ts`. */
   adoptLayoutDirectory(raw: unknown): ActionResult<AdoptResult> {
     return this.apply(adoptLayoutDirectory(this.state, raw, this.ctx));

@@ -1,20 +1,25 @@
 import { Account, ChainId, chainFamilyOf, Folder, Wallet } from '@stackwallet/core-client';
 import { z } from 'zod';
 
-import { rootOf, type Outcome, type ReducerContext } from './reducers.js';
+import { MAX_TAGS, normalizeTags, rootOf, type Outcome, type ReducerContext } from './reducers.js';
 import type { DirectoryState } from './schema.js';
+import { MAX_TAG_DEFS, TagDef, isReservedTagWord, type TagDef as TagDefT } from './tagDefs.js';
+import { LayoutExport, MAX_LAYOUTS } from '../workspace/schema.js';
 
 /**
  * The directory half of a set transfer: a folder, its descendants, their
- * wallets and accounts. The core carries this opaquely inside the sealed
- * bundle; it is parsed again here on arrival because a paired device is
- * trusted to be who it is, not to be bug-free.
+ * wallets and accounts, the looks of their user tags and every layout that
+ * shows them. The core carries this opaquely inside the sealed bundle; it is
+ * parsed again here on arrival because a paired device is trusted to be who
+ * it is, not to be bug-free.
  */
 export const SetPayload = z.object({
   stackwalletSet: z.literal(1),
   folders: Folder.array().min(1).max(10_000),
   wallets: Wallet.array().max(10_000),
   accounts: Account.array().max(50_000),
+  tagDefs: TagDef.array().max(MAX_TAG_DEFS).default([]),
+  layouts: LayoutExport.array().max(MAX_LAYOUTS).default([]),
 });
 export type SetPayload = z.infer<typeof SetPayload>;
 
@@ -43,6 +48,7 @@ export function subtree(state: DirectoryState, folderId: string): string[] {
 export function exportPayload(
   state: DirectoryState,
   folderId: string,
+  layouts: LayoutExport[] = [],
 ): { payload: SetPayload; walletIds: string[] } | { error: string } {
   const folder = state.folders.find((f) => f.id === folderId);
   if (!folder) return { error: 'Folder not found' };
@@ -53,9 +59,34 @@ export function exportPayload(
   const walletIds = new Set(wallets.map((w) => w.id));
   const accounts = state.accounts.filter((a) => walletIds.has(a.walletId));
   return {
-    payload: { stackwalletSet: 1, folders, wallets, accounts },
+    payload: {
+      stackwalletSet: 1,
+      folders,
+      wallets,
+      accounts,
+      tagDefs: usedTagDefs(state, wallets),
+      layouts,
+    },
     walletIds: [...walletIds],
   };
+}
+
+function usedTagDefs(state: DirectoryState, wallets: readonly { tags: string[] }[]): TagDefT[] {
+  const used = new Set(wallets.flatMap((w) => w.tags));
+  return state.tagDefs.filter((d) => used.has(d.id));
+}
+
+/** Add the sender's tag looks without overriding any this instance already set. */
+function mergeTagDefs(state: DirectoryState, incoming: readonly TagDefT[]): DirectoryState {
+  const defs = [...state.tagDefs];
+  for (const d of incoming)
+    if (
+      !defs.some((x) => x.id === d.id) &&
+      !isReservedTagWord(d.label) &&
+      defs.length < MAX_TAG_DEFS
+    )
+      defs.push(d);
+  return defs.length === state.tagDefs.length ? state : { ...state, tagDefs: defs };
 }
 
 /**
@@ -112,18 +143,149 @@ export function importPayload(
   );
   return {
     ok: true,
+    state: mergeTagDefs(
+      {
+        ...state,
+        folders: [...state.folders, ...folders],
+        wallets: [...state.wallets, ...p.wallets],
+        accounts: [...state.accounts, ...p.accounts],
+        ui: {
+          ...state.ui,
+          expandedFolderIds: [...new Set([...state.ui.expandedFolderIds, root.id, setFolderId])],
+          selectedId: setFolderId,
+        },
+      },
+      p.tagDefs,
+    ),
+    value: setFolderId,
+  };
+}
+
+/** Layouts that arrived with a set; parsed again before the workspace sees them. */
+export function payloadLayouts(raw: unknown): LayoutExport[] {
+  const parsed = SetPayload.safeParse(raw);
+  return parsed.success ? parsed.data.layouts : [];
+}
+
+/**
+ * One wallet exported on its own: the wallet, its accounts and the looks of
+ * its tags. Its folder and the wallets beside it are not part of it.
+ */
+export const WalletPayload = z.object({
+  stackwalletWallet: z.literal(1),
+  wallet: Wallet,
+  accounts: Account.array().min(1).max(256),
+  tagDefs: TagDef.array().max(MAX_TAG_DEFS).default([]),
+});
+export type WalletPayload = z.infer<typeof WalletPayload>;
+
+export function exportWalletPayload(
+  state: DirectoryState,
+  walletId: string,
+): { payload: WalletPayload; folderId: string } | { error: string } {
+  const wallet = state.wallets.find((w) => w.id === walletId);
+  if (!wallet) return { error: 'Wallet not found' };
+  const accounts = state.accounts.filter((a) => a.walletId === walletId);
+  if (accounts.length === 0) return { error: 'This wallet has no accounts to export' };
+  return {
+    payload: {
+      stackwalletWallet: 1,
+      wallet,
+      accounts,
+      tagDefs: usedTagDefs(state, [wallet]),
+    },
+    folderId: wallet.folderId,
+  };
+}
+
+/** Place an arrived wallet directly under this instance's root folder. */
+export function importWalletPayload(
+  state: DirectoryState,
+  raw: unknown,
+  ctx: ReducerContext,
+): Outcome<string> {
+  const parsed = WalletPayload.safeParse(raw);
+  if (!parsed.success) return fail('The wallet did not match the directory format');
+  const { wallet, accounts, tagDefs } = parsed.data;
+  if (accounts.some((a) => a.walletId !== wallet.id))
+    return fail('The wallet has an account that belongs elsewhere');
+  for (const a of accounts) {
+    const chain = ChainId.safeParse(a.chainId);
+    if (!chain.success || chainFamilyOf(chain.data) !== a.family)
+      return fail('The wallet has an account on an unknown chain');
+  }
+  const taken = new Set([...state.wallets.map((w) => w.id), ...state.accounts.map((a) => a.id)]);
+  if (taken.has(wallet.id) || accounts.some((a) => taken.has(a.id)))
+    return fail('This wallet is already here');
+  const root = rootOf(state).id;
+  const t = ctx.now();
+  return {
+    ok: true,
+    state: mergeTagDefs(
+      {
+        ...state,
+        wallets: [...state.wallets, { ...wallet, folderId: root, updatedAtMs: t }],
+        accounts: [...state.accounts, ...accounts],
+        ui: { ...state.ui, selectedId: wallet.id },
+      },
+      tagDefs,
+    ),
+    value: wallet.id,
+  };
+}
+
+const addrKey = (chainId: string, address: string) =>
+  `${chainId}|${chainId.startsWith('eip155:') ? address.toLowerCase() : address}`;
+
+/**
+ * Once a wallet's keys are here, a watch-only stand-in for the same addresses
+ * (for example one a layout import created) has done its job: it is folded
+ * into the keyed wallet, its user tags carried over, and its id returned so
+ * layouts can be pointed at the keyed wallet instead.
+ */
+export function absorbWatchDuplicates(
+  state: DirectoryState,
+  keyedWalletIds: readonly string[],
+): { state: DirectoryState; remap: Map<string, string> } {
+  const remap = new Map<string, string>();
+  const keyed = new Set(keyedWalletIds);
+  const holders = new Map<string, string>();
+  for (const a of state.accounts)
+    if (keyed.has(a.walletId)) holders.set(addrKey(a.chainId, a.address), a.walletId);
+  if (holders.size === 0) return { state, remap };
+  const extraTags = new Map<string, string[]>();
+  for (const w of state.wallets) {
+    if (w.kind !== 'watch' || keyed.has(w.id)) continue;
+    const own = state.accounts.filter((a) => a.walletId === w.id);
+    if (own.length === 0) continue;
+    const targets = new Set(own.map((a) => holders.get(addrKey(a.chainId, a.address))));
+    if (targets.size !== 1) continue;
+    const target = [...targets][0];
+    if (!target) continue;
+    remap.set(w.id, target);
+    extraTags.set(target, [...(extraTags.get(target) ?? []), ...w.tags]);
+  }
+  if (remap.size === 0) return { state, remap };
+  return {
     state: {
       ...state,
-      folders: [...state.folders, ...folders],
-      wallets: [...state.wallets, ...p.wallets],
-      accounts: [...state.accounts, ...p.accounts],
+      wallets: state.wallets
+        .filter((w) => !remap.has(w.id))
+        .map((w) =>
+          extraTags.has(w.id)
+            ? { ...w, tags: normalizeTags([...w.tags, ...extraTags.get(w.id)!]).slice(0, MAX_TAGS) }
+            : w,
+        ),
+      accounts: state.accounts.filter((a) => !remap.has(a.walletId)),
       ui: {
         ...state.ui,
-        expandedFolderIds: [...new Set([...state.ui.expandedFolderIds, root.id, setFolderId])],
-        selectedId: setFolderId,
+        selectedId:
+          state.ui.selectedId && remap.has(state.ui.selectedId)
+            ? remap.get(state.ui.selectedId)!
+            : state.ui.selectedId,
       },
     },
-    value: setFolderId,
+    remap,
   };
 }
 

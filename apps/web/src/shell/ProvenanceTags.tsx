@@ -99,11 +99,11 @@ export function UserTags({
   const shown = max === undefined ? wallet.tags : wallet.tags.slice(0, max);
   const rest = wallet.tags.length - shown.length;
   return (
-    <span className="inline-flex min-w-0 shrink items-center gap-1 overflow-hidden">
+    <span className="inline-flex min-w-0 shrink items-center gap-0.5 overflow-hidden">
       {shown.map((id) => {
         const tag = resolveTag(tagDefs, id);
-        // The tree is tight: an icon-only chip when the tag has one.
-        return compact && tag.icon ? (
+        // The tree is tight: a tag there is its icon, or a dot in its colour.
+        return compact ? (
           <span
             key={id}
             title={`${tag.label} · your tag`}
@@ -111,10 +111,10 @@ export function UserTags({
             style={{ color: tagColorCss(tag.color) }}
             className="inline-flex h-4 w-3 shrink-0 items-center justify-center"
           >
-            <TagIcon icon={tag.icon} size={9} />
+            <TagIcon icon={tag.icon ?? 'dot'} size={tag.icon ? 9 : 7} />
           </span>
         ) : (
-          <UserTagChip key={id} tag={tag} compact={compact} className="max-w-[12ch] shrink-0" />
+          <UserTagChip key={id} tag={tag} className="max-w-[12ch] shrink-0" />
         );
       })}
       {rest > 0 && <span className="text-[10px] text-faint">+{rest}</span>}

@@ -32,6 +32,8 @@ rand_core_06 = { version = "0.6", package = "rand_core", features = ["getrandom"
 # hkdf 0.13 is built on digest 0.11, which the workspace-wide sha2 0.10 does not implement.
 sha2_v011 = { version = "0.11", package = "sha2", default-features = false }
 hmac = { version = "0.13", default-features = false }
+# Constant-time comparison for export key verifiers.
+subtle = "2.6"
 base64 = "0.22"
 bs58 = "=0.5.1"
 bech32 = "=0.11.0"

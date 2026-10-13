@@ -2,6 +2,8 @@ import { useId, useState, type FormEvent } from 'react';
 import { Badge, Button, Dialog, Field, Input, LoadingWord, useToasts } from '@stackwallet/ui';
 
 import { vault } from '../core/bridge.js';
+import { deviceSecretSupported } from '../core/deviceSecret.js';
+import { passkeySupported } from '../core/passkey.js';
 import { MIN_PASSPHRASE_CHARS, passphraseProblem, useVaultView } from '../core/vault.js';
 import { shortId } from './views/DevicesView.js';
 
@@ -153,43 +155,274 @@ function CreateForm({
 
 function UnlockForm({ busy, onClose }: { busy: boolean; onClose: () => void }) {
   const id = useId();
+  const pinId = useId();
+  const { slots } = useVaultView(vault);
+  const pinSlot = slots.find((s) => s.kind === 'pin');
+  const passkeys = slots.filter((s) => s.kind === 'passkey');
+  const [mode, setMode] = useState<'passphrase' | 'pin'>(pinSlot ? 'pin' : 'passphrase');
   const [pass, setPass] = useState('');
+  const [pin, setPin] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    const result = await vault.unlock(pass);
+  const done = (result: { ok: boolean; error?: string }, wrong: string) => {
     if (!result.ok) {
-      setError(/passphrase|decrypt|auth/i.test(result.error) ? 'Wrong passphrase' : result.error);
+      setError(
+        /passphrase|decrypt|auth/i.test(result.error ?? '') ? wrong : (result.error ?? wrong),
+      );
       setPass('');
+      setPin('');
       return;
     }
     onClose();
   };
 
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (mode === 'pin') done(await vault.unlockWithPin(pin), 'Wrong PIN');
+    else done(await vault.unlock(pass), 'Wrong passphrase');
+  };
+
   return (
     <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-4 p-4">
-      <Passphrase
-        id={id}
-        label="Passphrase"
-        value={pass}
-        onChange={(v) => {
-          setPass(v);
-          setError(null);
-        }}
-        error={error}
-        autoFocus
-      />
-      <div className="flex justify-end gap-2 border-t border-edge pt-3">
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button type="submit" variant="primary" disabled={busy || pass === ''}>
-          Unlock
-        </Button>
+      {passkeys.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {passkeys.map((k) => (
+            <Button
+              key={k.id}
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void vault
+                  .unlockWithPasskey(k.id)
+                  .then((r) => done(r, 'The passkey did not open this vault'))
+              }
+            >
+              Unlock with {k.label}
+            </Button>
+          ))}
+        </div>
+      )}
+      {mode === 'pin' && pinSlot ? (
+        <Field label="PIN" htmlFor={pinId} error={error ?? undefined} hint="this device only">
+          <Input
+            id={pinId}
+            type="password"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={6}
+            autoFocus
+            autoComplete="off"
+            value={pin}
+            invalid={Boolean(error)}
+            onChange={(e) => {
+              setPin(e.target.value.replace(/\D/g, '').slice(0, 6));
+              setError(null);
+            }}
+          />
+        </Field>
+      ) : (
+        <Passphrase
+          id={id}
+          label="Passphrase"
+          value={pass}
+          onChange={(v) => {
+            setPass(v);
+            setError(null);
+          }}
+          error={error}
+          autoFocus
+        />
+      )}
+      <div className="flex items-center justify-between gap-2 border-t border-edge pt-3">
+        {pinSlot ? (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              setMode(mode === 'pin' ? 'passphrase' : 'pin');
+              setError(null);
+            }}
+          >
+            {mode === 'pin' ? 'Use passphrase' : 'Use PIN'}
+          </Button>
+        ) : (
+          <span />
+        )}
+        <div className="flex gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={busy || (mode === 'pin' ? pin.length !== 6 : pass === '')}
+          >
+            Unlock
+          </Button>
+        </div>
       </div>
     </form>
   );
+}
+
+/**
+ * PIN and passkeys for this device. They open the session here and nowhere
+ * else: they live in this device's vault file, never in any export, and a
+ * PIN never authorises an export.
+ */
+function SessionMethods({ busy }: { busy: boolean }) {
+  const toasts = useToasts();
+  const { slots } = useVaultView(vault);
+  const ids = { pass: useId(), pin: useId(), label: useId() };
+  const [adding, setAdding] = useState<null | 'pin' | 'passkey'>(null);
+  const [pass, setPass] = useState('');
+  const [pin, setPin] = useState('');
+  const [label, setLabel] = useState(defaultPasskeyLabel());
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = () => {
+    setAdding(null);
+    setPass('');
+    setPin('');
+    setError(null);
+  };
+
+  const add = async (e: FormEvent) => {
+    e.preventDefault();
+    const r =
+      adding === 'pin' ? await vault.addPin(pass, pin) : await vault.addPasskey(pass, label.trim());
+    if (!r.ok) {
+      setError(/passphrase|decrypt|auth/i.test(r.error) ? 'Wrong passphrase' : r.error);
+      setPass('');
+      return;
+    }
+    toasts.push(adding === 'pin' ? 'PIN set for this device' : `Passkey "${label.trim()}" added`);
+    reset();
+  };
+
+  return (
+    <section className="flex flex-col gap-2 border-t border-edge pt-3">
+      <h4 className="text-[11px] font-semibold tracking-[0.12em] text-muted uppercase">
+        Sign-in on this device
+      </h4>
+      <p className="text-[11px] text-faint">
+        Face ID, Touch ID, Windows Hello or a security key (passkey), or a 6-digit PIN. They open
+        the session on this device only and never travel with any export. A PIN never authorises an
+        export; a passkey can.
+      </p>
+      {slots.length > 0 && (
+        <ul className="flex flex-col divide-y divide-edge text-[12px]">
+          {slots.map((s) => (
+            <li key={s.id} className="flex items-center justify-between gap-2 py-1.5">
+              <span className="text-ink">
+                {s.kind === 'pin' ? 'PIN' : `Passkey · ${s.label}`}
+                <span className="ml-2 text-faint">
+                  {new Date(s.createdAtMs).toISOString().slice(0, 10)}
+                </span>
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() =>
+                  void vault.removeSlot(s.id).then((r) => {
+                    if (!r.ok) toasts.push(r.error, 'danger');
+                  })
+                }
+              >
+                Remove
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {adding === null ? (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setAdding('pin')}
+            disabled={!deviceSecretSupported()}
+          >
+            {slots.some((s) => s.kind === 'pin') ? 'Replace PIN…' : 'Add PIN…'}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setAdding('passkey')}
+            disabled={!passkeySupported()}
+            title={passkeySupported() ? undefined : 'This browser has no WebAuthn'}
+          >
+            Add passkey…
+          </Button>
+        </div>
+      ) : (
+        <form onSubmit={(e) => void add(e)} className="flex flex-col gap-3">
+          <Passphrase
+            id={ids.pass}
+            label="Vault passphrase"
+            value={pass}
+            onChange={(v) => {
+              setPass(v);
+              setError(null);
+            }}
+            error={error}
+            hint="only the passphrase can add a sign-in method"
+            autoFocus
+          />
+          {adding === 'pin' ? (
+            <Field
+              label="New PIN"
+              htmlFor={ids.pin}
+              hint="exactly 6 digits; 5 wrong tries retire it"
+            >
+              <Input
+                id={ids.pin}
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                autoComplete="off"
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              />
+            </Field>
+          ) : (
+            <Field label="Name" htmlFor={ids.label} hint="shown on the unlock screen">
+              <Input
+                id={ids.label}
+                value={label}
+                maxLength={40}
+                onChange={(e) => setLabel(e.target.value)}
+              />
+            </Field>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={reset}>
+              Back
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={
+                busy || pass === '' || (adding === 'pin' ? pin.length !== 6 : label.trim() === '')
+              }
+            >
+              {adding === 'pin' ? 'Set PIN' : 'Create passkey'}
+            </Button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
+function defaultPasskeyLabel(): string {
+  const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent;
+  if (/Windows/.test(ua)) return 'Windows Hello';
+  if (/iPhone|iPad/.test(ua)) return 'Face ID';
+  if (/Mac OS X/.test(ua)) return 'Touch ID';
+  if (/Android/.test(ua)) return 'Android biometrics';
+  return 'Passkey';
 }
 
 function Manage({
@@ -248,6 +481,8 @@ function Manage({
           {deviceId ? shortId(deviceId) : 'none'}
         </dd>
       </dl>
+
+      {!changing && <SessionMethods busy={busy} />}
 
       {changing ? (
         <form

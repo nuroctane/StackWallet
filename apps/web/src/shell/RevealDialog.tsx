@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import type { Account, ExposureChannel, Revealed } from '@stackwallet/core-client';
-import { Button, Dialog, Field, Input, LoadingWord, Select, useToasts } from '@stackwallet/ui';
+import { Button, Dialog, Field, LoadingWord, Select, useToasts } from '@stackwallet/ui';
 
 import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
@@ -10,6 +10,7 @@ import { formatPrivateKey } from '../lib/secretFormat.js';
 import { useDirectory } from '../store/persist.js';
 import { useRegistry } from '../store/RegistryContext.js';
 import { accountsOf } from '../store/selectors.js';
+import { useExportGate } from './ExportGateFields.js';
 
 /** Clipboard copies are wiped after this long if the clipboard still holds them. */
 const CLIPBOARD_CLEAR_MS = 30_000;
@@ -35,13 +36,19 @@ function RevealForm({ walletId, onClose }: { walletId: string; onClose: () => vo
   const registry = useRegistry();
   const view = useVaultView(vault);
   const toasts = useToasts();
-  const ids = { what: useId(), channel: useId(), pass: useId() };
+  const ids = { what: useId(), channel: useId() };
   const wallet = state.wallets.find((w) => w.id === walletId);
+  const folder = state.folders.find((f) => f.id === wallet?.folderId);
+  const gate = useExportGate({
+    folderId: wallet?.folderId ?? '',
+    folderName: folder?.name ?? 'its folder',
+    walletId,
+    walletName: wallet?.name ?? 'this wallet',
+  });
   const accounts = wallet ? accountsOf(state, walletId).filter((a) => a.derivationPath) : [];
 
   const [target, setTarget] = useState<'phrase' | string>('phrase');
   const [channel, setChannel] = useState<ExposureChannel>('screen');
-  const [passphrase, setPassphrase] = useState('');
   const [ack, setAck] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shown, setShown] = useState<string | null>(null);
@@ -62,7 +69,7 @@ function RevealForm({ walletId, onClose }: { walletId: string; onClose: () => vo
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!ack || passphrase === '') return;
+    if (!ack || !gate.ready) return;
     setError(null);
     let what: Revealed;
     const chain = account ? findChain(registry, account.chainId) : undefined;
@@ -76,8 +83,15 @@ function RevealForm({ walletId, onClose }: { walletId: string; onClose: () => vo
       }
       what = { kind: 'privateKey', curve: sp.curve, path: account.derivationPath };
     }
-    const r = await vault.reveal(walletId, passphrase, what, channel);
-    setPassphrase('');
+    let input;
+    try {
+      input = await gate.build();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    const r = await vault.reveal(walletId, input, what, channel);
+    gate.reset();
     if (!r.ok) {
       setError(r.error);
       return;
@@ -161,15 +175,11 @@ function RevealForm({ walletId, onClose }: { walletId: string; onClose: () => vo
           <option value="file">Save to a file</option>
         </Select>
       </Field>
-      <Field label="Vault passphrase" htmlFor={ids.pass} hint="asked again for every export">
-        <Input
-          id={ids.pass}
-          type="password"
-          autoComplete="current-password"
-          value={passphrase}
-          onChange={(e) => setPassphrase(e.target.value)}
-        />
-      </Field>
+      {gate.fields}
+      <p className="text-[11px] text-faint">
+        Only this wallet is tagged. Other wallets in {folder?.name ?? 'its folder'} stay unexported
+        and untagged.
+      </p>
       <label className="flex items-start gap-2 text-[12px] text-muted">
         <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />I
         understand this wallet will be tagged exposed permanently.
@@ -179,7 +189,7 @@ function RevealForm({ walletId, onClose }: { walletId: string; onClose: () => vo
         <Button type="button" variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button type="submit" variant="danger" disabled={!ack || passphrase === '' || view.busy}>
+        <Button type="submit" variant="danger" disabled={!ack || !gate.ready || view.busy}>
           {view.busy ? <LoadingWord label="checking" /> : 'Export'}
         </Button>
       </div>

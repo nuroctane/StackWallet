@@ -5,6 +5,8 @@ import { Badge, Button, EmptyState } from '@stackwallet/ui';
 import { FAMILY_LABEL, findChain } from '../../lib/chains.js';
 import { formatUnits } from '../../lib/format.js';
 import { useBalances, type BalanceEntry } from '../../store/balances.js';
+import { vault } from '../../core/bridge.js';
+import { useVaultView } from '../../core/vault.js';
 import { directory } from '../../store/persist.js';
 import { useRegistry } from '../../store/RegistryContext.js';
 import type { DirectoryState } from '../../store/schema.js';
@@ -38,6 +40,8 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
     return state.accounts.filter((a) => ids.has(a.walletId));
   }, [state.accounts, nested]);
   const balances = useBalances(accounts);
+  // Re-render when export keys change; the button shows whether one is set.
+  useVaultView(vault);
 
   return (
     <div className="flex flex-col gap-5 p-5">
@@ -71,20 +75,30 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
               <Button
                 size="sm"
                 variant="ghost"
-                title="Open a set sealed for this device"
+                title="Open a directory or wallet sealed for this device"
                 onClick={() => shell.openDialog({ kind: 'importSet' })}
               >
-                Import set…
+                Import…
               </Button>
             )}
+            <Button
+              size="sm"
+              variant="ghost"
+              title="The key every export from this directory needs: its wallets one by one, or the directory as a whole"
+              onClick={() =>
+                shell.openDialog({ kind: 'exportKey', scope: 'folder', id: folder.id })
+              }
+            >
+              {vault.hasExportKey('folder', folder.id) ? 'Directory key ✓' : 'Directory key…'}
+            </Button>
             {folder.parentId !== null && (
               <Button
                 size="sm"
                 variant="ghost"
-                title="Seal this folder and everything in it for a paired device"
+                title="Seal this directory, its wallets and their layouts for a paired device"
                 onClick={() => shell.openDialog({ kind: 'transferSet', folderId: folder.id })}
               >
-                Transfer set…
+                Export directory…
               </Button>
             )}
           </div>

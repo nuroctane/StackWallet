@@ -158,13 +158,38 @@ describe.skipIf(!built)('wasm bridge against the built core', () => {
     expect(pub).toMatch(/^0[23][0-9a-f]{64}$/);
     expect((await v.provenance()).wallets[0]?.origin.kind).toBe('importedPhrase');
 
+    const session = { kind: 'passphrase' as const, passphrase: PASS };
+    const gate = {
+      session,
+      folderId: 'root',
+      folderKey: 'folder key 1',
+      walletKey: 'wallet key 1',
+    };
+    await expect(v.reveal('dev', gate, { kind: 'mnemonic' }, 'screen', 2)).rejects.toThrow(
+      /no export key/,
+    );
+    await v.setExportKey({ scope: 'folder', id: 'root', session, next: gate.folderKey });
+    await v.setExportKey({ scope: 'wallet', id: 'dev', session, next: gate.walletKey });
+    expect(await v.exportKeys()).toEqual([
+      { scope: 'folder', id: 'root' },
+      { scope: 'wallet', id: 'dev' },
+    ]);
     await expect(
-      v.reveal('dev', 'wrong passphrase!', { kind: 'mnemonic' }, 'screen', 2),
+      v.reveal(
+        'dev',
+        { ...gate, session: { kind: 'passphrase', passphrase: 'wrong passphrase!' } },
+        { kind: 'mnemonic' },
+        'screen',
+        2,
+      ),
     ).rejects.toThrow();
+    await expect(
+      v.reveal('dev', { ...gate, walletKey: 'not the key' }, { kind: 'mnemonic' }, 'screen', 2),
+    ).rejects.toThrow(/wrong wallet key/);
     expect((await v.provenance()).wallets[0]?.exposures).toEqual([]);
     const key = await v.reveal(
       'dev',
-      PASS,
+      gate,
       { kind: 'privateKey', curve: 'secp256k1', path: "m/44'/60'/0'/0/0" },
       'clipboard',
       3,
@@ -179,6 +204,59 @@ describe.skipIf(!built)('wasm bridge against the built core', () => {
     expect(sol).toMatch(/^[0-9a-f]{64}$/);
     expect(await v.hasSingleKey('fresh')).toBe(true);
     v.free();
+  });
+
+  it('opens the session with a device-bound PIN and a passkey PRF, never exports with a PIN', async () => {
+    const c = await load();
+    const v = await c.createVault(PASS);
+    const device = new Uint8Array(32).fill(5);
+    const pin = new TextEncoder().encode('246810');
+    const pinId = await v.addSlot({
+      passphrase: PASS,
+      kind: 'pin',
+      label: 'PIN',
+      secret: pin,
+      device,
+      nowMs: 1,
+    });
+    const prf = new Uint8Array(32).fill(9);
+    const keyId = await v.addSlot({
+      passphrase: PASS,
+      kind: 'passkey',
+      label: 'Windows Hello',
+      credentialId: 'Y3JlZA',
+      secret: prf,
+      nowMs: 2,
+    });
+    expect((await v.slots()).map((s) => [s.kind, s.label])).toEqual([
+      ['pin', 'PIN'],
+      ['passkey', 'Windows Hello'],
+    ]);
+    const bytes = await v.toBytes();
+    v.free();
+
+    const reopened = await c.openVault(bytes);
+    await expect(reopened.unlockWithSlot(pinId, pin, new Uint8Array(32))).rejects.toThrow();
+    await reopened.unlockWithSlot(pinId, pin, device);
+    expect(await reopened.isUnlocked()).toBe(true);
+    const pinSession = { kind: 'slot' as const, slotId: pinId, secret: pin, device };
+    await expect(
+      reopened.setExportKey({
+        scope: 'folder',
+        id: 'f',
+        session: pinSession,
+        next: 'folder key 1',
+      }),
+    ).rejects.toThrow(/PIN cannot/);
+    await reopened.setExportKey({
+      scope: 'folder',
+      id: 'f',
+      session: { kind: 'slot', slotId: keyId, secret: prf },
+      next: 'folder key 1',
+    });
+    await reopened.removeSlot(pinId);
+    expect((await reopened.slots()).map((s) => s.kind)).toEqual(['passkey']);
+    reopened.free();
   });
 
   it('runs a transaction through the core ledger and refuses a swapped recipient', async () => {

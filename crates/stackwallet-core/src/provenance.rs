@@ -17,6 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::export_gate::{check_wallet_export, ExportGate};
 use crate::hd::{self, Mnemonic};
 use crate::model::Curve;
 use crate::vault::{EncryptedVault, Secret, Vault};
@@ -373,18 +374,19 @@ impl std::fmt::Debug for RevealedSecret {
     }
 }
 
-/// Take a phrase or private key out of the vault. Requires the passphrase
-/// again (step-up), marks the wallet exposed and seals that record, and only
-/// then returns the secret. The mark is permanent by construction.
+/// Take a phrase or private key out of the vault. Passes the export gate
+/// (session, parent directory key, wallet key), marks this wallet exposed and
+/// seals that record, and only then returns the secret. The mark is permanent
+/// by construction and touches no other wallet, not even one in the same folder.
 pub fn reveal(
     vault: &mut EncryptedVault,
     wallet_id: &str,
-    passphrase: &Secret,
+    gate: &ExportGate<'_>,
     what: Revealed,
     channel: Channel,
     now_ms: i64,
 ) -> Result<RevealedSecret> {
-    vault.verify_passphrase(passphrase)?;
+    check_wallet_export(vault, gate, wallet_id)?;
     let (secret, public_hex) = match &what {
         Revealed::Mnemonic => (
             with_mnemonic(vault, wallet_id, |m| {
@@ -437,14 +439,11 @@ pub(crate) fn phrase_for_transfer(vault: &EncryptedVault, wallet_id: &str) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vault::KdfParams;
+    use crate::export_gate::testing;
+    use crate::vault::{KdfParams, SessionProof};
 
     fn vault() -> EncryptedVault {
         EncryptedVault::create(&Secret::new(b"pw".to_vec()), KdfParams::MINIMUM).unwrap()
-    }
-
-    fn pw() -> Secret {
-        Secret::new(b"pw".to_vec())
     }
 
     #[test]
@@ -465,10 +464,11 @@ mod tests {
             .exposures
             .is_empty());
 
+        let k = testing::keys(&mut v, "pw", &["w1"]);
         let r = reveal(
             &mut v,
             "w1",
-            &pw(),
+            &k.gate(),
             Revealed::PrivateKey {
                 curve: Curve::Secp256k1,
                 path: "m/44'/60'/0'/0/0".into(),
@@ -494,15 +494,48 @@ mod tests {
     fn wrong_passphrase_reveals_nothing_and_records_nothing() {
         let mut v = vault();
         create_single(&mut v, "w1", 1).unwrap();
-        let err = reveal(
+        let k = testing::keys(&mut v, "pw", &["w1"]);
+        let bad = SessionProof::Passphrase(Secret::new(b"nope".to_vec()));
+        let wrong_session = crate::export_gate::ExportGate {
+            session: &bad,
+            ..k.gate()
+        };
+        assert!(reveal(
             &mut v,
             "w1",
-            &Secret::new(b"nope".to_vec()),
+            &wrong_session,
             Revealed::Mnemonic,
             Channel::Screen,
-            2,
-        );
-        assert!(err.is_err());
+            2
+        )
+        .is_err());
+        let wrong_key = Secret::new(b"not-the-wallet-key".to_vec());
+        let wrong_wallet_key = crate::export_gate::ExportGate {
+            wallet_key: Some(&wrong_key),
+            ..k.gate()
+        };
+        assert!(reveal(
+            &mut v,
+            "w1",
+            &wrong_wallet_key,
+            Revealed::Mnemonic,
+            Channel::Screen,
+            2
+        )
+        .is_err());
+        let wrong_folder = crate::export_gate::ExportGate {
+            folder_key: &wrong_key,
+            ..k.gate()
+        };
+        assert!(reveal(
+            &mut v,
+            "w1",
+            &wrong_folder,
+            Revealed::Mnemonic,
+            Channel::Screen,
+            2
+        )
+        .is_err());
         assert!(load_provenance(&v)
             .unwrap()
             .wallet("w1")
@@ -525,10 +558,11 @@ mod tests {
             load_provenance(&v).unwrap().wallet("w2").unwrap().origin,
             Origin::ImportedPhrase { at_ms: 5 }
         );
+        let k = testing::keys(&mut v, "pw", &["w2"]);
         let r = reveal(
             &mut v,
             "w2",
-            &pw(),
+            &k.gate(),
             Revealed::PrivateKey {
                 curve: Curve::Secp256k1,
                 path: "m/44'/60'/0'/0/0".into(),
@@ -552,7 +586,26 @@ mod tests {
     fn history_never_shrinks() {
         let mut v = vault();
         create_single(&mut v, "w1", 1).unwrap();
-        reveal(&mut v, "w1", &pw(), Revealed::Mnemonic, Channel::Screen, 2).unwrap();
+        create_single(&mut v, "w2", 1).unwrap();
+        let k = testing::keys(&mut v, "pw", &["w1"]);
+        reveal(
+            &mut v,
+            "w1",
+            &k.gate(),
+            Revealed::Mnemonic,
+            Channel::Screen,
+            2,
+        )
+        .unwrap();
+        assert!(
+            load_provenance(&v)
+                .unwrap()
+                .wallet("w2")
+                .unwrap()
+                .exposures
+                .is_empty(),
+            "a sibling in the same folder stays untouched"
+        );
         let mut forged = load_provenance(&v).unwrap();
         forged.wallets[0].exposures.clear();
         assert!(save_provenance(&mut v, &forged).is_err());
@@ -568,7 +621,16 @@ mod tests {
     fn locked_vault_reveals_nothing() {
         let mut v = vault();
         create_single(&mut v, "w1", 1).unwrap();
+        let k = testing::keys(&mut v, "pw", &["w1"]);
         v.lock();
-        assert!(reveal(&mut v, "w1", &pw(), Revealed::Mnemonic, Channel::Screen, 2).is_err());
+        assert!(reveal(
+            &mut v,
+            "w1",
+            &k.gate(),
+            Revealed::Mnemonic,
+            Channel::Screen,
+            2
+        )
+        .is_err());
     }
 }

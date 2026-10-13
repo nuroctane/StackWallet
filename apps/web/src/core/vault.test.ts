@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type {
   CoreClient,
   Device,
+  ExportGateInput,
+  ExportKeyRef,
+  SessionProof,
+  SlotInfo,
   ExposureChannel,
   IdentityHandle,
   IdentityInfo,
@@ -144,12 +148,15 @@ class FakeVault implements VaultHandle {
   }
   async reveal(
     walletId: string,
-    passphrase: string,
+    gate: ExportGateInput,
     what: Revealed,
     channel: ExposureChannel,
     nowMs: number,
   ) {
-    if (passphrase !== this.pass) throw new Error('wrong passphrase');
+    if (gate.session.kind !== 'passphrase' || gate.session.passphrase !== this.pass)
+      throw new Error('wrong passphrase');
+    if (gate.folderKey !== 'folder-key' || gate.walletKey !== 'wallet-key')
+      throw new Error('wrong export key');
     this.prov.wallets
       .find((w) => w.walletId === walletId)!
       .exposures.push({ atMs: nowMs, channel, what });
@@ -159,11 +166,36 @@ class FakeVault implements VaultHandle {
     if (!this.unlocked) throw new Error('locked');
     return structuredClone(this.prov);
   }
-  async exportSet(): Promise<never> {
+  async exportBundle(): Promise<never> {
     throw new Error('not used');
   }
   async importSet(): Promise<never> {
     throw new Error('not used');
+  }
+  async verifySession(session: SessionProof) {
+    if (session.kind !== 'passphrase' || session.passphrase !== this.pass)
+      throw new Error('wrong passphrase');
+  }
+  slotList: SlotInfo[] = [];
+  async slots() {
+    return this.slotList.slice();
+  }
+  async addSlot(): Promise<never> {
+    throw new Error('not used');
+  }
+  async removeSlot(): Promise<never> {
+    throw new Error('not used');
+  }
+  async unlockWithSlot(): Promise<never> {
+    throw new Error('not used');
+  }
+  keys: ExportKeyRef[] = [];
+  async exportKeys() {
+    return this.keys.slice();
+  }
+  async setExportKey(req: { scope: ExportKeyRef['scope']; id: string; session: SessionProof }) {
+    await this.verifySession(req.session);
+    this.keys.push({ scope: req.scope, id: req.id });
   }
   async ledger() {
     if (!this.unlocked) throw new Error('locked');
@@ -343,11 +375,30 @@ describe('VaultStore', () => {
       atMs: 42,
     });
 
-    const wrong = await store.reveal('w1', 'nope', { kind: 'mnemonic' }, 'screen');
+    const gate = (passphrase: string, walletKey = 'wallet-key') => ({
+      session: { kind: 'passphrase' as const, passphrase },
+      folderId: 'f',
+      folderKey: 'folder-key',
+      walletKey,
+    });
+    const wrong = await store.reveal('w1', gate('nope'), { kind: 'mnemonic' }, 'screen');
     expect(wrong.ok).toBe(false);
+    const wrongKey = await store.reveal('w1', gate(PASS, 'nope'), { kind: 'mnemonic' }, 'screen');
+    expect(wrongKey.ok).toBe(false);
     expect(store.getSnapshot().provenance.wallets[0]?.exposures).toEqual([]);
 
-    const r = await store.reveal('w1', PASS, { kind: 'mnemonic' }, 'clipboard');
+    expect(
+      await store.setExportKey({
+        scope: 'wallet',
+        id: 'w1',
+        session: { kind: 'passphrase', passphrase: PASS },
+        next: 'wallet-key',
+      }),
+    ).toEqual({ ok: true });
+    expect(store.hasExportKey('wallet', 'w1')).toBe(true);
+    expect(store.hasExportKey('folder', 'w1')).toBe(false);
+
+    const r = await store.reveal('w1', gate(PASS), { kind: 'mnemonic' }, 'clipboard');
     expect(r.ok).toBe(true);
     expect(store.getSnapshot().provenance.wallets[0]?.exposures).toHaveLength(1);
 

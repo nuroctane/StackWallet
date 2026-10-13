@@ -1,15 +1,18 @@
 //! Moving a directory set (a folder, its subfolders, wallets, accounts and
-//! the phrases of its `single` wallets) from one paired device to another.
+//! the phrases of its `single` wallets), or one wallet on its own, from one
+//! paired device to another.
 //!
-//! - Both ends must re-enter the vault passphrase (step-up), on top of the
-//!   vault being unlocked: one factor to be in the instance, a fresh one to
-//!   take a set out or bring one in. The passphrase is the strongest factor a
-//!   vault has today; when platform or hardware factors land they join here.
+//! - The sender passes the export gate (`export_gate`): a fresh session
+//!   proof (passphrase or passkey, never a PIN) plus the directory's export
+//!   key, and for a single wallet also the wallet's own export key. The
+//!   receiver presents a fresh session proof to bring it in.
+//! - A single-wallet bundle records a transfer on that wallet only. Its
+//!   folder and the other wallets beside it stay unexported and untagged.
 //! - The bundle is sealed to the recipient's pinned X25519 static (ephemeral
 //!   ECDH, HKDF, XChaCha20-Poly1305) and signed with the sender's Ed25519
 //!   identity, so only the named device can open it and it can only have come
 //!   from a device the recipient already paired with.
-//! - The sender records the transfer (wallets become `copied`) before the
+//! - The sender records the transfer (wallets become `exported`) before the
 //!   bundle is returned; the recipient records every wallet and the set as
 //!   `imported` from the sending device, and keeps any exposure history the
 //!   wallets already had. Exposure is never washed out by a transfer.
@@ -23,13 +26,14 @@ use sha2::{Digest, Sha256 as Sha256v10};
 use sha2_v011::Sha256;
 use zeroize::Zeroizing;
 
+use crate::export_gate::{check_directory_export, check_wallet_export, ExportGate};
 use crate::identity::{self, DeviceIdentity};
 use crate::provenance::{
     self, load_provenance, save_provenance, Exposure, Origin, Transfer, WalletProvenance,
 };
 use crate::store::devices::load_device_table;
 use crate::store::Device;
-use crate::vault::{random_array, EncryptedVault, Secret, Vault};
+use crate::vault::{random_array, EncryptedVault, Secret, SessionProof, Vault};
 use crate::{CoreError, Result};
 
 pub const BUNDLE_PREFIX: &str = "stackwallet-set:";
@@ -46,12 +50,23 @@ fn invalid(reason: impl Into<String>) -> CoreError {
     }
 }
 
+/// What a bundle carries: a whole directory, or one wallet.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BundleScope {
+    #[default]
+    Set,
+    Wallet,
+}
+
 /// What travels inside the encryption. `directory` is the UI's own JSON for
-/// the folders, wallets and accounts; the core carries it opaquely and the
-/// client validates it against its schemas on arrival.
+/// the folders, wallets, accounts and layouts; the core carries it opaquely
+/// and the client validates it against its schemas on arrival.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Plain {
+    #[serde(default)]
+    scope: BundleScope,
     folder_id: String,
     exported_at_ms: i64,
     directory: serde_json::Value,
@@ -162,17 +177,33 @@ fn active_peer(devices: &[Device], id: &str) -> Result<Device> {
 
 pub struct ExportRequest<'a> {
     pub identity_label: &'a str,
-    pub passphrase: &'a Secret,
+    pub gate: ExportGate<'a>,
+    pub scope: BundleScope,
     pub to_device_id: &'a str,
+    /// The exported directory, or for a single wallet the folder it sits in.
     pub folder_id: &'a str,
     pub wallet_ids: &'a [String],
     pub directory_json: &'a str,
     pub now_ms: i64,
 }
 
-/// Seal a directory set for one paired device. Records the transfer first.
-pub fn export_set(vault: &mut EncryptedVault, req: ExportRequest<'_>) -> Result<String> {
-    vault.verify_passphrase(req.passphrase)?;
+/// Seal a directory set or one wallet for one paired device. Passes the
+/// export gate and records the transfer before the bundle exists.
+pub fn export_bundle(vault: &mut EncryptedVault, req: ExportRequest<'_>) -> Result<String> {
+    if req.gate.folder_id != req.folder_id {
+        return Err(invalid(
+            "the directory key must be for the exported directory",
+        ));
+    }
+    match req.scope {
+        BundleScope::Set => check_directory_export(vault, &req.gate)?,
+        BundleScope::Wallet => {
+            let [only] = req.wallet_ids else {
+                return Err(invalid("a wallet bundle carries exactly one wallet"));
+            };
+            check_wallet_export(vault, &req.gate, only)?;
+        }
+    }
     if req.wallet_ids.len() > MAX_WALLETS {
         return Err(invalid("too many wallets"));
     }
@@ -205,6 +236,7 @@ pub fn export_set(vault: &mut EncryptedVault, req: ExportRequest<'_>) -> Result<
     let bundle_id = hex::encode(random_array::<16>()?);
     let plain = Zeroizing::new(
         serde_json::to_vec(&Plain {
+            scope: req.scope,
             folder_id: req.folder_id.into(),
             exported_at_ms: req.now_ms,
             directory,
@@ -254,7 +286,9 @@ pub fn export_set(vault: &mut EncryptedVault, req: ExportRequest<'_>) -> Result<
         to_device_id: peer.id.clone(),
         bundle_id,
     };
-    table.record_set_transfer(req.folder_id, transfer.clone(), req.now_ms)?;
+    if req.scope == BundleScope::Set {
+        table.record_set_transfer(req.folder_id, transfer.clone(), req.now_ms)?;
+    }
     for id in req.wallet_ids {
         if table.wallet(id).is_none() {
             // Watch and threshold wallets have no key history yet; the copy still counts.
@@ -275,6 +309,7 @@ pub fn export_set(vault: &mut EncryptedVault, req: ExportRequest<'_>) -> Result<
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportedSet {
+    pub scope: BundleScope,
     pub bundle_id: String,
     pub folder_id: String,
     pub from_device_id: String,
@@ -288,11 +323,11 @@ pub struct ImportedSet {
 pub fn import_set(
     vault: &mut EncryptedVault,
     identity_label: &str,
-    passphrase: &Secret,
+    session: &SessionProof,
     bundle: &str,
     now_ms: i64,
 ) -> Result<ImportedSet> {
-    vault.verify_passphrase(passphrase)?;
+    vault.verify_session(session, false)?;
     let text = bundle.trim();
     if text.len() > MAX_BUNDLE_CHARS {
         return Err(invalid("too large"));
@@ -353,6 +388,9 @@ pub fn import_set(
     if plain.phrases.len() > MAX_WALLETS || plain.history.len() > MAX_WALLETS {
         return Err(invalid("too many wallets"));
     }
+    if plain.scope == BundleScope::Wallet && (plain.phrases.len() > 1 || plain.history.len() > 1) {
+        return Err(invalid("a wallet bundle carries exactly one wallet"));
+    }
 
     let origin = Origin::ImportedFromDevice {
         at_ms: now_ms,
@@ -361,7 +399,7 @@ pub fn import_set(
         bundle_id: env.bundle_id.clone(),
     };
     let mut table = load_provenance(vault)?;
-    if table.set(&plain.folder_id).is_some() {
+    if plain.scope == BundleScope::Set && table.set(&plain.folder_id).is_some() {
         return Err(invalid("this set is already on this device"));
     }
     // Validate every phrase and id before anything is written.
@@ -375,7 +413,17 @@ pub fn import_set(
         }
         parsed.push((p.wallet_id.clone(), crate::hd::Mnemonic::parse(&p.phrase)?));
     }
-    table.add_set(&plain.folder_id, origin.clone())?;
+    if plain.scope == BundleScope::Set {
+        table.add_set(&plain.folder_id, origin.clone())?;
+    }
+    for h in &plain.history {
+        if plain.scope == BundleScope::Wallet && table.wallet(&h.wallet_id).is_some() {
+            return Err(invalid(format!(
+                "wallet {} is already on this device",
+                h.wallet_id
+            )));
+        }
+    }
     let mut keyed = Vec::new();
     for h in &plain.history {
         if table.wallet(&h.wallet_id).is_none() {
@@ -403,6 +451,7 @@ pub fn import_set(
     }
 
     Ok(ImportedSet {
+        scope: plain.scope,
         bundle_id: env.bundle_id,
         folder_id: plain.folder_id.clone(),
         from_device_id: sender.id,
@@ -416,6 +465,7 @@ pub fn import_set(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::export_gate::testing::{self, FOLDER};
     use crate::provenance::{create_single, reveal, Channel, Revealed};
     use crate::store::devices::save_device_table;
     use crate::store::DeviceKind;
@@ -445,8 +495,8 @@ mod tests {
         }
     }
 
-    fn pw() -> Secret {
-        Secret::new(b"pw".to_vec())
+    fn pw() -> SessionProof {
+        SessionProof::Passphrase(Secret::new(b"pw".to_vec()))
     }
 
     fn paired() -> (
@@ -463,15 +513,37 @@ mod tests {
     }
 
     fn export(a: &mut EncryptedVault, to: &DeviceIdentity, wallets: &[String]) -> Result<String> {
-        export_set(
+        let k = testing::keys(a, "pw", &[]);
+        export_bundle(
             a,
             ExportRequest {
                 identity_label: ID,
-                passphrase: &pw(),
+                gate: ExportGate {
+                    wallet_key: None,
+                    ..k.gate()
+                },
+                scope: BundleScope::Set,
                 to_device_id: &to.device_id(),
-                folder_id: "set1",
+                folder_id: FOLDER,
                 wallet_ids: wallets,
                 directory_json: r#"{"folders":[],"wallets":[],"accounts":[]}"#,
+                now_ms: 100,
+            },
+        )
+    }
+
+    fn export_one(a: &mut EncryptedVault, to: &DeviceIdentity, wallet: &str) -> Result<String> {
+        let k = testing::keys(a, "pw", &[wallet]);
+        export_bundle(
+            a,
+            ExportRequest {
+                identity_label: ID,
+                gate: k.gate(),
+                scope: BundleScope::Wallet,
+                to_device_id: &to.device_id(),
+                folder_id: FOLDER,
+                wallet_ids: &[wallet.to_string()],
+                directory_json: r#"{"wallets":[]}"#,
                 now_ms: 100,
             },
         )
@@ -482,7 +554,16 @@ mod tests {
         let (mut a, _ida, mut b, idb) = paired();
         create_single(&mut a, "w1", 1).unwrap();
         create_single(&mut a, "w2", 1).unwrap();
-        reveal(&mut a, "w2", &pw(), Revealed::Mnemonic, Channel::Screen, 2).unwrap();
+        let k = testing::keys(&mut a, "pw", &["w2"]);
+        reveal(
+            &mut a,
+            "w2",
+            &k.gate(),
+            Revealed::Mnemonic,
+            Channel::Screen,
+            2,
+        )
+        .unwrap();
         let wallets = vec!["w1".to_string(), "w2".to_string(), "watch".to_string()];
         let bundle = export(&mut a, &idb, &wallets).unwrap();
         assert!(bundle.starts_with(BUNDLE_PREFIX));
@@ -491,14 +572,15 @@ mod tests {
         let sent = load_provenance(&a).unwrap();
         assert_eq!(sent.wallet("w1").unwrap().transfers.len(), 1);
         assert_eq!(sent.wallet("watch").unwrap().transfers.len(), 1);
-        assert_eq!(sent.set("set1").unwrap().transfers.len(), 1);
+        assert_eq!(sent.set(FOLDER).unwrap().transfers.len(), 1);
 
         let got = import_set(&mut b, ID, &pw(), &bundle, 200).unwrap();
-        assert_eq!(got.folder_id, "set1");
+        assert_eq!(got.folder_id, FOLDER);
+        assert_eq!(got.scope, BundleScope::Set);
         assert_eq!(got.from_device_name, "desktop");
         assert_eq!(got.wallets_with_keys, vec!["w1", "w2"]);
         let recv = load_provenance(&b).unwrap();
-        assert!(recv.set("set1").unwrap().origin.is_imported());
+        assert!(recv.set(FOLDER).unwrap().origin.is_imported());
         assert!(recv.wallet("w1").unwrap().origin.is_imported());
         assert!(recv.wallet("w1").unwrap().exposures.is_empty());
         assert_eq!(
@@ -544,7 +626,14 @@ mod tests {
         let (mut a, _ida, mut b, idb) = paired();
         create_single(&mut a, "w1", 1).unwrap();
         let bundle = export(&mut a, &idb, &["w1".into()]).unwrap();
-        assert!(import_set(&mut b, ID, &Secret::new(b"x".to_vec()), &bundle, 1).is_err());
+        assert!(import_set(
+            &mut b,
+            ID,
+            &SessionProof::Passphrase(Secret::new(b"x".to_vec())),
+            &bundle,
+            1
+        )
+        .is_err());
 
         let body = bundle.strip_prefix(BUNDLE_PREFIX).unwrap();
         let mut env: Envelope = serde_json::from_slice(
@@ -566,15 +655,50 @@ mod tests {
     }
 
     #[test]
-    fn export_needs_passphrase_and_a_live_peer() {
+    fn export_needs_the_gate_and_a_live_peer() {
         let (mut a, _ida, _b, idb) = paired();
-        let err = export_set(
+        let k = testing::keys(&mut a, "pw", &[]);
+        let bad = SessionProof::Passphrase(Secret::new(b"x".to_vec()));
+        let wrong_key = Secret::new(b"not-the-folder-key".to_vec());
+        for gate in [
+            ExportGate {
+                session: &bad,
+                wallet_key: None,
+                ..k.gate()
+            },
+            ExportGate {
+                folder_key: &wrong_key,
+                wallet_key: None,
+                ..k.gate()
+            },
+        ] {
+            let err = export_bundle(
+                &mut a,
+                ExportRequest {
+                    identity_label: ID,
+                    gate,
+                    scope: BundleScope::Set,
+                    to_device_id: &idb.device_id(),
+                    folder_id: FOLDER,
+                    wallet_ids: &[],
+                    directory_json: "{}",
+                    now_ms: 1,
+                },
+            );
+            assert!(err.is_err());
+        }
+        // The key must belong to the directory being exported.
+        let err = export_bundle(
             &mut a,
             ExportRequest {
                 identity_label: ID,
-                passphrase: &Secret::new(b"x".to_vec()),
+                gate: ExportGate {
+                    wallet_key: None,
+                    ..k.gate()
+                },
+                scope: BundleScope::Set,
                 to_device_id: &idb.device_id(),
-                folder_id: "set1",
+                folder_id: "another-folder",
                 wallet_ids: &[],
                 directory_json: "{}",
                 now_ms: 1,
@@ -587,5 +711,66 @@ mod tests {
             load_provenance(&a).unwrap().sets.is_empty(),
             "no record without a bundle"
         );
+    }
+
+    #[test]
+    fn one_wallet_travels_alone_and_tags_only_itself() {
+        let (mut a, _ida, mut b, idb) = paired();
+        create_single(&mut a, "w1", 1).unwrap();
+        create_single(&mut a, "w2", 1).unwrap();
+        let bundle = export_one(&mut a, &idb, "w1").unwrap();
+
+        let sent = load_provenance(&a).unwrap();
+        assert_eq!(sent.wallet("w1").unwrap().transfers.len(), 1);
+        assert!(
+            sent.wallet("w2").unwrap().transfers.is_empty(),
+            "sibling untouched"
+        );
+        assert!(sent.set(FOLDER).is_none(), "the folder is not exported");
+
+        let got = import_set(&mut b, ID, &pw(), &bundle, 200).unwrap();
+        assert_eq!(got.scope, BundleScope::Wallet);
+        assert_eq!(got.wallets_with_keys, vec!["w1"]);
+        let recv = load_provenance(&b).unwrap();
+        assert!(recv.wallet("w1").unwrap().origin.is_imported());
+        assert!(recv.sets.is_empty());
+        assert!(
+            import_set(&mut b, ID, &pw(), &bundle, 300).is_err(),
+            "no replay"
+        );
+
+        // A wallet bundle must carry exactly one wallet and needs its wallet key.
+        let k = testing::keys(&mut a, "pw", &["w1", "w2"]);
+        let two = export_bundle(
+            &mut a,
+            ExportRequest {
+                identity_label: ID,
+                gate: k.gate(),
+                scope: BundleScope::Wallet,
+                to_device_id: &idb.device_id(),
+                folder_id: FOLDER,
+                wallet_ids: &["w1".into(), "w2".into()],
+                directory_json: "{}",
+                now_ms: 1,
+            },
+        );
+        assert!(two.is_err());
+        let no_key = export_bundle(
+            &mut a,
+            ExportRequest {
+                identity_label: ID,
+                gate: ExportGate {
+                    wallet_key: None,
+                    ..k.gate()
+                },
+                scope: BundleScope::Wallet,
+                to_device_id: &idb.device_id(),
+                folder_id: FOLDER,
+                wallet_ids: &["w2".into()],
+                directory_json: "{}",
+                now_ms: 1,
+            },
+        );
+        assert!(no_key.is_err());
     }
 }
