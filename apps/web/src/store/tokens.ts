@@ -1,10 +1,11 @@
 import { useSyncExternalStore } from 'react';
 import { isValidEvmAddress, type EvmAdapter } from '@stackwallet/chains-evm';
+import { TrackedSolanaToken, SOLANA_DEVNET, type SolanaAdapter } from '@stackwallet/chains-solana';
 import type { ChainRegistry } from '@stackwallet/chains';
 import { z } from 'zod';
 import type { StorageLike } from './persist.js';
 
-const Token = z.object({
+const EvmToken = z.object({
   chainId: z.string().regex(/^eip155:\d+$/),
   address: z
     .string()
@@ -13,6 +14,7 @@ const Token = z.object({
   symbol: z.string().regex(/^[\x20-\x7e]{1,12}$/),
   decimals: z.number().int().min(0).max(36),
 });
+const Token = z.union([EvmToken, TrackedSolanaToken]);
 export type TrackedToken = z.infer<typeof Token>;
 const Tokens = z.array(Token).max(100);
 const KEY = 'stackwallet.tokens.v1';
@@ -47,7 +49,11 @@ export class TokenStore {
     };
   };
   find(assetRef: string) {
-    return this.tokens.find((t) => `${t.chainId}:erc20:${t.address}` === assetRef.toLowerCase());
+    return this.tokens.find((t) =>
+      t.chainId.startsWith('solana:')
+        ? `${t.chainId}:spl:${t.address}` === assetRef
+        : `${t.chainId}:erc20:${t.address}` === assetRef.toLowerCase(),
+    );
   }
   track(input: TrackedToken) {
     const token = Token.parse(input);
@@ -69,7 +75,11 @@ export class TokenStore {
   }
   configure(registry: ChainRegistry) {
     const adapter = registry.adapterFor('eip155:1') as unknown as EvmAdapter;
-    const apply = () => adapter.setTrackedTokens(this.tokens);
+    const solana = registry.adapterFor(SOLANA_DEVNET) as unknown as SolanaAdapter;
+    const apply = () => {
+      adapter.setTrackedTokens(this.tokens.filter((t) => t.chainId.startsWith('eip155:')));
+      solana.setTrackedTokens(this.tokens.filter((t): t is TrackedSolanaToken => 'programId' in t));
+    };
     apply();
     return this.subscribe(apply);
   }

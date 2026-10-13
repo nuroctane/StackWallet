@@ -108,6 +108,10 @@ other paired devices (their own core)
 - Tracking an ERC-20 sends its contract address and account addresses to those same RPC pools.
   Tracked contracts and their untrusted display metadata are stored locally as public metadata;
   they never decide signing authorization. Unavailable token reads are not presented as zero.
+- Tracking a Solana mint reveals that mint and wallet address to the selected cluster's RPCs.
+  Mint and account programs, owner, decimals, cluster genesis and observation slots are checked;
+  balances remain untrusted public observations. Frozen and Token-2022 extension balances may
+  restrict spendability. Local labels and public amounts never enable SPL signing.
 - The policy editor writes through the core's sealed, audited ledger. Rules apply vault-wide
   today, including at the approval of already queued transactions. Audit-only approver rules
   do not impose signing requirements. USD spend caps refuse unvalued sends and other-device

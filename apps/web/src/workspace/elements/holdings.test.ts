@@ -7,6 +7,33 @@ const chain = {
   nativeAsset: { ref: 'eip155:1:native', symbol: 'ETH', decimals: 18 },
 };
 describe('holding readability', () => {
+  it('keeps failed token reads unknown and retains spendability qualifications', () => {
+    const rows = buildHoldingRows(
+      accounts,
+      () => 'wallet',
+      () =>
+        ({
+          fetchedAtMs: 1,
+          loading: false,
+          holdings: [
+            {
+              assetRef: 'eip155:1:erc20:0xtoken',
+              amount: '0',
+              updatedAtMs: 1,
+              error: 'unavailable',
+              notice: 'Public amount only',
+            },
+          ],
+        }) as BalanceEntry,
+      () => chain,
+    );
+    expect(rows[1]).toMatchObject({
+      hasAmount: false,
+      zero: false,
+      error: 'unavailable',
+      notice: 'Public amount only',
+    });
+  });
   it('keeps unavailable and unread native balances out of the known-zero category', () => {
     const unread = buildHoldingRows(
       accounts,

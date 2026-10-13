@@ -31,6 +31,7 @@ export interface HoldingRow {
   fetchedAtMs: number;
   loading: boolean;
   error?: string;
+  notice?: string;
   zero: boolean;
 }
 
@@ -81,13 +82,14 @@ export function buildHoldingRows(
         symbol: holding.metadata?.symbol ?? holding.assetRef,
         assetRef: holding.assetRef,
         metadataKnown: !!holding.metadata,
-        hasAmount: true,
+        hasAmount: !holding.error,
         provenance: holding.provenance
           ? JSON.stringify(holding.provenance, null, 2)
           : 'Unverified / unavailable',
         decimals: holding.metadata?.decimals ?? 0,
         zero: !holding.error && /^0*$/.test(holding.amount),
         ...(holding.error ? { error: holding.error } : {}),
+        ...(holding.notice ? { notice: holding.notice } : {}),
       });
     }
   }
@@ -235,6 +237,12 @@ export function HoldingsElement({ pane, width, height }: ElementBodyProps) {
                 <div>
                   <dt className="text-faint">Error</dt>
                   <dd className="break-words text-danger">{r.error}</dd>
+                </div>
+              )}
+              {r.notice && (
+                <div>
+                  <dt className="text-faint">Balance coverage</dt>
+                  <dd className="break-words text-muted">{r.notice}</dd>
                 </div>
               )}
             </dl>

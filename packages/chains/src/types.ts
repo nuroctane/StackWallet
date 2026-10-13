@@ -74,6 +74,8 @@ export interface Holding {
   /** Token metadata is untrusted display data; the contract address remains the identity. */
   metadata?: { symbol: string; decimals: number };
   error?: string;
+  /** Coverage or spendability limitations accompanying a public balance observation. */
+  notice?: string;
 }
 
 export interface TxRecord {

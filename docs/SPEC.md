@@ -638,6 +638,11 @@ an approval screen reads as names, not hex:
    Mainnet SOL signing remains disabled. SDK wire decoding, independent signature verification,
    ledger persistence and failure/expiry fixtures are covered; the funded Devnet check is opt-in
    (`STACKWALLET_DEVNET_SMOKE=1`).
+   Explicit tracking also reads public SPL Token and Token-2022 balances by mint, with cluster,
+   mint program, owner, decimals and slot validation plus independent endpoint cross-checks.
+   Wallet → Tokens accepts Solana mints and local labels. Holdings retain full mint/program
+   identities, provenance and public-balance spendability qualifications. Unavailable token
+   amounts remain unknown; SPL transfers and confidential balance decoding remain disabled.
    Second increment: single-key native OSMO bank transfers on Osmosis Testnet (`osmo-test-5`).
    The Rust core encodes one `MsgSend`, a DIRECT signer, a bounded fee and a timeout height;
    it derives and checks the sender and signs the exact protobuf `SignDoc` inside the vault.

@@ -167,7 +167,14 @@ finalized slot decides expired. These dependent observations share one verified 
 Restarted signed/broadcast records
 resume signature tracking without an automatic resend. `@solana/kit` is a pinned test dependency
 for independent wire decoding; runtime assembly is checked separately in Rust and TypeScript.
-Mainnet sends, TSS ceremonies, SPL, versioned messages and swaps remain disabled/unimplemented.
+Explicitly tracked SPL Token and Token-2022 mints support public balance reads on catalogued
+clusters. Each endpoint verifies cluster genesis, initialized mint ownership and decimals before
+reading owner accounts at a slot at least as recent as the mint observation. Account mint, owner,
+program and decimals must agree; duplicate accounts and overflowing integer sums are refused.
+Independent endpoints cross-check exact base-unit totals. Read errors stay on the token row.
+Frozen, withheld and confidential amounts can restrict spendability; displayed public amounts
+do not authorize transfers. Labels are local display metadata and mint addresses preserve case.
+Mainnet sends, TSS ceremonies, SPL transfers, versioned messages and swaps remain disabled/unimplemented.
 The remaining bullets describe target coverage:
 
 - Versioned transactions, address lookup tables, compute budget and priority fee instructions.
