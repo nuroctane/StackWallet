@@ -64,6 +64,17 @@
   border-radius: 0;
   content-visibility: visible;
 }
+.sw-pane[data-collapsed] {
+  /* Drag previews set a pixel height; a collapsed pane follows its title instead. */
+  height: auto !important;
+  contain-intrinsic-size: none;
+}
+.sw-pane[data-collapsed] .sw-pane-title {
+  border-bottom: 0;
+}
+.sw-pane-body[hidden] {
+  display: none;
+}
 /* Stack mode frames sit in normal flow; the enter animation still applies. */
 .sw-pane-stacked {
   position: relative;
@@ -88,6 +99,7 @@
 
 .sw-pane-title {
   display: flex;
+  flex-wrap: wrap;
   flex: none;
   align-items: center;
   gap: 6px;
@@ -134,6 +146,10 @@
 .sw-pane-icon-btn:hover,
 .sw-pane-icon-btn:focus-visible {
   color: var(--sw-ink);
+}
+.sw-pane-icon-btn[aria-pressed='true'] {
+  color: var(--sw-ink);
+  background: var(--sw-edge);
 }
 
 .sw-pane-body {

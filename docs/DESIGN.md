@@ -106,7 +106,12 @@ floating elements on an infinite dark canvas.
 ### Element anatomy
 
 - Title row 28px: `>` glyph · lowercase title · scope chips (`+N` overflow) · optional toolbar ·
-  right icons (settings, fullscreen, close). Chips carrying a selection or a total use `--sw-warm`
+  right icons (settings, collapse, fullscreen, close). Collapse retains the saved position and
+  expanded dimensions, suspends the body, and persists across reloads and layout exports.
+  Fullscreen expands a collapsed element and allows only one fullscreen element per layout;
+  its active button shows the restore glyph and pressed state in both canvas and stack mode.
+  The title controls support mouse and touch; `c` toggles collapse and `f` toggles fullscreen
+  when a title control or canvas frame owns focus. Chips carrying a selection or a total use `--sw-warm`
   at 14% with a warm hairline; everything else is colourless.
 - Body hugs the frame: no outer padding, hairline separators, 12px internal padding at most.
 - Settings live in an anchored popover of `label ⓘ: [control]` rows (≤ 8 rows). Complex

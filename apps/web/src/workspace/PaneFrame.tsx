@@ -14,6 +14,7 @@ import { Chip, OverflowChip } from '@stackwallet/ui';
 import { isTypingTarget } from '../shell/ShellContext.js';
 import type { ElementDefinition, RenderElement } from './elements/types.js';
 import { workspace } from './persist.js';
+import { PaneControls } from './PaneControls.js';
 import type { Pane, PaneProps } from './schema.js';
 import type { Rect } from './store.js';
 import { useElementSize } from './useElementSize.js';
@@ -61,6 +62,7 @@ function PaneFrameImpl({
   const frameRef = useRef<HTMLDivElement | null>(null);
   const [bodyRef, size] = useElementSize<HTMLDivElement>();
   const fullscreen = pane.fullscreen === true;
+  const collapsed = pane.collapsed === true;
   const frozen = locked || fullscreen;
 
   const others = useCallback(
@@ -111,6 +113,7 @@ function PaneFrameImpl({
         const [ax, ay] = arrow;
         const rect: Rect = { x: pane.x, y: pane.y, w: pane.w, h: pane.h };
         if (e.altKey) {
+          if (collapsed) return;
           rect.w = Math.max(def.minSize?.w ?? 0, pane.w + ax * step);
           rect.h = Math.max(def.minSize?.h ?? 0, pane.h + ay * step);
         } else {
@@ -127,12 +130,15 @@ function PaneFrameImpl({
       } else if (e.key === 'f' || e.key === 'F') {
         e.preventDefault();
         workspace.toggleFullscreen(pane.id);
+      } else if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault();
+        workspace.toggleCollapsed(pane.id);
       } else if (e.key === 'Escape' && fullscreen) {
         e.preventDefault();
         workspace.toggleFullscreen(pane.id);
       }
     },
-    [pane, def.minSize, frozen, fullscreen],
+    [pane, def.minSize, frozen, fullscreen, collapsed],
   );
 
   const title = def.titleFor?.(pane) ?? def.title;
@@ -140,7 +146,10 @@ function PaneFrameImpl({
   const Toolbar = def.toolbar;
   const hasSettings = (def.settings?.length ?? 0) > 0;
 
-  const body = useMemo(() => children(pane, size), [children, pane, size]);
+  const body = useMemo(
+    () => (collapsed ? null : children(pane, size)),
+    [children, pane, size, collapsed],
+  );
 
   const style: CSSProperties = fullscreen
     ? {
@@ -169,6 +178,7 @@ function PaneFrameImpl({
       data-focused={focused ? '' : undefined}
       data-locked={locked ? '' : undefined}
       data-fullscreen={fullscreen ? '' : undefined}
+      data-collapsed={collapsed ? '' : undefined}
       onPointerDownCapture={onPointerDownCapture}
       onKeyDown={onKeyDown}
     >
@@ -191,7 +201,7 @@ function PaneFrameImpl({
               .join(', ')}
           />
         )}
-        {Toolbar && (
+        {Toolbar && !collapsed && (
           <Toolbar pane={pane} width={size.width} height={size.height} setProps={setProps} />
         )}
         <span className="ml-auto flex items-center gap-0.5">
@@ -206,16 +216,7 @@ function PaneFrameImpl({
               <GearIcon />
             </button>
           )}
-          <button
-            type="button"
-            className="sw-pressable sw-pane-icon-btn"
-            aria-label={fullscreen ? 'exit fullscreen' : 'fullscreen'}
-            aria-pressed={fullscreen || undefined}
-            title={fullscreen ? 'exit fullscreen (f)' : 'fullscreen (f)'}
-            onClick={() => workspace.toggleFullscreen(pane.id)}
-          >
-            <ExpandIcon exit={fullscreen} />
-          </button>
+          <PaneControls pane={pane} />
           <button
             type="button"
             className="sw-pressable sw-pane-icon-btn"
@@ -227,10 +228,11 @@ function PaneFrameImpl({
           </button>
         </span>
       </div>
-      <div ref={bodyRef} className="sw-pane-body">
+      <div ref={bodyRef} className="sw-pane-body" hidden={collapsed}>
         {body}
       </div>
       {!frozen &&
+        !collapsed &&
         HANDLES.map((h) => (
           <div
             key={h}
@@ -261,14 +263,6 @@ function GearIcon() {
     <svg {...ICON}>
       <circle cx="6" cy="6" r="4" strokeDasharray="2 1.2" />
       <circle cx="6" cy="6" r="1.5" />
-    </svg>
-  );
-}
-
-function ExpandIcon({ exit }: { exit: boolean }) {
-  return (
-    <svg {...ICON}>
-      <path d={exit ? 'M4 1v3H1M8 1v3h3M11 8H8v3M1 8h3v3' : 'M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8'} />
     </svg>
   );
 }

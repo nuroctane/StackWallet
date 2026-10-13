@@ -206,6 +206,7 @@ export class WorkspaceStore {
       id,
       kind: config.kind,
       props: config.props,
+      ...(config.collapsed !== undefined ? { collapsed: config.collapsed } : {}),
       ...rect,
       z: this.topZ(layout) + 1,
     };
@@ -264,8 +265,26 @@ export class WorkspaceStore {
   }
 
   toggleFullscreen(id: string): void {
-    this.updatePane(id, (p) => ({ ...p, fullscreen: !p.fullscreen }));
+    this.updateActive((layout) => {
+      const target = layout.panes.find((p) => p.id === id);
+      if (!target) return layout;
+      const entering = !target.fullscreen;
+      return {
+        ...layout,
+        panes: layout.panes.map((p) =>
+          p.id === id
+            ? { ...p, fullscreen: entering, collapsed: false }
+            : entering && p.fullscreen
+              ? { ...p, fullscreen: false }
+              : p,
+        ),
+      };
+    });
     this.raise(id);
+  }
+
+  toggleCollapsed(id: string): void {
+    this.updatePane(id, (p) => ({ ...p, collapsed: !p.collapsed, fullscreen: false }));
   }
 
   focus(id: string | null): void {
@@ -342,7 +361,15 @@ export class WorkspaceStore {
     return {
       stackwalletLayout: 1,
       name: layout.name,
-      panes: layout.panes.map(({ kind, props, x, y, w, h }) => ({ kind, props, x, y, w, h })),
+      panes: layout.panes.map(({ kind, props, x, y, w, h, collapsed }) => ({
+        kind,
+        props,
+        x,
+        y,
+        w,
+        h,
+        ...(collapsed !== undefined ? { collapsed } : {}),
+      })),
     };
   }
 

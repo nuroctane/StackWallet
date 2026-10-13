@@ -41,6 +41,7 @@ export const Pane = z.object({
   z: z.number().int().min(0),
   /** Set while the pane fills the canvas; the saved rect is restored on exit. */
   fullscreen: z.boolean().optional(),
+  collapsed: z.boolean().optional(),
 });
 export type Pane = z.infer<typeof Pane>;
 
@@ -71,7 +72,7 @@ export const WorkspaceState = z.object({
 export type WorkspaceState = z.infer<typeof WorkspaceState>;
 
 /** Portable form of one pane, used by "copy element config" and the catalogue. */
-export const PaneConfig = Pane.pick({ kind: true, props: true, w: true, h: true });
+export const PaneConfig = Pane.pick({ kind: true, props: true, w: true, h: true, collapsed: true });
 export type PaneConfig = z.infer<typeof PaneConfig>;
 
 /** Portable form of a layout for export/import through the clipboard. */

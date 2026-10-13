@@ -1,9 +1,11 @@
 import { createElement, memo, useCallback } from 'react';
 
 import { Chip } from '@stackwallet/ui';
+import { isTypingTarget } from '../shell/ShellContext.js';
 
 import type { ElementDefinition } from './elements/types.js';
 import { useWorkspace, workspace } from './persist.js';
+import { PaneControls } from './PaneControls.js';
 import type { Layout, Pane, PaneProps } from './schema.js';
 import { useElementSize } from './useElementSize.js';
 import { useWorkspaceApi } from './WorkspaceContext.js';
@@ -48,7 +50,22 @@ const StackPane = memo(function StackPane({ pane, def }: StackPaneProps) {
   return (
     <section
       aria-label={title}
+      tabIndex={-1}
+      onKeyDown={(e) => {
+        if (isTypingTarget(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+        const target = e.target as HTMLElement;
+        if (target !== e.currentTarget && !target.closest('.sw-pane-title')) return;
+        if (e.key.toLowerCase() === 'c') {
+          e.preventDefault();
+          workspace.toggleCollapsed(pane.id);
+        } else if (e.key.toLowerCase() === 'f' || (e.key === 'Escape' && pane.fullscreen)) {
+          e.preventDefault();
+          workspace.toggleFullscreen(pane.id);
+        }
+      }}
       className="sw-pane sw-pane-stacked sw-pane-enter flex-none"
+      data-collapsed={pane.collapsed ? '' : undefined}
+      data-fullscreen={pane.fullscreen ? '' : undefined}
       style={
         pane.fullscreen
           ? { height: '100%', minHeight: 0, flex: '1 1 0' }
@@ -85,23 +102,7 @@ const StackPane = memo(function StackPane({ pane, def }: StackPaneProps) {
             </svg>
           </button>
         )}
-        <button
-          type="button"
-          className="sw-pressable sw-pane-icon-btn"
-          aria-label={pane.fullscreen ? 'exit fullscreen' : 'fullscreen'}
-          onClick={() => workspace.toggleFullscreen(pane.id)}
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 12 12"
-            fill="none"
-            stroke="currentColor"
-            aria-hidden
-          >
-            <path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8" />
-          </svg>
-        </button>
+        <PaneControls pane={pane} />
         <button
           type="button"
           className="sw-pressable sw-pane-icon-btn ml-auto"
@@ -123,8 +124,9 @@ const StackPane = memo(function StackPane({ pane, def }: StackPaneProps) {
           </svg>
         </button>
       </div>
-      <div ref={bodyRef} className="sw-pane-body">
-        {createElement(def.body, { pane, width: size.width, height: size.height, setProps })}
+      <div ref={bodyRef} className="sw-pane-body" hidden={pane.collapsed}>
+        {!pane.collapsed &&
+          createElement(def.body, { pane, width: size.width, height: size.height, setProps })}
       </div>
     </section>
   );

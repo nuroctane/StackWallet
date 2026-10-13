@@ -8,6 +8,7 @@ import {
   PANE_MIN_W,
   type Pane,
   type PaneConfig,
+  WorkspaceState,
 } from './schema.js';
 import {
   clampRect,
@@ -29,6 +30,41 @@ function makeCtx(): StoreContext {
 
 const VIEWPORT: Rect = { x: 0, y: 0, w: 1440, h: 820 };
 const CFG: PaneConfig = { kind: 'wallet', props: {}, w: 240, h: 120 };
+
+describe('collapse and fullscreen transitions', () => {
+  it('retains geometry through collapse, fullscreen and restore, including saved layouts', () => {
+    const { store } = makeStore();
+    const added = store.addPane(CFG, VIEWPORT);
+    if (!added.ok) throw new Error(added.error);
+    const id = added.value;
+    store.setRect(id, { x: 80, y: 96, w: 400, h: 320 });
+    store.toggleCollapsed(id);
+    const saved = WorkspaceState.parse(JSON.parse(JSON.stringify(store.getSnapshot())));
+    expect(saved.layouts[0]?.panes[0]?.collapsed).toBe(true);
+    const exported = LayoutExport.parse(store.exportLayout());
+    expect(exported.panes[0]?.collapsed).toBe(true);
+    store.toggleFullscreen(id);
+    expect(paneAt(store, id)).toMatchObject({ fullscreen: true, collapsed: false });
+    store.toggleCollapsed(id);
+    expect(paneAt(store, id)).toMatchObject({ fullscreen: false, collapsed: true });
+    store.toggleCollapsed(id);
+    expect(paneAt(store, id)).toMatchObject({ x: 80, y: 96, w: 400, h: 320, collapsed: false });
+  });
+
+  it('allows only one fullscreen pane and does not change state for an unknown id', () => {
+    const { store } = makeStore();
+    const a = store.addPane(CFG, VIEWPORT);
+    const b = store.addPane(CFG, VIEWPORT);
+    if (!a.ok || !b.ok) throw new Error('pane creation failed');
+    store.toggleFullscreen(a.value);
+    store.toggleFullscreen(b.value);
+    expect(paneAt(store, a.value).fullscreen).toBe(false);
+    expect(paneAt(store, b.value).fullscreen).toBe(true);
+    const before = store.getSnapshot();
+    store.toggleFullscreen('missing');
+    expect(store.getSnapshot()).toBe(before);
+  });
+});
 
 function makeStore() {
   const ctx = makeCtx();
