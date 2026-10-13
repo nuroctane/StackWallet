@@ -232,6 +232,20 @@ Nothing below moves to mainnet funds until its gate passes.
    must produce zero unflagged proposals outside policy.
 7. **Recovery**: device-loss drill documented and executed; share backup restore verified.
 
+EVM signing is restricted to known testnets in the core (`evm::check_chain` at proposal), as
+for the other families; EVM mainnet funds cannot move until the EVM support gates pass.
+Off-chain signatures follow the same line: EIP-712 typed data must name a signing testnet in
+`domain.chainId` (a permit or marketplace order is value without a transaction), EIP-191 text
+messages carry no chain and are allowed. Both need a fresh session proof (no PIN), check that
+the key derives to the shown address, and append a `messageSigned` audit row before returning.
+
+The agent never holds a key. Its only action is a proposal into the approval queue, marked with
+its session and rationale; destinations it supplies that are not the user's wallets or contacts
+are recorded in `untrustedDestinations` for the approver and policy. Tool output is sanitized
+before the model reads it. Provider API keys are sealed in the vault and are the only entries the
+page can read back (`provider-key:` prefix enforced in the wasm surface); they are sent only to
+their provider.
+
 Phase-four native SOL sends are restricted to Devnet in the core, not only in the UI. The core
 re-derives the fee payer, verifies chain/asset/destination/lamports against the intent, and constructs
 exactly one System Program transfer. Solana allowlists and denylists preserve base58 case. The RPC

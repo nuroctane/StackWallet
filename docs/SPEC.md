@@ -676,9 +676,20 @@ client for which folder a wallet sits in; the wallet key is bound to the wallet 
    on their own rows. Contract symbols and decimals are bounded, untrusted display metadata,
    persisted locally with chain and contract identity; send lookup also tracks the token.
    Holdings, approval deltas and history headlines display decimal amounts when metadata is
-   available and fall back to explicit base units otherwise. This is explicit tracking, not
-   automatic token discovery. Remaining: threshold (`tss`) EVM signing once CGGMP lands (1b),
-   policy inheritance and distributed approvals, USD valuation, and a funded testnet confirmation.
+   available and fall back to explicit base units otherwise. Tracking stays explicit; the tokens
+   dialog can also ask Blockscout which ERC-20s the directory's addresses hold and offer them,
+   re-reading metadata from the contract on tracking.
+   EVM signing is restricted in the core to known testnets (`evm::SIGNING_TESTNETS`: Sepolia,
+   Holesky, Hoodi, Base/OP/Arbitrum Sepolia, Polygon Amoy), matching the other families.
+   Contract-call intents carry approval revokes and ERC-721/1155 sends; the core compares the
+   calldata byte for byte. A stuck transaction can be replaced at the same nonce (speed up: same
+   intent; cancel: zero-value self-transfer) with fees raised at least 12.5%; when one confirms,
+   the others at that nonce become `replaced` or `dropped`. Single wallets derive further
+   accounts on each family's conventional path; the user's contacts label addresses right after
+   their own wallets. EIP-191 messages and EIP-712 typed data (testnet domains only) are signed
+   in the core after a fresh session proof and audited as `messageSigned`.
+   Remaining: threshold (`tss`) EVM signing once CGGMP lands (1b), policy inheritance and
+   distributed approvals, and a funded testnet confirmation.
 4. **Chains**: Bitcoin (PSBT, Taproot via FROST secp256k1-tr), Solana, Cosmos; swaps per family.
    First increment: single-key native SOL transfers on Devnet use the same core ledger, policy
    evaluation, passphrase approval and audited history as EVM. The Rust core builds one legacy
@@ -729,12 +740,25 @@ client for which folder a wallet sits in; the wallet key is bound to the wallet 
    SPL/Token-2022 transfers, address lookup tables and v1 messages, IBC and other Cosmos messages,
    and swaps per family.
 5. **Agent runtime**: providers, tools, run loop, grants, agent party.
+   First increment (`packages/agent`): BYOK Anthropic, OpenAI, Google and OpenRouter models via
+   the Vercel AI SDK, keys sealed in the vault under `provider-key:<id>` (the only vault entries
+   the page may read back). A session runs under a grant (wallets, may-propose, step and
+   proposal caps) with read tools (wallets, balances, labels) and `propose_transfer`, whose
+   proposals carry the agent's session and rationale into the approval queue; destinations
+   outside the user's wallets and contacts are recorded as untrusted. Tool output is stripped of
+   control, bidi and zero-width characters. The console is a workspace element; transcripts
+   stay in memory. Remaining: the agent as a TSS party, persisted searchable sessions, policy
+   overlays per grant.
 6. **Automations + scheduler**: triggers / actions, headless CLI as automation device.
 7. **Markets**: aggregation, registry, charts, portfolio analytics, alerts, and the market
    elements of §11.1 (trades, candles, positions, lending, NFT floors, holders, transfers,
    transactions, trending, metrics).
+   First increment (`packages/market`): CoinGecko USD prices for mainnet native coins, requested
+   by coin id only, and integer valuation; holdings totals show an approximate USD sum. Testnet
+   coins have no price, so USD spend caps still fail closed for the testnet sends the core signs.
 8. **Desktop polish + packaging**: Tauri bundles, background scheduler, OS keychain unlock,
-   hardware wallet signer.
+   hardware wallet signer. The desktop window runs the bundled wasm core, so it has the same
+   vault, ledger and pairing as the browser; native Tauri commands remain a fallback.
 9. **Mobile**: UniFFI bindings, phone as a first-class share-holder and approver.
 
 Support gates before any phase touches mainnet funds are listed in `SECURITY.md`.
