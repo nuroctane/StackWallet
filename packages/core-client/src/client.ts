@@ -989,11 +989,13 @@ function defaultWasmUrl(): string {
   return '/wasm/stackwallet_wasm.js';
 }
 
+/**
+ * The wasm core everywhere it loads, the desktop shell included: the Tauri
+ * window serves the same bundle, so the same audited core runs the vault and
+ * ledger there. The native Tauri commands remain a fallback for a desktop
+ * build without the wasm asset; they cover the stateless calls only.
+ */
 export async function createCoreClient(opts: CreateCoreClientOptions = {}): Promise<CoreClient> {
-  if (isTauri()) {
-    const { invoke } = await import('@tauri-apps/api/core');
-    return new TauriCoreClient(invoke as Invoke);
-  }
   const url = opts.wasmUrl ?? defaultWasmUrl();
   try {
     // The wasm bundle is produced by `pnpm --filter @stackwallet/web build:wasm`
@@ -1005,6 +1007,10 @@ export async function createCoreClient(opts: CreateCoreClientOptions = {}): Prom
     const message = err instanceof Error ? err.message : String(err);
     const missing = /fetch dynamically imported module|Failed to fetch|404/i.test(message);
     if (missing) console.warn(`[stackwallet] wasm core not found at ${url}: ${message}`);
+    if (isTauri()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return new TauriCoreClient(invoke as Invoke);
+    }
     return new UnavailableCoreClient(missing ? 'wasm core not bundled' : message);
   }
 }
