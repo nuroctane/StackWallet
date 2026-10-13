@@ -520,9 +520,27 @@ Every wallet and every directory set carries a provenance the UI never hides:
   factor configured for the instance (to get in) and again for the set (to take it out). Both
   checks run in the core; the transfer itself rides the paired-device channel (§5.3) or an
   encrypted file sealed to the receiving device's identity.
-- **Copied**: the sending side tags every transferred wallet `copied`, so the user also knows
-  that a second copy exists. A `single` wallet with none of `exposed`, `imported` or `copied`
-  shows `local · no backup`.
+- **Exported**: the sending side tags every transferred wallet `exported` (the core record is a
+  transfer), so the user also knows that a second copy exists. A whole directory sent at once
+  is also tagged `exported set`. A `single` wallet with none of `exposed`, `imported` or
+  `exported` shows `local · no backup`.
+- **Open approvals**: any wallet with an EVM address (any kind, watch-only included) shows
+  `approvals N` while ERC-20 allowances, NFT single-token approvals or operator grants
+  (`setApprovalForAll`) remain open on any EVM chain with a keyless indexer. Candidates come from
+  the owner's `Approval` / `ApprovalForAll` logs (Blockscout's Etherscan-compatible API) and
+  every one is re-read from the contract (`allowance`, `getApproved` + `ownerOf`,
+  `isApprovedForAll`). A read that fails keeps the candidate open and marked unverified; a
+  failed scan never clears the tag. Only a revocation on chain does.
+- **Security tags are locked.** `exposed`, `exported`, `imported`, `approvals` and
+  `local · no backup` render as filled chips with a lock glyph and fixed theme roles (`danger`
+  for exposed keys and open approvals). They cannot be renamed, recoloured, hidden or removed.
+- **User tags are free.** Every other tag is the user's own: a name (any 1–24 printable
+  characters; the stored id is a slug so renaming never orphans it), a colour (any theme role
+  except `danger`/`danger-soft`, which follow the theme, or a custom `#rrggbb`) and an optional
+  icon from the built-in hairline set (`packages/ui/src/TagIcon.tsx`). User tags render
+  outlined, never filled, and may not take a security tag's name, a word claiming the absence
+  of one (`safe`, `clean`, `verified`) or a security glyph. Tag looks live in the directory as
+  `tagDefs` and travel with layouts and exports; an instance's own look for an id wins.
 
 Implementation (core `hd`, `provenance`, `transfer`):
 
@@ -533,8 +551,8 @@ Implementation (core `hd`, `provenance`, `transfer`):
 - The provenance table is sealed in the vault under `provenance`; saves are refused unless they
   only add history. `reveal` re-verifies the passphrase, seals the exposure, then returns the
   secret. The browser mirrors the table to `localStorage` for display while locked.
-- The step-up factor today is the vault passphrase (the only factor a vault has); platform and
-  hardware factors join the same gate when they land (Phase 8).
+- Every export passes the export gate (§12.4): a fresh session proof (passphrase or passkey,
+  never a PIN), the parent directory's export key, and for a single wallet its own export key.
 - A set bundle (`stackwallet-set:`) is sealed with ephemeral X25519 to the recipient's pinned
   Noise static, HKDF-SHA256, XChaCha20-Poly1305, and signed by the sender's Ed25519 identity.
   The recipient must be the addressed device and the sender a pinned, unrevoked peer; a set
@@ -575,6 +593,41 @@ an approval screen reads as names, not hex:
   undecodable call is shown as such, never guessed. The agent reads the same decoded form
   (sanitized, §9) and its read tools follow the element surface: resolve address, list
   transfers, list decoded transactions, token holders.
+
+### 12.4 Management model: sessions, layouts, directories, wallets
+
+Four layers, each with its own security level. The core enforces every gate below.
+
+1. **Local session (per device).** The vault passphrase, plus optional device-local factors: a
+   6-digit PIN and passkeys (Face ID, Touch ID, Windows Hello, Android biometrics, security
+   keys, via WebAuthn PRF). They only open the session on the device that set them: they are
+   unlock slots in that device's vault file, nothing exported carries them, and only the
+   passphrase can add one. A PIN is bound to a 32-byte secret sealed under a non-extractable
+   WebCrypto key in IndexedDB; five wrong PINs destroy that secret. A PIN opens a session but
+   never authorises an export; a passkey can.
+2. **Layouts.** Exportable as plain JSON with no security and no tagging. A layout export
+   (`stackwalletLayout: 2`) carries the folders and wallets its panes show as public addresses,
+   names and user tags only: no key, share, key history or wallet kind. On import, a wallet
+   whose address is already present maps onto it; anything else arrives watch-only under the
+   same folder path, and stays watch-only until its keys arrive through a gated wallet or
+   directory export (which also brings the security tags). Nothing in key provenance changes on
+   either side.
+3. **Directories.** A directory exports as a whole to one paired instance: its subfolders,
+   wallets, accounts, the keys of its `single` wallets, the looks of its user tags and every
+   layout that shows anything inside it, sealed to the recipient (§12.1). Gate: a fresh session
+   proof and the directory's export key. Every wallet inside is tagged `exported` and the
+   directory `exported set`. On arrival, watch-only stand-ins for the same addresses fold into
+   the keyed wallets and layouts are repointed at them.
+4. **Wallets.** Any wallet exports on its own, whether or not it sits in a directory: to a
+   paired instance (`scope: wallet` bundle), or its phrase or a private key to the screen, the
+   clipboard or a file. Gate: a fresh session proof, the export key of the directory it sits
+   in, and the wallet's own export key. Only that wallet is tagged (`exported` or `exposed`);
+   its folder and the wallets beside it stay unexported, unchanged and untagged.
+
+Export keys are user-set secrets (at least 8 characters) per folder and per wallet, stored as
+Argon2id verifiers inside the vault. Setting one needs a fresh session proof; changing one also
+needs the current key. Until the directory moves into the encrypted store, the core trusts the
+client for which folder a wallet sits in; the wallet key is bound to the wallet id.
 
 ## 13. Phases
 

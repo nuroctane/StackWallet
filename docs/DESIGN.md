@@ -58,6 +58,23 @@ Night glass is the default and the reference for every rule in this document. Th
   below the floor. `danger` keeps its meaning whatever hue it is given. Themes export and
   import as `{ stackwalletTheme: 1, name, tokens }` JSON.
 
+## Tags
+
+Two families, never confusable:
+
+- **Security tags** (`exposed`, `exported`, `imported`, `approvals N`, `local · no backup`):
+  filled glass chips with their own glyph and a small lock, coloured from fixed roles (`danger`
+  for exposed keys and open approvals, `accent-3` for copies, `faint` for local). Not editable.
+- **User tags**: outlined chips (never filled) with the user's name, colour and optional icon.
+  Colours are any theme role except `danger`, which follow the theme, or a custom hex. In the
+  directory tree a user tag is just its icon (or a dot) in its colour.
+
+Tag icons are hairline glyphs on a 12-unit grid with a 1.25 stroke and round caps, drawn in
+`currentColor` (`packages/ui/src/TagIcon.tsx`): dot, ring, square, diamond, triangle, hexagon,
+star, spark, bolt, flame, leaf, snow, moon, sun, flag, bookmark, pin, anchor, compass, cube,
+layers, coin, chart, clock, hash, at, link, heart, target, crown, wave, grid. Security glyphs
+(lock, alert, arrows in/out, open shackle, struck ring) are a separate set no user tag can use.
+
 ## Typography
 
 - Interface: `'JetBrains Mono', ui-monospace, monospace`, 13px / 1.5 base. Bundled locally; no

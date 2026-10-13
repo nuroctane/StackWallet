@@ -57,8 +57,8 @@ other paired devices (their own core)
 | Supply chain compromise of a chain SDK                     | SDKs never see keys. Sighash is recomputed in the core from the serialized unsigned tx for families where that is tractable (EVM, Solana, Cosmos). Lockfiles pinned; `pnpm audit` and `cargo audit` in CI.                                                                                                                                                                                                        |
 | Malicious RPC                                              | Simulation results and balances are cross-checked across at least two endpoints when available; user-editable RPC pool with health tracking. Broadcast failures never mark a tx as confirmed.                                                                                                                                                                                                                     |
 | Fake token / lookalike address                             | Asset registry provenance; address first-seen tracking; unicode and prefix/suffix similarity warnings on approval screens.                                                                                                                                                                                                                                                                                        |
-| Key export without the user noticing later                 | `reveal` runs in the core: passphrase re-verified, exposure sealed in the vault's append-only provenance table, then the secret is returned. A wrong passphrase reveals and records nothing. The red `exposed` tag cannot be cleared and travels with the wallet in set transfers. Clipboard copies are wiped after 30s if unchanged.                                                                             |
-| Stolen or replayed directory-set bundle                    | Sealed to one device's pinned X25519 static (ephemeral ECDH, HKDF, XChaCha20-Poly1305) and signed by the sender's identity; the recipient refuses unknown or revoked senders, bundles addressed elsewhere, and sets already present. Both ends re-enter the vault passphrase. A bundle holds plaintext phrases only inside the AEAD.                                                                              |
+| Key export without the user noticing later                 | `reveal` runs in the core behind the export gate (fresh session proof, parent directory key, wallet key; see below), exposure sealed in the vault's append-only provenance table, then the secret is returned. Any failed check reveals and records nothing. The red `exposed` tag cannot be cleared and travels with the wallet in set transfers. Clipboard copies are wiped after 30s if unchanged.             |
+| Stolen or replayed directory-set bundle                    | Sealed to one device's pinned X25519 static (ephemeral ECDH, HKDF, XChaCha20-Poly1305) and signed by the sender's identity; the recipient refuses unknown or revoked senders, bundles addressed elsewhere, and sets or wallets already present. The sender passes the export gate; the receiver presents a fresh session proof. A bundle holds plaintext phrases only inside the AEAD.                            |
 | Client swaps the recipient or amount before signing        | The core accepts an unsigned EVM transaction only when its destination, value and calldata are exactly what the intent says (ERC-20 transfers are rebuilt and compared byte for byte) and the signer key re-derives to the address the user saw. It serializes and hashes the transaction itself; the client never supplies the digest. Approval re-checks the passphrase and re-runs policy at signing time.     |
 | Ledger or audit tampering in browser storage               | Transactions, policies and the audit chain are one record sealed in the vault (AEAD); on load the chain must verify and every transaction's state must equal the last state its audit rows record. Saves that rewrite or drop a row are refused.                                                                                                                                                                  |
 | Spoofed or look-alike name-service name                    | Names are shown only after a reverse lookup is confirmed by a forward lookup to the same address (ENS via the Universal Resolver, SNS by owner and reverse-record checks on chain, ICNS and THORName by forward query). Control, bidi and zero-width characters refuse the name; other non-ASCII names carry a visible marker. The raw address stays one click away and the user's tag is always shown alongside. |
@@ -66,6 +66,40 @@ other paired devices (their own core)
 | Local malware with user privileges                         | Out of scope for software alone. Recommended: run the agent and the automation CLI under a separate OS account or on a separate machine with only their own share.                                                                                                                                                                                                                                                |
 | Time-of-check / time-of-use on caps                        | Caps count reserved spend (`Awaiting`, `Signing`) in addition to confirmed transactions.                                                                                                                                                                                                                                                                                                                          |
 | Audit log tampering                                        | Hash-chained rows; UI verifies the chain and shows breaks.                                                                                                                                                                                                                                                                                                                                                        |
+
+### Session factors and the export gate
+
+The passphrase is the master factor. A device may add a 6-digit PIN and passkeys as unlock
+slots in its own vault file; each wraps the same DEK, only the passphrase can add one, and the
+slot list is covered by the vault's manifest MAC, so a removed slot cannot be spliced back in
+from an older file. A passkey slot's key is the authenticator's WebAuthn PRF output, released
+only after the authenticator's own user verification. A PIN slot's key is
+HKDF(Argon2id(PIN), device secret): the device secret is 32 random bytes sealed under a
+non-extractable AES-GCM key in IndexedDB, so a copied vault file alone cannot be brute-forced
+over the 10⁶ PIN space. The client counts wrong PINs and destroys the device secret at the
+fifth, retiring the PIN. Script running on the origin can still drive the non-extractable key,
+so the PIN protects against file theft, not against a compromised page; it never authorises
+an export (`verify_session(allow_pin = false)`). Session factors never leave the device.
+
+Every export passes `export_gate` in the core:
+
+| Export                                   | Session proof         | Directory key          | Wallet key |
+| ---------------------------------------- | --------------------- | ---------------------- | ---------- |
+| Phrase or private key (screen/clip/file) | passphrase or passkey | the folder it sits in  | required   |
+| One wallet to a paired device            | passphrase or passkey | the folder it sits in  | required   |
+| A directory to a paired device           | passphrase or passkey | the exported directory | n/a        |
+| A layout (JSON)                          | none: public data     | none                   | none       |
+
+Export keys are Argon2id verifiers sealed inside the vault, compared in constant time, set with
+a fresh session proof and changed only with the current key. A missing key blocks the export
+until the user sets one. Limitation: the directory tree still lives in the client's interim
+store, so the core takes the client's word for which folder a wallet is in; a compromised page
+could present a different folder's key, but never another wallet's key. Layout exports carry
+public addresses only and record nothing in provenance.
+
+Open-approval tags rely on an indexer for discovery (logs) and public RPC for confirmation
+(contract reads). Neither is a cryptographic proof; a scan that fails or cannot read a contract
+keeps the tag rather than clearing it, and an indexer that omits a log hides that approval.
 
 ### Browser persistence and transaction recovery
 
