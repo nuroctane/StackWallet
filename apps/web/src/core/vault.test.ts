@@ -172,6 +172,9 @@ class FakeVault implements VaultHandle {
   async importSet(): Promise<never> {
     throw new Error('not used');
   }
+  async providerKey() {
+    return null;
+  }
   async signMessage(): Promise<never> {
     throw new Error('not used');
   }

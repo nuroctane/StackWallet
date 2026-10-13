@@ -51,6 +51,10 @@ function solanaAdapter(registry: ChainRegistry, chainId: string): SolanaAdapter 
 
 export interface SendRequest {
   account: Account;
+  /** Set when the agent proposed it; the approval card shows who and why. */
+  agent?: { sessionId: string; grantId: string; rationale: string };
+  /** Destinations that came from model output rather than the user. */
+  untrustedDestinations?: string[];
   /** EVM only: replace the stuck transaction with this nonce and fees. */
   replace?: ReplaceOptions;
   to: string;
@@ -108,7 +112,10 @@ export async function proposeContractCall(
 
 async function proposeIntent(
   registry: ChainRegistry,
-  req: Pick<SendRequest, 'account' | 'bitcoin' | 'solana' | 'replace'>,
+  req: Pick<
+    SendRequest,
+    'account' | 'bitcoin' | 'solana' | 'replace' | 'agent' | 'untrustedDestinations'
+  >,
   kind:
     | { kind: 'transfer'; to: string; asset: string; amount: string }
     | { kind: 'contractCall'; to: string; dataHex: string; value: string },
@@ -123,9 +130,9 @@ async function proposeIntent(
     chainId: account.chainId,
     ...kind,
     usdMicros: null,
-    untrustedDestinations: [],
+    untrustedDestinations: req.untrustedDestinations ?? [],
   } as Omit<TxIntent, 'proposer' | 'createdAtMs'>;
-  const proposed = await vault.txPropose(intent);
+  const proposed = await vault.txPropose(intent, req.agent);
   if (!proposed.ok) return proposed;
   let prepared;
   try {

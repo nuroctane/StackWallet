@@ -15,6 +15,7 @@ export const elementDefaults: Record<ElementKind, { w: number; h: number }> = {
   approvals: { w: 320, h: 360 },
   devices: { w: 760, h: 520 },
   network: { w: 640, h: 420 },
+  agent: { w: 520, h: 560 },
   collectibles: { w: 640, h: 480 },
 };
 

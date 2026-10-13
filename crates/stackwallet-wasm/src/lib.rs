@@ -437,6 +437,29 @@ impl WasmVault {
         Ok(serde_json::to_string(&signed)?)
     }
 
+    /// A model provider's API key (D4), stored under `provider-key:<id>`.
+    /// The only vault read that hands plaintext to the page: provider keys
+    /// are the page's to use (it calls the provider directly), and the prefix
+    /// check keeps every wallet secret, share and identity out of reach.
+    pub fn provider_key(&self, provider: &str) -> Result<Option<String>, JsError> {
+        if provider.is_empty()
+            || !provider
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b == b'-')
+        {
+            return Err(JsError::new("bad provider id"));
+        }
+        let Some(handle) = self.inner.handle_for(&format!("provider-key:{provider}")) else {
+            return Ok(None);
+        };
+        let key = self
+            .inner
+            .with_secret(&handle, &mut |s| String::from_utf8(s.expose().to_vec()))
+            .map_err(core_err)?
+            .map_err(|_| JsError::new("provider key is not utf-8"))?;
+        Ok(Some(key))
+    }
+
     /// Device-local unlock methods (`SlotInfo[]` JSON). Readable while locked.
     pub fn slots_json(&self) -> Result<String, JsError> {
         Ok(serde_json::to_string(&self.inner.slots())?)

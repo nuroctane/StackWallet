@@ -368,14 +368,48 @@ export class VaultStore {
     });
   }
 
-  txPropose(intent: Omit<TxIntent, 'proposer' | 'createdAtMs'>) {
+  /** `agent` marks a proposal the agent made; approvers see it and its rationale. */
+  txPropose(
+    intent: Omit<TxIntent, 'proposer' | 'createdAtMs'>,
+    agent?: { sessionId: string; grantId: string; rationale: string },
+  ) {
     return this.ledgerOp((v, device, now) =>
       v.txPropose(
-        { ...intent, proposer: { kind: 'human', deviceId: device }, createdAtMs: now } as TxIntent,
+        {
+          ...intent,
+          proposer: agent ? { kind: 'agent', ...agent } : { kind: 'human', deviceId: device },
+          createdAtMs: now,
+        } as TxIntent,
         device,
         now,
       ),
     );
+  }
+
+  hasProviderKey(provider: string): boolean {
+    const s = this.view.status;
+    return (
+      (s.kind === 'unlocked' || s.kind === 'locked') &&
+      s.labels.some((l) => l.label === `provider-key:${provider}`)
+    );
+  }
+
+  /** Seal a model provider's API key (D4); replaces any earlier one. */
+  setProviderKey(provider: string, key: string): Promise<VaultResult> {
+    return this.guarded(async () => {
+      if (!/^[a-z-]{1,32}$/.test(provider)) throw new Error('bad provider');
+      if (key.trim().length < 8) throw new Error('That does not look like an API key');
+      await this.unlockedVault().put(
+        `provider-key:${provider}`,
+        new TextEncoder().encode(key.trim()),
+      );
+      await this.persist();
+      await this.refreshUnlocked();
+    });
+  }
+
+  async providerKey(provider: string): Promise<string | null> {
+    return this.unlockedVault().providerKey(provider);
   }
 
   txAttach(req: {

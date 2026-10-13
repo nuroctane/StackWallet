@@ -152,6 +152,8 @@ export interface VaultHandle {
     deviceId: string;
     nowMs: number;
   }): Promise<SignedMessage>;
+  /** A model provider's API key sealed under `provider-key:<id>`; nothing else is readable. */
+  providerKey(provider: string): Promise<string | null>;
   /** Step-up check; `allowPin` stays false for anything that takes material out. */
   verifySession(session: SessionProof, allowPin: boolean): Promise<void>;
   /** Device-local unlock methods; readable while locked. */
@@ -339,6 +341,7 @@ export interface WasmVaultObject {
     bundle: string,
     nowMs: number,
   ): string;
+  provider_key(provider: string): string | undefined;
   sign_message(
     walletId: string,
     path: string,
@@ -625,6 +628,9 @@ class WasmVaultHandle implements VaultHandle {
         ),
       ),
     );
+  }
+  async providerKey(provider: string) {
+    return this.raw.provider_key(provider) ?? null;
   }
   async verifySession(session: SessionProof, allowPin: boolean) {
     const [slot, secret, device] = sessionArgs(session);

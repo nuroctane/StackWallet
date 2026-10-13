@@ -8,6 +8,7 @@ import { LedgerElement, RANGES } from './LedgerElement.js';
 import { ActivityLogElement } from './ActivityLogElement.js';
 import { TerrainElement } from './TerrainElement.js';
 import { TransactionsElement } from './TransactionsElement.js';
+import { AgentElement } from './AgentElement.js';
 import type { ElementDefinition, ElementRegistry } from './types.js';
 import {
   ApprovalsElement,
@@ -228,6 +229,15 @@ export const registry: ElementRegistry = {
       },
     ],
     body: CollectiblesElement,
+  }),
+  agent: def({
+    kind: 'agent',
+    title: 'agent',
+    hint: 'bring-your-own-key model; reads granted wallets, proposes into the approval queue',
+    defaultSize: elementDefaults.agent,
+    minSize: { w: 320, h: 280 },
+    defaultProps: { provider: 'anthropic', model: '' },
+    body: AgentElement,
   }),
   network: def({
     kind: 'network',

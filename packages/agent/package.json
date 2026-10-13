@@ -1,0 +1,27 @@
+{
+  "name": "@stackwallet/agent",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./catalog": "./src/catalog.ts"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit --pretty false",
+    "build": "pnpm check",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "4.0.79",
+    "@ai-sdk/google": "4.0.94",
+    "@ai-sdk/openai": "4.0.92",
+    "@openrouter/ai-sdk-provider": "3.1.0",
+    "ai": "7.0.138",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vitest": "3.2.6"
+  }
+}
