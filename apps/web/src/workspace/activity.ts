@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { z } from 'zod';
 
 import type { StorageLike } from '../store/persist.js';
+import { reportStorageSave } from '../store/storageStatus.js';
 
 export const ACTIVITY_STORAGE_KEY = 'stackwallet.activity.v1';
 export const ACTIVITY_SAVE_DEBOUNCE_MS = 500;
@@ -104,6 +105,7 @@ export class ActivityLog {
   private readonly listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private dirty = false;
+  private saveFailures = 0;
 
   constructor(
     private readonly storage: StorageLike | null,
@@ -157,13 +159,27 @@ export class ActivityLog {
   flush(): void {
     if (this.timer !== undefined) clearTimeout(this.timer);
     this.timer = undefined;
-    if (!this.dirty || !this.storage) return;
-    this.dirty = false;
-    saveActivity(this.storage, this.state);
+    if (!this.dirty) return;
+    const saved = this.storage !== null && saveActivity(this.storage, this.state);
+    this.dirty = !saved;
+    reportStorageSave(
+      'activity history',
+      saved,
+      saved
+        ? undefined
+        : {
+            filename: 'stackwallet-activity.json',
+            text: JSON.stringify(this.state),
+          },
+    );
+    if (saved) this.saveFailures = 0;
+    else if (++this.saveFailures < 3 && this.storage)
+      this.timer = setTimeout(() => this.flush(), this.debounceMs);
   }
 
   private scheduleSave(): void {
     this.dirty = true;
+    this.saveFailures = 0;
     if (this.timer !== undefined) clearTimeout(this.timer);
     this.timer = setTimeout(() => this.flush(), this.debounceMs);
   }

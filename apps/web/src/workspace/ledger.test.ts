@@ -180,4 +180,32 @@ describe('TotalsLedger', () => {
     }
     expect(loadLedger(null)).toEqual({ version: 1, points: [] });
   });
+
+  it('retains dirty observations through quota failures and retries without a new balance', () => {
+    const storage = new MemoryStorage();
+    const write = vi.spyOn(storage, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    const ledger = new TotalsLedger(storage, () => 42, 500);
+    ledger.record([total()]);
+    vi.advanceTimersByTime(500 * 10);
+    expect(write).toHaveBeenCalledTimes(3);
+    expect(storage.getItem(LEDGER_STORAGE_KEY)).toBeNull();
+    write.mockRestore();
+    ledger.flush();
+    expect(loadLedger(storage)).toEqual(ledger.getSnapshot());
+    expect(loadLedger(storage).points).toHaveLength(1);
+  });
+
+  it('automatically recovers after a transient storage failure', () => {
+    const storage = new MemoryStorage();
+    vi.spyOn(storage, 'setItem').mockImplementationOnce(() => {
+      throw new Error('busy');
+    });
+    const ledger = new TotalsLedger(storage, () => 42, 500);
+    ledger.record([total()]);
+    vi.advanceTimersByTime(1000);
+    expect(loadLedger(storage)).toEqual(ledger.getSnapshot());
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });

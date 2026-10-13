@@ -128,6 +128,34 @@ describe('ActivityLog', () => {
     expect(reloaded.series(1)[6]?.n).toBe(2);
   });
 
+  it('retains dirty history through quota failures and retries without new events', () => {
+    const storage = new MemoryStorage();
+    const write = vi.spyOn(storage, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    const log = new ActivityLog(storage, () => local(2024, 3, 5), 500);
+    log.record('transaction');
+    vi.advanceTimersByTime(500 * 10);
+    expect(write).toHaveBeenCalledTimes(3);
+    expect(storage.getItem(ACTIVITY_STORAGE_KEY)).toBeNull();
+    write.mockRestore();
+    log.flush();
+    expect(loadActivity(storage)).toEqual(log.getSnapshot());
+    expect(loadActivity(storage).days['2024-03-05']?.n).toBe(1);
+  });
+
+  it('automatically recovers after a transient storage failure', () => {
+    const storage = new MemoryStorage();
+    vi.spyOn(storage, 'setItem').mockImplementationOnce(() => {
+      throw new Error('busy');
+    });
+    const log = new ActivityLog(storage, () => local(2024, 3, 5), 500);
+    log.record('directory', 2);
+    vi.advanceTimersByTime(1000);
+    expect(loadActivity(storage)).toEqual(log.getSnapshot());
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('starts fresh from corrupt or invalid blobs without quarantining', () => {
     for (const bad of [
       '{nope',
