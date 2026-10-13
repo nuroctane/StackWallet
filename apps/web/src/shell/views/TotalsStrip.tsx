@@ -6,6 +6,8 @@ import { formatUnits } from '../../lib/format.js';
 import { useBalances } from '../../store/balances.js';
 import { useRegistry } from '../../store/RegistryContext.js';
 import { aggregateNative } from '../../store/totals.js';
+import { usePrices } from '../../store/prices.js';
+import { coinIdFor, formatUsd, usdMicros } from '@stackwallet/market';
 
 const MAX_ASSETS = 6;
 
@@ -29,6 +31,19 @@ export function TotalsStrip({
     () => aggregateNative(accounts, balances.byAccount, (id) => findChain(registry, id)),
     [accounts, balances.byAccount, registry],
   );
+  const ids = totals.map((t) => {
+    const chain = findChain(registry, t.assetRef.slice(0, t.assetRef.lastIndexOf(':')));
+    return chain ? coinIdFor(chain) : null;
+  });
+  const price = usePrices(ids.filter((x): x is string => x !== null));
+  let usd = 0n;
+  let unpriced = 0;
+  totals.forEach((t, i) => {
+    const p = ids[i] ? price(ids[i]!) : undefined;
+    if (p) usd += usdMicros(t.amount, t.decimals, p.usd);
+    else if (t.amount !== '0') unpriced += 1;
+  });
+  const priced = ids.some((id, i) => id && price(id) && totals[i]);
   const shown = totals.slice(0, MAX_ASSETS);
   const hidden = totals.length - shown.length;
   const disputed = totals.some((t) => t.disputed);
@@ -78,6 +93,15 @@ export function TotalsStrip({
             </span>
           ))}
           {hidden > 0 && <span className="text-[12px] font-normal text-faint">+{hidden} more</span>}
+          {priced && (
+            <span
+              className="basis-full text-[12px] font-normal text-muted"
+              title="CoinGecko USD prices for mainnet coins; testnet coins have no value"
+            >
+              ≈ {formatUsd(usd)}
+              {unpriced > 0 ? ` · ${unpriced} asset${unpriced === 1 ? '' : 's'} unpriced` : ''}
+            </span>
+          )}
         </div>
       )}
     </div>
