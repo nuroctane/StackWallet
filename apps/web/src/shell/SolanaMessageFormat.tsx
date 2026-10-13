@@ -19,12 +19,12 @@ export function SolanaMessageFormat({
           onChange={(e) => onChange(e.target.value === 'v0' ? 'v0' : 'legacy')}
         >
           <option value="legacy">Legacy</option>
-          <option value="v0">Versioned v0 · inline accounts</option>
+          <option value="v0">Versioned v0</option>
         </Select>
       </Field>
       <p className="text-[11px] text-faint">
-        Devnet SOL only. Both formats contain one transfer and no address lookup tables. Approval
-        expires with the blockhash; an expired transfer needs a fresh proposal.
+        Devnet SOL only. Both formats use inline accounts for one transfer and no address lookup
+        tables. Approval expires with the blockhash; an expired transfer needs a fresh proposal.
       </p>
     </div>
   );
