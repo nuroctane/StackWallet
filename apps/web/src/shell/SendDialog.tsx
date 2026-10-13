@@ -81,14 +81,17 @@ function SendForm({
     const single = new Set(state.wallets.filter((w) => w.kind === 'single').map((w) => w.id));
     // A Ledger signs EVM transactions; its accounts send through the device.
     for (const w of state.wallets) if (w.kind === 'hardware') single.add(w.id);
+    // A shared wallet signs Solana Devnet transfers through a two-device ceremony.
+    const shared = new Set(state.wallets.filter((w) => w.kind === 'tss').map((w) => w.id));
     return state.accounts.filter(
       (a) =>
-        ((a.family === 'evm' && EVM_SIGNING_CHAINS.has(a.chainId)) ||
+        (shared.has(a.walletId) && a.chainId === SOLANA_DEVNET) ||
+        (((a.family === 'evm' && EVM_SIGNING_CHAINS.has(a.chainId)) ||
           (a.family === 'solana' && a.chainId === SOLANA_DEVNET) ||
           (a.family === 'cosmos' && a.chainId === COSMOS_TESTNET) ||
           (a.family === 'bitcoin' && a.chainId === BITCOIN_SIGNET)) &&
-        single.has(a.walletId) &&
-        a.derivationPath,
+          single.has(a.walletId) &&
+          a.derivationPath),
     );
   }, [state]);
   const [accountId, setAccountId] = useState(

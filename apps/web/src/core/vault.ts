@@ -9,7 +9,14 @@
 import { useSyncExternalStore } from 'react';
 import {
   ProvenanceTable,
+  type CeremonyMessage,
+  type CeremonySession,
   type CoreClient,
+  type KeyGroup,
+  type SignRequest,
+  type SignedCeremonyMessage,
+  type ThresholdAccount,
+  type ThresholdDriverHandle,
   type Curve,
   type Device,
   type ExportGateInput,
@@ -501,6 +508,99 @@ export class VaultStore {
   txCompleteExternal(txId: string, sig: { v: number; r: string; s: string }) {
     return this.ledgerOp((v, deviceId, nowMs) =>
       v.txCompleteExternal({ txId, ...sig, deviceId, nowMs }),
+    );
+  }
+
+  /** Threshold wallets this vault holds a share of; empty while locked. */
+  async thresholdList(): Promise<ThresholdAccount[]> {
+    if (!this.vault || this.view.status.kind !== 'unlocked') return [];
+    return this.vault.thresholdList();
+  }
+
+  thresholdReview(request: SignRequest, ceremony: CeremonySession, proposerDeviceId: string) {
+    return this.guardedValue(() =>
+      this.unlockedVault().thresholdReview({
+        request,
+        session: ceremony,
+        proposerDeviceId,
+        nowMs: this.now(),
+      }),
+    );
+  }
+
+  /** Start or join DKG for `walletId`; the driver runs the rounds. */
+  thresholdKeygen(req: {
+    session: SessionProof;
+    walletId: string;
+    group: KeyGroup;
+    ceremony: CeremonySession;
+  }) {
+    return this.guardedValue(async () => {
+      const driver = await this.unlockedVault().thresholdKeygen({
+        ...req,
+        deviceId: this.deviceId(),
+        nowMs: this.now(),
+      });
+      await this.persist();
+      return driver;
+    });
+  }
+
+  /** Seal the share a finished DKG produced. */
+  thresholdFinishKeygen(driver: ThresholdDriverHandle) {
+    return this.guardedValue(async () => {
+      const account = await driver.finishKeygen(this.unlockedVault(), this.now());
+      await this.persist();
+      await this.refreshLedger();
+      return account;
+    });
+  }
+
+  thresholdSign(req: {
+    session: SessionProof;
+    request: SignRequest;
+    ceremony: CeremonySession;
+    proposerDeviceId: string;
+  }) {
+    return this.guardedValue(async () => {
+      const driver = await this.unlockedVault().thresholdSign({ ...req, nowMs: this.now() });
+      await this.persist();
+      await this.refreshLedger();
+      return driver;
+    });
+  }
+
+  /** Audit how a ceremony ended on this device. */
+  thresholdEnd(driver: ThresholdDriverHandle, aborted: string | null) {
+    return this.guarded(async () => {
+      await driver.auditEnd(this.unlockedVault(), aborted, this.now());
+      await this.persist();
+      await this.refreshLedger();
+    });
+  }
+
+  /** Sign a ceremony envelope with this device's identity. */
+  async signCeremony(msg: CeremonyMessage): Promise<SignedCeremonyMessage> {
+    return this.unlockedVault().signCeremonyMessage(IDENTITY_LABEL, msg);
+  }
+
+  txBeginThreshold(txId: string, session: SessionProof) {
+    return this.guardedValue(async () => {
+      const out = await this.unlockedVault().txBeginThreshold(
+        txId,
+        session,
+        this.deviceId(),
+        this.now(),
+      );
+      await this.persist();
+      await this.refreshLedger();
+      return out;
+    });
+  }
+
+  txCompleteThreshold(txId: string, signatureHex: string) {
+    return this.ledgerOp((v, device, now) =>
+      v.txCompleteThreshold(txId, signatureHex, device, now),
     );
   }
 

@@ -22,6 +22,7 @@ export type ShellDialog =
   | { kind: 'swap'; walletId: string }
   | { kind: 'stake'; walletId: string }
   | { kind: 'hardwareWallet'; folderId?: string }
+  | { kind: 'threshold'; target: import('./ThresholdDialog.js').ThresholdTarget }
   | ({ kind: 'sendNft' } & import('./NftSendDialog.js').NftSendTarget)
   | { kind: 'exportKey'; scope: 'folder' | 'wallet'; id: string }
   | { kind: 'importSet' }

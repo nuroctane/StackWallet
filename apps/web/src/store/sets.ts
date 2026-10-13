@@ -351,7 +351,9 @@ export function createKeyedWallet(
     folderId: string;
     accounts: KeyedAccountInput[];
     /** `hardware`: the key is on a device the core registered for these paths. */
-    kind?: 'single' | 'hardware';
+    kind?: 'single' | 'hardware' | 'tss';
+    /** `tss`: the key group the core sealed this device's share under. */
+    keyGroupId?: string;
   },
   ctx: ReducerContext,
 ): Outcome<string> {
@@ -381,7 +383,7 @@ export function createKeyedWallet(
     folderId: input.folderId,
     name,
     kind: input.kind ?? 'single',
-    keyGroupId: null,
+    keyGroupId: input.kind === 'tss' ? (input.keyGroupId ?? null) : null,
     tags: [],
     createdAtMs: t,
     updatedAtMs: t,

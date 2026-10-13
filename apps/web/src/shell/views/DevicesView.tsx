@@ -189,6 +189,16 @@ function ThisDeviceSection({ local }: { local: LocalDevice | null }) {
             Unlock
           </Button>
         )}
+        {unlocked && (
+          <Button
+            size="sm"
+            variant="ghost"
+            title="Answer a paired device that is creating a shared wallet or asking for a co-signature"
+            onClick={() => shell.openDialog({ kind: 'threshold', target: { mode: 'join' } })}
+          >
+            Join a ceremony…
+          </Button>
+        )}
       </SectionHeader>
       <div className="grid gap-x-6 gap-y-2 px-4 py-3 text-[12px] min-[700px]:grid-cols-[auto_1fr]">
         <span className="text-faint">Name</span>

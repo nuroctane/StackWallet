@@ -33,6 +33,7 @@ import { AddAccountDialog } from './shell/AddAccountDialog.js';
 import { ContactsDialog } from './shell/ContactsDialog.js';
 import { SignMessageDialog } from './shell/SignMessageDialog.js';
 import { HardwareWalletDialog } from './shell/HardwareWalletDialog.js';
+import { ThresholdDialog } from './shell/ThresholdDialog.js';
 import { NftSendDialog } from './shell/NftSendDialog.js';
 import { StakeDialog, SwapDialog } from './shell/TradeDialogs.js';
 import { WalletConnectDialog, WalletConnectNotifier } from './shell/WalletConnectDialog.js';
@@ -340,6 +341,11 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       <NftSendDialog
         open={dialog?.kind === 'sendNft'}
         target={dialog?.kind === 'sendNft' ? dialog : undefined}
+        onClose={closeDialog}
+      />
+      <ThresholdDialog
+        open={dialog?.kind === 'threshold'}
+        target={dialog?.kind === 'threshold' ? dialog.target : undefined}
         onClose={closeDialog}
       />
       <HardwareWalletDialog

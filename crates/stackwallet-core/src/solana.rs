@@ -140,7 +140,18 @@ impl SolanaTx {
             return Err(invalid("fee payer differs from signing key"));
         }
         let message = self.message()?;
-        let signature = key.sign(&message).to_bytes();
+        self.assemble(&key.sign(&message).to_bytes())
+    }
+
+    /// The wire transaction for a signature made elsewhere (a threshold
+    /// ceremony), accepted only if it verifies against the fee payer.
+    pub fn assemble(&self, signature: &[u8; 64]) -> Result<(String, String)> {
+        let message = self.message()?;
+        let key = ed25519_dalek::VerifyingKey::from_bytes(&address_bytes(&self.from)?)
+            .map_err(|_| invalid("fee payer is not an Ed25519 point"))?;
+        key.verify_strict(&message, &ed25519_dalek::Signature::from_bytes(signature))
+            .map_err(|_| invalid("signature does not verify against the fee payer"))?;
+        let signature = *signature;
         let mut wire = vec![1];
         wire.extend_from_slice(&signature);
         wire.extend_from_slice(&message);
@@ -148,6 +159,42 @@ impl SolanaTx {
             format!("0x{}", hex::encode(wire)),
             bs58::encode(signature).into_string(),
         ))
+    }
+}
+
+impl SolanaTx {
+    /// Read back a message this module builds, for a co-signer that never saw
+    /// the proposal. Only byte-for-byte reproducible messages are accepted, so
+    /// nothing the encoder would not produce can hide in one.
+    pub fn from_message(chain_id: &str, message: &[u8]) -> Result<Self> {
+        check_chain(chain_id)?;
+        let (version, body) = match message.first() {
+            Some(0x80) => (
+                MessageVersion::V0,
+                &message[1..message.len().saturating_sub(1)],
+            ),
+            _ => (MessageVersion::Legacy, message),
+        };
+        if body.len() != 4 + 32 * 4 + 6 + 4 + 8 {
+            return Err(invalid("not a single native transfer"));
+        }
+        let key = |i: usize| bs58::encode(&body[4 + 32 * i..4 + 32 * (i + 1)]).into_string();
+        let tail = &body[4 + 32 * 4 + 6 + 4..];
+        let lamports = u64::from_le_bytes(tail.try_into().expect("8 bytes"));
+        let tx = SolanaTx {
+            chain_id: chain_id.to_owned(),
+            from: key(0),
+            to: key(1),
+            lamports: lamports.to_string(),
+            recent_blockhash: key(3),
+            // Not part of the message; any valid height reproduces the same bytes.
+            last_valid_block_height: 1,
+            message_version: version,
+        };
+        if tx.message()? != message {
+            return Err(invalid("not a message this wallet builds"));
+        }
+        Ok(tx)
     }
 }
 

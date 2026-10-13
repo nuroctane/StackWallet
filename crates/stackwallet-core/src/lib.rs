@@ -34,6 +34,7 @@ pub mod policy;
 pub mod provenance;
 pub mod solana;
 pub mod store;
+pub mod threshold;
 pub mod transfer;
 pub mod transport;
 pub mod tss;

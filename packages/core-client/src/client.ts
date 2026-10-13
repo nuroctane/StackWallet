@@ -11,6 +11,10 @@ import { z } from 'zod';
 
 import {
   CeremonyMessage,
+  CeremonySession,
+  SignRequest,
+  CosignSummary,
+  ThresholdAccount,
   Curve,
   Decision,
   Device,
@@ -176,6 +180,46 @@ export interface VaultHandle {
     nowMs: number;
   }): Promise<TxRecord>;
   txAbortExternal(txId: string, reason: string, deviceId: string, nowMs: number): Promise<TxRecord>;
+  /** Threshold wallets this vault holds a share of. */
+  thresholdList(): Promise<ThresholdAccount[]>;
+  /** A co-signer's decoded, policy-checked view of a signing proposal. */
+  thresholdReview(req: {
+    request: SignRequest;
+    session: CeremonySession;
+    proposerDeviceId: string;
+    nowMs: number;
+  }): Promise<CosignSummary>;
+  /** Start or join DKG; the share is sealed by `finishKeygen` and never leaves the core. */
+  thresholdKeygen(req: {
+    session: SessionProof;
+    walletId: string;
+    deviceId: string;
+    group: KeyGroup;
+    ceremony: CeremonySession;
+    nowMs: number;
+  }): Promise<ThresholdDriverHandle>;
+  /** Join a signing ceremony with this device's sealed share. */
+  thresholdSign(req: {
+    session: SessionProof;
+    request: SignRequest;
+    ceremony: CeremonySession;
+    proposerDeviceId: string;
+    nowMs: number;
+  }): Promise<ThresholdDriverHandle>;
+  /** Threshold approval, first half: `request` is null when policy refused at signing time. */
+  txBeginThreshold(
+    txId: string,
+    session: SessionProof,
+    deviceId: string,
+    nowMs: number,
+  ): Promise<{ record: TxRecord; request: SignRequest | null }>;
+  /** Threshold approval, second half: the aggregate must verify against the group key. */
+  txCompleteThreshold(
+    txId: string,
+    signatureHex: string,
+    deviceId: string,
+    nowMs: number,
+  ): Promise<TxRecord>;
   /** An app record the page sealed itself (`agent-session:<id>`); nothing else is readable. */
   appRecord(label: string): Promise<string | null>;
   /** A model provider's API key sealed under `provider-key:<id>`; nothing else is readable. */
@@ -238,6 +282,18 @@ export interface VaultHandle {
   free(): void;
 }
 
+/** One device's side of one threshold ceremony; the share stays in the core. */
+export interface ThresholdDriverHandle {
+  takeInitial(): Promise<CeremonyMessage[]>;
+  handle(msg: CeremonyMessage): Promise<CeremonyMessage[]>;
+  session(): Promise<CeremonySession>;
+  complete(): Promise<boolean>;
+  signatureHex(): Promise<string | null>;
+  finishKeygen(vault: VaultHandle, nowMs: number): Promise<ThresholdAccount>;
+  auditEnd(vault: VaultHandle, aborted: string | null, nowMs: number): Promise<void>;
+  free(): void;
+}
+
 /** One authenticated channel to one peer (`transport::Session`). */
 export interface SessionHandle {
   handleIncoming(bytes: Uint8Array): Promise<SessionEvent[]>;
@@ -292,6 +348,8 @@ export interface CoreClient {
     nowMs: number,
   ): Promise<SessionHandle>;
   verifyCeremonyMessage(signed: SignedCeremonyMessage, publicHex: string): Promise<boolean>;
+  /** The session a key generation for `group` runs under (D6-checked, bound to the group). */
+  thresholdKeygenSession(group: KeyGroup, id: string, nowMs: number): Promise<CeremonySession>;
 }
 
 // ---------------------------------------------------------------------------
@@ -393,6 +451,46 @@ export interface WasmVaultObject {
     nowMs: number,
   ): string;
   tx_abort_external(txId: string, reason: string, deviceId: string, nowMs: number): string;
+  threshold_list(): string;
+  threshold_review(
+    requestJson: string,
+    sessionJson: string,
+    proposerDeviceId: string,
+    nowMs: number,
+  ): string;
+  threshold_keygen(
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    walletId: string,
+    deviceId: string,
+    groupJson: string,
+    sessionJson: string,
+    nowMs: number,
+  ): WasmThresholdDriverObject;
+  threshold_sign(
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    requestJson: string,
+    sessionJson: string,
+    proposerDeviceId: string,
+    nowMs: number,
+  ): WasmThresholdDriverObject;
+  tx_begin_threshold(
+    txId: string,
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    deviceId: string,
+    nowMs: number,
+  ): string;
+  tx_complete_threshold(
+    txId: string,
+    signatureHex: string,
+    deviceId: string,
+    nowMs: number,
+  ): string;
   app_record(label: string): string | undefined;
   sign_message(
     walletId: string,
@@ -479,6 +577,7 @@ export interface WasmModule {
   can_transition(from: string, to: string): boolean;
   schema_sql(): string;
   verify_ceremony_message(signedJson: string, publicHex: string): boolean;
+  threshold_keygen_session(groupJson: string, id: string, nowMs: number): string;
   device_id_from_public_hex(publicHex: string): string;
   pairing_new_code_hex(): string;
   pairing_offer_encode(offerJson: string): string;
@@ -540,8 +639,54 @@ function sessionArgs(p: SessionProof): [string | undefined, Uint8Array, Uint8Arr
     : [p.slotId, p.secret, p.device];
 }
 
+interface WasmThresholdDriverObject {
+  take_initial(): string;
+  handle(msgJson: string): string;
+  session_json(): string;
+  complete(): boolean;
+  signature_hex(): string | undefined;
+  finish_keygen(vault: WasmVaultObject, nowMs: number): string;
+  audit_end(vault: WasmVaultObject, aborted: string | undefined, nowMs: number): void;
+  free(): void;
+}
+
+function rawVault(vault: VaultHandle): WasmVaultObject {
+  if (!(vault instanceof WasmVaultHandle)) {
+    throw new TypeError('vault handle does not belong to the wasm backend');
+  }
+  return vault.raw;
+}
+
+class WasmThresholdDriver implements ThresholdDriverHandle {
+  constructor(private readonly raw: WasmThresholdDriverObject) {}
+  async takeInitial() {
+    return z.array(CeremonyMessage).parse(JSON.parse(this.raw.take_initial()));
+  }
+  async handle(msg: CeremonyMessage) {
+    return z.array(CeremonyMessage).parse(JSON.parse(this.raw.handle(JSON.stringify(msg))));
+  }
+  async session() {
+    return CeremonySession.parse(JSON.parse(this.raw.session_json()));
+  }
+  async complete() {
+    return this.raw.complete();
+  }
+  async signatureHex() {
+    return this.raw.signature_hex() ?? null;
+  }
+  async finishKeygen(vault: VaultHandle, nowMs: number) {
+    return ThresholdAccount.parse(JSON.parse(this.raw.finish_keygen(rawVault(vault), nowMs)));
+  }
+  async auditEnd(vault: VaultHandle, aborted: string | null, nowMs: number) {
+    this.raw.audit_end(rawVault(vault), aborted ?? undefined, nowMs);
+  }
+  free() {
+    this.raw.free();
+  }
+}
+
 class WasmVaultHandle implements VaultHandle {
-  constructor(private readonly raw: WasmVaultObject) {}
+  constructor(readonly raw: WasmVaultObject) {}
   async isUnlocked() {
     return this.raw.is_unlocked();
   }
@@ -713,6 +858,79 @@ class WasmVaultHandle implements VaultHandle {
   }
   async txAbortExternal(txId: string, reason: string, deviceId: string, nowMs: number) {
     return TxRecord.parse(JSON.parse(this.raw.tx_abort_external(txId, reason, deviceId, nowMs)));
+  }
+  async thresholdList() {
+    return z.array(ThresholdAccount).parse(JSON.parse(this.raw.threshold_list()));
+  }
+  async thresholdReview(req: {
+    request: SignRequest;
+    session: CeremonySession;
+    proposerDeviceId: string;
+    nowMs: number;
+  }) {
+    return CosignSummary.parse(
+      JSON.parse(
+        this.raw.threshold_review(
+          JSON.stringify(req.request),
+          JSON.stringify(req.session),
+          req.proposerDeviceId,
+          req.nowMs,
+        ),
+      ),
+    );
+  }
+  async thresholdKeygen(req: {
+    session: SessionProof;
+    walletId: string;
+    deviceId: string;
+    group: KeyGroup;
+    ceremony: CeremonySession;
+    nowMs: number;
+  }) {
+    const [slot, secret, device] = sessionArgs(req.session);
+    return new WasmThresholdDriver(
+      this.raw.threshold_keygen(
+        slot,
+        secret,
+        device,
+        req.walletId,
+        req.deviceId,
+        JSON.stringify(req.group),
+        JSON.stringify(req.ceremony),
+        req.nowMs,
+      ),
+    );
+  }
+  async thresholdSign(req: {
+    session: SessionProof;
+    request: SignRequest;
+    ceremony: CeremonySession;
+    proposerDeviceId: string;
+    nowMs: number;
+  }) {
+    const [slot, secret, device] = sessionArgs(req.session);
+    return new WasmThresholdDriver(
+      this.raw.threshold_sign(
+        slot,
+        secret,
+        device,
+        JSON.stringify(req.request),
+        JSON.stringify(req.ceremony),
+        req.proposerDeviceId,
+        req.nowMs,
+      ),
+    );
+  }
+  async txBeginThreshold(txId: string, session: SessionProof, deviceId: string, nowMs: number) {
+    const [slot, secret, device] = sessionArgs(session);
+    return z
+      .object({ record: TxRecord, request: SignRequest.nullable() })
+      .parse(JSON.parse(this.raw.tx_begin_threshold(txId, slot, secret, device, deviceId, nowMs)));
+  }
+  async txCompleteThreshold(txId: string, signatureHex: string, deviceId: string, nowMs: number) {
+    return TxRecord.parse(
+      JSON.parse(this.raw.tx_complete_threshold(txId, signatureHex, deviceId, nowMs)),
+    );
   }
   async appRecord(label: string) {
     return this.raw.app_record(label) ?? null;
@@ -951,6 +1169,11 @@ export class WasmCoreClient implements CoreClient {
       publicHex,
     );
   }
+  async thresholdKeygenSession(group: KeyGroup, id: string, nowMs: number) {
+    return CeremonySession.parse(
+      JSON.parse(this.m.threshold_keygen_session(JSON.stringify(group), id, nowMs)),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1009,6 +1232,9 @@ export class TauriCoreClient implements CoreClient {
   async verifyCeremonyMessage(): Promise<boolean> {
     this.unsupported('verifyCeremonyMessage');
   }
+  async thresholdKeygenSession(): Promise<CeremonySession> {
+    this.unsupported('thresholdKeygenSession');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1060,6 +1286,9 @@ export class UnavailableCoreClient implements CoreClient {
     this.fail();
   }
   async verifyCeremonyMessage(): Promise<boolean> {
+    this.fail();
+  }
+  async thresholdKeygenSession(): Promise<CeremonySession> {
     this.fail();
   }
 }

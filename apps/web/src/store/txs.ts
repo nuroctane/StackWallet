@@ -252,6 +252,36 @@ async function proposeIntent(
  * checks and hands over the exact payload, the device signs it, and the core
  * accepts the signature only if it recovers to the registered address.
  */
+/**
+ * Approve a threshold wallet's proposal: `sign` runs the ceremony (the ledger
+ * begins it, the co-signer joins, the aggregate comes back through the core),
+ * then the signed bytes are broadcast like any other approval.
+ */
+export async function approveWithCeremony(
+  registry: ChainRegistry,
+  tx: TxRecord,
+  sign: () => Promise<TxRecord>,
+): Promise<Result<TxRecord>> {
+  if (activeSends.has(tx.id))
+    return { ok: false, error: 'This transfer is already being approved' };
+  activeSends.add(tx.id);
+  try {
+    let signed: TxRecord;
+    try {
+      signed = await sign();
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      const now = vault.getSnapshot().ledger?.txs.find((t) => t.id === tx.id);
+      if (now?.state === 'signing') await vault.txAbortExternal(tx.id, `ceremony: ${reason}`);
+      return { ok: false, error: reason };
+    }
+    if (signed.state !== 'signed' || !signed.rawSignedHex) return { ok: true, value: signed };
+    return broadcastSaved(registry, signed);
+  } finally {
+    activeSends.delete(tx.id);
+  }
+}
+
 export async function approveWithDevice(
   registry: ChainRegistry,
   tx: TxRecord,

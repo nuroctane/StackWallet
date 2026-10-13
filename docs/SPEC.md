@@ -264,6 +264,16 @@ with an explicit reason (`CoreError::Invalid`) until a stable `cggmp24` lands. U
 wallets can hold Ed25519 and Taproot keys only. Blocking EVM and Cosmos accounts in a `tss`
 wallet at creation time belongs to the directory phase, when wallet creation moves into the core.
 
+Browser threshold wallets (`threshold` in the core). Two paired devices create a 2-of-2
+Ed25519 wallet over a direct WebRTC channel (two pasted or scanned codes; the channel is the
+pinned Noise IK session) and sign Solana Devnet transfers with it. Each vault seals its share;
+the ceremony driver loads it inside the core, so the page only moves signed envelopes. The
+proposer's ledger begins the approval (`begin_threshold`: session proof, signing-time policy)
+and finishes it with the aggregate (`complete_threshold`, verified against the group key). The
+co-signer's core decodes the request, evaluates its own policies and asks for its own session
+proof before its share joins. Not yet: more than two parties, Taproot, refresh and re-sharing
+in the browser, and the agent as a party.
+
 ### 5.2 Parties
 
 - **Human devices**: desktop, browser, later phone. Unlock with the user's passphrase or platform
@@ -688,8 +698,18 @@ client for which folder a wallet sits in; the wallet key is bound to the wallet 
    accounts on each family's conventional path; the user's contacts label addresses right after
    their own wallets. EIP-191 messages and EIP-712 typed data (testnet domains only) are signed
    in the core after a fresh session proof and audited as `messageSigned`.
+   Swaps: Uniswap v3 single-pool swaps on Sepolia as `swap` intents (pool fee bound in the
+   aggregator, `uniswap-v3:<fee>`); the core decodes `exactInputSingle` and checks router,
+   recipient, tokens, amount and minimum. Quotes come from QuoterV2 across the four fee tiers;
+   ERC-20 sales first propose an approval for exactly the amount.
+   Hardware: a Ledger's Ethereum app over WebHID (hand-written HID framing, no vendor SDK). The
+   core registers the device address per wallet and path and accepts only signatures that
+   recover to it over its own sighash.
+   WalletConnect v2, opt-in with the user's own Reown project id: `eth_sendTransaction` becomes
+   a proposal with the dapp's destination marked untrusted; `personal_sign` (text only) and
+   `eth_signTypedData_v4` go through core message signing.
    Remaining: threshold (`tss`) EVM signing once CGGMP lands (1b), policy inheritance and
-   distributed approvals, and a funded testnet confirmation.
+   distributed approvals, swap routes on more testnets, and a funded testnet confirmation.
 4. **Chains**: Bitcoin (PSBT, Taproot via FROST secp256k1-tr), Solana, Cosmos; swaps per family.
    First increment: single-key native SOL transfers on Devnet use the same core ledger, policy
    evaluation, passphrase approval and audited history as EVM. The Rust core builds one legacy
@@ -735,10 +755,15 @@ client for which folder a wallet sits in; the wallet key is bound to the wallet 
    Recipient coverage includes canonical Signet P2WPKH, P2WSH and P2TR outputs. The core and
    adapter enforce script-specific dust bounds (294/330 sats) and output sizes in fee estimates;
    sender inputs and change remain P2WPKH. Unknown witness versions and legacy recipients fail.
-   Remaining in this phase: Bitcoin Taproot/threshold signing and RBF
-   replacement, Solana FROST and Cosmos threshold ceremonies,
-   SPL/Token-2022 transfers, address lookup tables and v1 messages, IBC and other Cosmos messages,
-   and swaps per family.
+   Fourth increment: Osmosis Testnet staking. `stake`, `unstake` and `claim` intents become
+   `MsgDelegate`, `MsgUndelegate` and `MsgWithdrawDelegatorReward`, built in the core against a
+   validator operator address; the client lists bonded validators, delegations and claimable
+   rewards from the LCD.
+   Fifth increment: 2-of-2 threshold (FROST-Ed25519) Solana Devnet transfers between two
+   browsers (§5.1).
+   Remaining in this phase: Bitcoin Taproot/threshold signing and RBF replacement, Cosmos
+   threshold ceremonies, SPL/Token-2022 transfers, address lookup tables and v1 messages, IBC
+   and other Cosmos messages, and swaps on Solana, Cosmos and Bitcoin.
 5. **Agent runtime**: providers, tools, run loop, grants, agent party.
    First increment (`packages/agent`): BYOK Anthropic, OpenAI, Google and OpenRouter models via
    the Vercel AI SDK, keys sealed in the vault under `provider-key:<id>` (the only vault entries
@@ -747,8 +772,8 @@ client for which folder a wallet sits in; the wallet key is bound to the wallet 
    proposals carry the agent's session and rationale into the approval queue; destinations
    outside the user's wallets and contacts are recorded as untrusted. Tool output is stripped of
    control, bidi and zero-width characters. The console is a workspace element; transcripts
-   stay in memory. Remaining: the agent as a TSS party, persisted searchable sessions, policy
-   overlays per grant.
+   are sealed in the vault (`agent-session:<id>`) and searchable. Remaining: the agent as a
+   TSS party, policy overlays per grant.
 6. **Automations + scheduler**: triggers / actions, headless CLI as automation device.
 7. **Markets**: aggregation, registry, charts, portfolio analytics, alerts, and the market
    elements of §11.1 (trades, candles, positions, lending, NFT floors, holders, transfers,
@@ -757,7 +782,8 @@ client for which folder a wallet sits in; the wallet key is bound to the wallet 
    by coin id only, and integer valuation; holdings totals show an approximate USD sum. Testnet
    coins have no price, so USD spend caps still fail closed for the testnet sends the core signs.
 8. **Desktop polish + packaging**: Tauri bundles, background scheduler, OS keychain unlock,
-   hardware wallet signer. The desktop window runs the bundled wasm core, so it has the same
+   hardware wallet signer (Ledger EVM signing is in, through WebHID in the shared bundle). The
+   desktop window runs the bundled wasm core, so it has the same
    vault, ledger and pairing as the browser; native Tauri commands remain a fallback.
 9. **Mobile**: UniFFI bindings, phone as a first-class share-holder and approver.
 

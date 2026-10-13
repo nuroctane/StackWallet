@@ -79,6 +79,19 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
             >
               + Ledger
             </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              title="A wallet split between this device and a paired one; both sign every transaction"
+              onClick={() =>
+                shell.openDialog({
+                  kind: 'threshold',
+                  target: { mode: 'create', folderId: folder.id },
+                })
+              }
+            >
+              + Shared
+            </Button>
             {folder.parentId === null && (
               <Button
                 size="sm"

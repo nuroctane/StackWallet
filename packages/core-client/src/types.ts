@@ -463,6 +463,52 @@ export async function pairingOfferIdMatches(offer: PairingOffer): Promise<boolea
   return (await deviceIdFromPublicHex(offer.identityPubHex)) === offer.deviceId;
 }
 
+/** One ceremony's frame of reference (`tss::CeremonySession`). */
+export const CeremonySession = z.object({
+  id: z.string().min(1).max(128),
+  kind: z.enum(['keyGen', 'refresh', 'reshare', 'sign']),
+  keyGroupId: z.string(),
+  curve: Curve,
+  payloadHashHex: z.string().nullable(),
+  participants: z.array(z.string()).min(1).max(16),
+  state: z.enum(['proposed', 'collecting', 'rounds', 'complete', 'aborted']),
+  createdAtMs: z.number().int(),
+  expiresAtMs: z.number().int(),
+});
+export type CeremonySession = z.infer<typeof CeremonySession>;
+
+/** What a proposer sends before round 1 (`threshold::Proposal`). */
+export const ThresholdProposal = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('keyGen'), group: z.lazy(() => KeyGroup), session: CeremonySession }),
+  z.object({
+    kind: z.literal('sign'),
+    request: z.lazy(() => SignRequest),
+    session: CeremonySession,
+  }),
+]);
+export type ThresholdProposal = z.infer<typeof ThresholdProposal>;
+
+/** A threshold wallet this vault holds one share of (`threshold::ThresholdAccount`). */
+export const ThresholdAccount = z.object({
+  walletId: z.string(),
+  group: z.lazy(() => KeyGroup),
+  deviceId: z.string(),
+  publicKeyHex: z.string().regex(/^[0-9a-f]{64}$/),
+  solanaAddress: z.string(),
+});
+export type ThresholdAccount = z.infer<typeof ThresholdAccount>;
+
+/** A co-signer's view of what it is asked to sign, decoded by its own core. */
+export const CosignSummary = z.object({
+  walletId: z.string(),
+  chainId: z.string(),
+  from: z.string(),
+  to: z.string(),
+  lamports: z.string(),
+  decision: z.lazy(() => Decision),
+});
+export type CosignSummary = z.infer<typeof CosignSummary>;
+
 /** The ceremony envelope the transport carries (`tss::CeremonyMessage`). */
 export const CeremonyMessage = z.object({
   sessionId: z.string(),

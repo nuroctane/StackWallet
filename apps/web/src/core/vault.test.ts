@@ -184,6 +184,24 @@ class FakeVault implements VaultHandle {
   async txAbortExternal(): Promise<never> {
     throw new Error('not used');
   }
+  async thresholdReview(): Promise<never> {
+    throw new Error('not used');
+  }
+  async thresholdKeygen(): Promise<never> {
+    throw new Error('not used');
+  }
+  async thresholdSign(): Promise<never> {
+    throw new Error('not used');
+  }
+  async txBeginThreshold(): Promise<never> {
+    throw new Error('not used');
+  }
+  async txCompleteThreshold(): Promise<never> {
+    throw new Error('not used');
+  }
+  async thresholdList() {
+    return [];
+  }
   async appRecord() {
     return null;
   }
@@ -264,6 +282,7 @@ function fakeClient(): CoreClient {
     connectInitiator: unsupported,
     connectResponder: unsupported,
     verifyCeremonyMessage: unsupported,
+    thresholdKeygenSession: unsupported,
   };
 }
 

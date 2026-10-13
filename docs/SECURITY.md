@@ -50,7 +50,7 @@ other paired devices (their own core)
 | Replay or reorder of channel traffic                       | Noise nonces are strictly increasing per direction; any decrypt failure closes the session rather than skipping the message. A relaying device can drop or delay envelopes (aborts the ceremony) but cannot forge them.                                                                                                                                                                                           |
 | Peer substitutes a different payload mid-ceremony          | Every protocol message is bound to `sessionId` and the `SignRequest` hash. Mismatch aborts the ceremony and writes an audit row.                                                                                                                                                                                                                                                                                  |
 | Attacker who saw the QR races the real scanner             | Residual risk of one-time-PSK pairing: a QR observer learns the code and can connect first. The issuer therefore prints the pinned peer's identity fingerprint for out-of-band comparison, and `devices` shows what was pinned.                                                                                                                                                                                   |
-| Paired device goes rogue                                   | Pairing plus group membership is currently full signing authority within threshold: the CLI `serve` path is operator-run and does not yet evaluate policies per request. The policy gate arrives with the `SignRequest` lifecycle UI.                                                                                                                                                                             |
+| Paired device goes rogue                                   | In the browser a share joins a signing ceremony only for a transaction its own ledger is approving, or after its core decodes the request as a transfer from the group address and its own policies allow it. The CLI `serve` path is operator-run and does not yet evaluate policies per request.                                                                                                                |
 | Replay of an old signing request                           | Ceremony sessions carry an id and a TTL checked at admission; mid-ceremony stalls are bounded by the carrier idle timeout. Per-request nonces and presignature TTL land with the lifecycle and resumption work (not yet implemented).                                                                                                                                                                             |
 | Device theft                                               | DB encrypted at rest (XChaCha20-Poly1305, Argon2id-wrapped DEK). Shares encrypted again with a per-share key. Platform unlock is optional and never the only factor for share material.                                                                                                                                                                                                                           |
 | Browser storage cleared                                    | Share-level encrypted backups; recovery drills in the Devices page; re-sharing from remaining parties when `n - lost >= t`.                                                                                                                                                                                                                                                                                       |
@@ -100,6 +100,38 @@ public addresses only and record nothing in provenance.
 Open-approval tags rely on an indexer for discovery (logs) and public RPC for confirmation
 (contract reads). Neither is a cryptographic proof; a scan that fails or cannot read a contract
 keeps the tag rather than clearing it, and an indexer that omits a log hides that approval.
+
+### Threshold wallets, hardware signers, swaps and dapps
+
+- **Shared (threshold) wallets** are 2-of-2 FROST-Ed25519 between two paired devices, for
+  Solana Devnet transfers. Each vault seals one share under `tss:<wallet>`; the share is loaded
+  by the core's ceremony driver and never crosses into the page, never enters an export bundle
+  and never reaches the other device. Key generation checks the D6 rule before any round. The
+  devices meet over a direct WebRTC channel set up by swapping two codes; the channel is the
+  pinned Noise IK session, and every ceremony envelope is signed by its author's identity. The
+  initiator's ledger begins the approval (session proof, signing-time policy) and accepts the
+  aggregate only if it verifies against the group key over the core's own message. The
+  co-signer's core decodes the request itself (only a byte-for-byte reproducible native transfer
+  from the group address is accepted), evaluates its own policies and needs its own session
+  proof. Proposals expire after ten minutes and the core rejects later participation. Losing either device loses the wallet: there is
+  no re-sharing yet, so these wallets are for testnet use only.
+- **Ledger** signing (EVM testnets) runs the same signing-time checks as a local key. The
+  device signs the core's exact EIP-1559 payload, and the core accepts the signature only if it
+  recovers to the address registered (with a session proof) for that wallet and path.
+- **Swaps** are a first-class intent. The core decodes Uniswap v3 `exactInputSingle` calldata
+  and refuses any router but the known one for the chain (Sepolia), any recipient but the
+  signing account, a different pool fee, amount or minimum, a zero minimum or a price limit.
+  ERC-20 sales approve exactly the swap amount, never an unlimited allowance.
+- **Staking** on Osmosis Testnet is built by the core from `stake`, `unstake` and `claim`
+  intents: a delegation must name a validator operator (`osmovaloper…`), a claim moves no
+  amount, and the message type must match the intent kind. Validator monikers are untrusted
+  text, stripped of control, bidi and zero-width characters.
+- **WalletConnect** is off until the user enters a Reown project id from their own account;
+  the SDK loads lazily with telemetry disabled. A dapp sees only the chosen wallet's keyed EVM
+  testnet accounts. Transaction requests become ordinary proposals whose destination is marked
+  untrusted; signing requests go through core message signing with a fresh session proof, and
+  `personal_sign` payloads that are not UTF-8 text (usually a bare hash) are refused. Dapp names
+  and URLs are reduced to printable ASCII, and Reown's domain verification is shown, not trusted.
 
 ### Browser persistence and transaction recovery
 
@@ -210,6 +242,10 @@ agreement alone is not chain identity or cryptographic proof of balance/finality
 - Every remote collectible image tells its host this device's IP address. The collectibles
   element offers `all`, `vetted only` (CORS hosts only) and `off`; spam-flagged items never
   load media because airdropped images are a known deanonymization beacon.
+- WalletConnect, when the user turns it on, sends end-to-end encrypted session traffic through
+  Reown's relay and asks Reown's verify service about each dapp's domain; the relay learns that
+  this device talks to that dapp and when. Session keys live in the SDK's IndexedDB store.
+- Swap quotes are `eth_call`s to the chain's RPC pool, which learns the pair and size quoted.
 - The web build sends `Cross-Origin-Embedder-Policy: credentialless` (not `require-corp`) so
   images from hosts without CORP can load without cookies; scripts and fonts stay same-origin.
 

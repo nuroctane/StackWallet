@@ -177,6 +177,20 @@ function SearchBody({
         run: () => shell.openDialog({ kind: 'hardwareWallet' }),
       },
       {
+        id: 'a:shared',
+        type: 'action',
+        label: 'new shared wallet',
+        dim: 'threshold · two devices',
+        run: () => shell.openDialog({ kind: 'threshold', target: { mode: 'create' } }),
+      },
+      {
+        id: 'a:join',
+        type: 'action',
+        label: 'join a ceremony',
+        dim: 'shared wallet or co-sign',
+        run: () => shell.openDialog({ kind: 'threshold', target: { mode: 'join' } }),
+      },
+      {
         id: 'a:walletconnect',
         type: 'action',
         label: 'walletconnect',

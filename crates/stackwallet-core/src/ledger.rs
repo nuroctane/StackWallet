@@ -12,18 +12,20 @@
 use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
+use sha2::Digest as _;
 
 use crate::audit::{Actor, AuditChain, AuditEntry, AuditEvent};
 use crate::bitcoin::{self, BitcoinTx};
 use crate::cosmos::{self, CosmosTx};
 use crate::evm::{self, EvmTx};
 use crate::hardware;
-use crate::intent::TxIntent;
+use crate::intent::{SignRequest, TxIntent};
 use crate::lifecycle::TxState;
 use crate::model::Curve;
 use crate::policy::{self, Decision, Policy, PolicyContext, Window};
 use crate::provenance;
 use crate::solana::{self, SolanaTx};
+use crate::threshold;
 use crate::vault::SessionProof;
 use crate::vault::{EncryptedVault, Secret, Vault};
 use crate::{CoreError, Result};
@@ -411,18 +413,22 @@ pub fn attach(
     let derived = if provenance::has_single_key(vault, &signer.wallet_id) {
         signer_address(vault, &signer, &unsigned)?
     } else {
-        // A hardware account: the address the device registered for this path.
-        match (
-            &unsigned,
-            hardware::lookup(vault, &signer.wallet_id, &signer.path)?,
-        ) {
-            (UnsignedTx::Evm(_), Some(acc)) => acc.address,
-            (UnsignedTx::Evm(_), None) => {
+        // A hardware account signs as the address its device registered; a
+        // threshold wallet as its group key.
+        match &unsigned {
+            UnsignedTx::Evm(_) => hardware::lookup(vault, &signer.wallet_id, &signer.path)?
+                .map(|acc| acc.address)
+                .ok_or_else(|| {
+                    invalid("no key and no registered hardware account for this signer")
+                })?,
+            UnsignedTx::Solana(_) => threshold::lookup(vault, &signer.wallet_id)?
+                .map(|acc| acc.solana_address)
+                .ok_or_else(|| invalid("no key and no threshold share for this signer"))?,
+            _ => {
                 return Err(invalid(
-                    "no key and no registered hardware account for this signer",
+                    "external signing covers EVM hardware and Solana threshold wallets",
                 ))
             }
-            _ => return Err(invalid("hardware signing is EVM only")),
         }
     };
     let matches = match &unsigned {
@@ -517,7 +523,7 @@ pub fn approve(
     if let Some(signer) = &ledger.txs[i].signer {
         if !provenance::has_single_key(vault, &signer.wallet_id) {
             return Err(invalid(
-                "this wallet's key is on a hardware device; approve it there",
+                "this wallet has no key here; approve it on its device or through its ceremony",
             ));
         }
     }
@@ -749,6 +755,115 @@ pub fn abort_external(
         now_ms,
     )?;
     ledger.txs[i].error = Some(note);
+    let out = ledger.txs[i].clone();
+    save_ledger(vault, &ledger)?;
+    Ok(out)
+}
+
+/// First half of a threshold approval: the checks of [`approve`], then
+/// Awaiting → Signing and the request every share signs. The signature comes
+/// back through [`complete_threshold`] once the ceremony has run.
+pub fn begin_threshold(
+    vault: &mut EncryptedVault,
+    tx_id: &str,
+    session: &SessionProof,
+    device_id: &str,
+    now_ms: i64,
+) -> Result<(TxRecord, Option<SignRequest>)> {
+    vault.verify_session(session, false)?;
+    let mut ledger = load_ledger(vault)?;
+    let i = ledger.index(tx_id)?;
+    let actor = device_actor(device_id);
+    if ledger.txs[i].state != TxState::Awaiting {
+        return Err(invalid(
+            "only a transaction awaiting approval can be approved",
+        ));
+    }
+    let t = ledger.txs[i].clone();
+    let (Some(UnsignedTx::Solana(tx)), Some(signer)) = (&t.unsigned, &t.signer) else {
+        return Err(invalid("threshold signing is Solana only"));
+    };
+    let acc = threshold::lookup(vault, &signer.wallet_id)?
+        .ok_or_else(|| invalid("this wallet holds no threshold share here"))?;
+    if acc.solana_address != signer.address || tx.from != signer.address {
+        return Err(invalid("the group address changed since the proposal"));
+    }
+    tx.check_matches_intent(&t.intent)?;
+    let ctx = ledger.context(tx_id, now_ms, t.simulation_ok);
+    let decision = policy::evaluate(&ledger.policies, &t.intent, &ctx);
+    if let Decision::Deny { reasons, .. } = &decision {
+        let note = format!("policy at signing time: {}", reasons.join("; "));
+        ledger.step(i, TxState::Rejected, Some(note), &actor, now_ms)?;
+        ledger.txs[i].decision = Some(decision);
+        let out = ledger.txs[i].clone();
+        save_ledger(vault, &ledger)?;
+        return Ok((out, None));
+    }
+    let message = tx.message()?;
+    let request = SignRequest {
+        id: format!("{tx_id}-sign"),
+        tx_id: tx_id.to_owned(),
+        key_group_id: acc.group.id.clone(),
+        curve: Curve::Ed25519,
+        payload_hash_hex: hex::encode(sha2::Sha256::digest(&message)),
+        payload_hex: hex::encode(&message),
+    };
+    ledger.step(
+        i,
+        TxState::Signing,
+        Some("waiting for the threshold ceremony".into()),
+        &actor,
+        now_ms,
+    )?;
+    ledger.txs[i].decision = Some(decision);
+    let out = ledger.txs[i].clone();
+    save_ledger(vault, &ledger)?;
+    Ok((out, Some(request)))
+}
+
+/// Second half: the aggregate signature must verify against the group key
+/// over the core's own message. Signing → Signed, or → Failed with the reason.
+pub fn complete_threshold(
+    vault: &mut EncryptedVault,
+    tx_id: &str,
+    signature_hex: &str,
+    device_id: &str,
+    now_ms: i64,
+) -> Result<TxRecord> {
+    let mut ledger = load_ledger(vault)?;
+    let i = ledger.index(tx_id)?;
+    let actor = device_actor(device_id);
+    if ledger.txs[i].state != TxState::Signing {
+        return Err(invalid("this transaction is not waiting for a ceremony"));
+    }
+    let t = ledger.txs[i].clone();
+    let checked = (|| -> Result<(String, String)> {
+        let (Some(UnsignedTx::Solana(tx)), Some(signer)) = (&t.unsigned, &t.signer) else {
+            return Err(invalid("threshold signing is Solana only"));
+        };
+        let acc = threshold::lookup(vault, &signer.wallet_id)?
+            .ok_or_else(|| invalid("this wallet holds no threshold share here"))?;
+        if acc.solana_address != tx.from {
+            return Err(invalid("the group address changed since the proposal"));
+        }
+        tx.check_matches_intent(&t.intent)?;
+        let sig: [u8; 64] = hex::decode(signature_hex.trim_start_matches("0x"))
+            .ok()
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(|| invalid("a signature is 64 bytes of hex"))?;
+        tx.assemble(&sig)
+    })();
+    match checked {
+        Ok((raw, hash)) => {
+            ledger.step(i, TxState::Signed, None, &actor, now_ms)?;
+            ledger.txs[i].raw_signed_hex = Some(raw);
+            ledger.txs[i].hash = Some(hash);
+        }
+        Err(e) => {
+            ledger.step(i, TxState::Failed, Some(e.to_string()), &actor, now_ms)?;
+            ledger.txs[i].error = Some(e.to_string());
+        }
+    }
     let out = ledger.txs[i].clone();
     save_ledger(vault, &ledger)?;
     Ok(out)

@@ -75,7 +75,9 @@ export class DirectoryStore {
     name: string;
     folderId: string;
     accounts: sets.KeyedAccountInput[];
-    kind?: 'single' | 'hardware';
+    kind?: 'single' | 'hardware' | 'tss';
+    /** `tss`: the key group the core sealed this device's share under. */
+    keyGroupId?: string;
   }): ActionResult<string> {
     return this.apply(sets.createKeyedWallet(this.state, input, this.ctx));
   }

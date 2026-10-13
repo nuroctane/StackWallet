@@ -163,7 +163,10 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
   const native = chain?.nativeAsset;
   const maxFee = evm ? BigInt(evm.maxFeePerGas) * BigInt(evm.gasLimit) : undefined;
 
-  const hardware = directoryState.wallets.find((w) => w.id === i.walletId)?.kind === 'hardware';
+  const walletKind = directoryState.wallets.find((w) => w.id === i.walletId)?.kind;
+  const hardware = walletKind === 'hardware';
+  const shared = walletKind === 'tss';
+  const shell = useShell();
   const approve = async () => {
     setWorking(true);
     setError(null);
@@ -313,53 +316,78 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
               : 'automation'}
         </span>
       </Row>
-      <form
-        className="flex gap-1.5 pt-1"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void approve();
-        }}
-      >
-        <Input
-          type="password"
-          autoComplete="current-password"
-          placeholder="vault passphrase"
-          aria-label="vault passphrase to approve"
-          value={passphrase}
-          onChange={(e) => setPassphrase(e.target.value)}
-          className="h-7 min-w-0 flex-1 text-[12px]"
-        />
-        <Button
-          type="submit"
-          size="sm"
-          variant={unknownRecipient || tx.simulationOk === false ? 'danger' : 'primary'}
-          disabled={!passphrase || working || view.busy}
-          title={
-            tx.simulationOk === false
-              ? 'The simulation failed; this is likely to fail on chain'
-              : unknownRecipient
-                ? 'First payment to this address'
-                : undefined
-          }
+      {shared ? (
+        <div className="flex gap-1.5 pt-1">
+          <Button
+            size="sm"
+            variant={unknownRecipient || tx.simulationOk === false ? 'danger' : 'primary'}
+            disabled={view.busy}
+            title="Both devices sign; connect to the one holding the other share"
+            onClick={() =>
+              shell.openDialog({ kind: 'threshold', target: { mode: 'sign', txId: tx.id } })
+            }
+          >
+            Sign with co-signer…
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={view.busy}
+            onClick={() => void vault.txReject(tx.id)}
+          >
+            Reject
+          </Button>
+        </div>
+      ) : (
+        <form
+          className="flex gap-1.5 pt-1"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void approve();
+          }}
         >
-          {working ? (
-            <LoadingWord label={hardware ? 'confirm on the device' : 'signing'} />
-          ) : hardware ? (
-            'Approve on Ledger'
-          ) : (
-            'Approve'
-          )}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          disabled={working || view.busy}
-          onClick={() => void vault.txReject(tx.id)}
-        >
-          Reject
-        </Button>
-      </form>
+          <Input
+            type="password"
+            autoComplete="current-password"
+            placeholder="vault passphrase"
+            aria-label="vault passphrase to approve"
+            value={passphrase}
+            onChange={(e) => setPassphrase(e.target.value)}
+            className="h-7 min-w-0 flex-1 text-[12px]"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            variant={unknownRecipient || tx.simulationOk === false ? 'danger' : 'primary'}
+            disabled={!passphrase || working || view.busy}
+            title={
+              tx.simulationOk === false
+                ? 'The simulation failed; this is likely to fail on chain'
+                : unknownRecipient
+                  ? 'First payment to this address'
+                  : undefined
+            }
+          >
+            {working ? (
+              <LoadingWord label={hardware ? 'confirm on the device' : 'signing'} />
+            ) : hardware ? (
+              'Approve on Ledger'
+            ) : (
+              'Approve'
+            )}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={working || view.busy}
+            onClick={() => void vault.txReject(tx.id)}
+          >
+            Reject
+          </Button>
+        </form>
+      )}
       {error && <p className="text-[11px] text-danger">{error}</p>}
     </li>
   );

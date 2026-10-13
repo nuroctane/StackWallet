@@ -16,7 +16,7 @@ use stackwallet_core::tss::CeremonyMessage;
 use stackwallet_core::vault::{
     EncryptedVault, KdfParams, Secret, SecretHandle, SessionProof, SlotKind, SlotSecret, Vault,
 };
-use stackwallet_core::{ledger, provenance, transfer};
+use stackwallet_core::{ledger, provenance, threshold, transfer};
 use wasm_bindgen::prelude::*;
 
 pub use transport::{
@@ -558,6 +558,120 @@ impl WasmVault {
         Ok(serde_json::to_string(&rec)?)
     }
 
+    /// Threshold wallets this vault holds a share of (`ThresholdAccount[]` JSON).
+    pub fn threshold_list(&self) -> Result<String, JsError> {
+        Ok(serde_json::to_string(
+            &threshold::list(&self.inner).map_err(core_err)?,
+        )?)
+    }
+
+    /// What a co-signer is asked to sign, decoded and policy-checked by the core.
+    pub fn threshold_review(
+        &self,
+        request_json: &str,
+        session_json: &str,
+        proposer_device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let summary = threshold::review_sign(
+            &self.inner,
+            &serde_json::from_str(request_json)?,
+            &serde_json::from_str(session_json)?,
+            proposer_device_id,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(serde_json::to_string(&summary)?)
+    }
+
+    /// Start (or join) DKG for a new threshold wallet.
+    #[allow(clippy::too_many_arguments)]
+    pub fn threshold_keygen(
+        &mut self,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        wallet_id: &str,
+        device_id: &str,
+        group_json: &str,
+        session_json: &str,
+        now_ms: f64,
+    ) -> Result<WasmThresholdDriver, JsError> {
+        let proof = session_from(session_slot, session_secret, session_device);
+        let (driver, outbox) = threshold::Driver::keygen(
+            &mut self.inner,
+            &proof,
+            wallet_id,
+            device_id,
+            &serde_json::from_str(group_json)?,
+            &serde_json::from_str(session_json)?,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(WasmThresholdDriver { driver, outbox })
+    }
+
+    /// Join a signing ceremony with this device's sealed share.
+    #[allow(clippy::too_many_arguments)]
+    pub fn threshold_sign(
+        &mut self,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        request_json: &str,
+        session_json: &str,
+        proposer_device_id: &str,
+        now_ms: f64,
+    ) -> Result<WasmThresholdDriver, JsError> {
+        let proof = session_from(session_slot, session_secret, session_device);
+        let (driver, outbox) = threshold::Driver::sign(
+            &mut self.inner,
+            &proof,
+            &serde_json::from_str(request_json)?,
+            &serde_json::from_str(session_json)?,
+            proposer_device_id,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(WasmThresholdDriver { driver, outbox })
+    }
+
+    /// Threshold approval, first half: `{ record, request }` (request is null if policy refused).
+    pub fn tx_begin_threshold(
+        &mut self,
+        tx_id: &str,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let session = session_from(session_slot, session_secret, session_device);
+        let (record, request) =
+            ledger::begin_threshold(&mut self.inner, tx_id, &session, device_id, now_ms as i64)
+                .map_err(core_err)?;
+        Ok(serde_json::json!({ "record": record, "request": request }).to_string())
+    }
+
+    /// Threshold approval, second half: the ceremony's aggregate signature.
+    pub fn tx_complete_threshold(
+        &mut self,
+        tx_id: &str,
+        signature_hex: &str,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let rec = ledger::complete_threshold(
+            &mut self.inner,
+            tx_id,
+            signature_hex,
+            device_id,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(serde_json::to_string(&rec)?)
+    }
+
     /// Device-local unlock methods (`SlotInfo[]` JSON). Readable while locked.
     pub fn slots_json(&self) -> Result<String, JsError> {
         Ok(serde_json::to_string(&self.inner.slots())?)
@@ -804,6 +918,23 @@ fn identity_json(id: &DeviceIdentity) -> String {
     .to_string()
 }
 
+/// The session a threshold key generation for `group_json` runs under, bound
+/// to the group exactly as every participant's core will check it.
+#[wasm_bindgen]
+pub fn threshold_keygen_session(
+    group_json: &str,
+    id: &str,
+    now_ms: f64,
+) -> Result<String, JsError> {
+    let group: stackwallet_core::model::KeyGroup = serde_json::from_str(group_json)?;
+    group.validate().map_err(core_err)?;
+    Ok(serde_json::to_string(&threshold::keygen_session(
+        &group,
+        id,
+        now_ms as i64,
+    ))?)
+}
+
 /// Verify a `SignedCeremonyMessage` JSON against the sender's pinned public key.
 #[wasm_bindgen]
 pub fn verify_ceremony_message(signed_json: &str, public_hex: &str) -> Result<bool, JsError> {
@@ -815,4 +946,62 @@ pub fn verify_ceremony_message(signed_json: &str, public_hex: &str) -> Result<bo
 #[wasm_bindgen]
 pub fn device_id_from_public_hex(public_hex: &str) -> Result<String, JsError> {
     stackwallet_core::identity::device_id_from_public_hex(public_hex).map_err(core_err)
+}
+
+/// One device's side of one threshold ceremony. The share stays inside;
+/// the page moves `CeremonyMessage` JSON between this and its peers.
+#[wasm_bindgen]
+pub struct WasmThresholdDriver {
+    driver: threshold::Driver,
+    outbox: Vec<CeremonyMessage>,
+}
+
+#[wasm_bindgen]
+impl WasmThresholdDriver {
+    /// The messages produced when the ceremony started (`CeremonyMessage[]`), once.
+    pub fn take_initial(&mut self) -> Result<String, JsError> {
+        Ok(serde_json::to_string(&std::mem::take(&mut self.outbox))?)
+    }
+
+    /// Feed one peer message; returns the replies (`CeremonyMessage[]`).
+    pub fn handle(&mut self, msg_json: &str) -> Result<String, JsError> {
+        let out = self
+            .driver
+            .handle(serde_json::from_str(msg_json)?)
+            .map_err(core_err)?;
+        Ok(serde_json::to_string(&out)?)
+    }
+
+    pub fn session_json(&self) -> Result<String, JsError> {
+        Ok(serde_json::to_string(self.driver.session())?)
+    }
+
+    pub fn complete(&self) -> bool {
+        self.driver.state() == stackwallet_core::tss::CeremonyState::Complete
+    }
+
+    pub fn signature_hex(&self) -> Result<Option<String>, JsError> {
+        self.driver.signature_hex().map_err(core_err)
+    }
+
+    /// Seal the new share; returns the `ThresholdAccount` JSON.
+    pub fn finish_keygen(&self, vault: &mut WasmVault, now_ms: f64) -> Result<String, JsError> {
+        let acc = self
+            .driver
+            .finish_keygen(&mut vault.inner, now_ms as i64)
+            .map_err(core_err)?;
+        Ok(serde_json::to_string(&acc)?)
+    }
+
+    /// Audit how the ceremony ended here; `aborted` carries the reason.
+    pub fn audit_end(
+        &self,
+        vault: &mut WasmVault,
+        aborted: Option<String>,
+        now_ms: f64,
+    ) -> Result<(), JsError> {
+        self.driver
+            .audit_end(&mut vault.inner, aborted.as_deref(), now_ms as i64)
+            .map_err(core_err)
+    }
 }

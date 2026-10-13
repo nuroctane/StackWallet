@@ -22,6 +22,7 @@ const fakeModule: WasmModule = {
   can_transition: () => true,
   schema_sql: () => 'PRAGMA foreign_keys = ON;',
   verify_ceremony_message: () => true,
+  threshold_keygen_session: unused,
   device_id_from_public_hex: unused,
   pairing_new_code_hex: () => 'ab'.repeat(32),
   pairing_offer_encode: unused,
