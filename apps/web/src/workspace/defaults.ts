@@ -18,6 +18,10 @@ export const elementDefaults: Record<ElementKind, { w: number; h: number }> = {
   agent: { w: 520, h: 560 },
   automations: { w: 520, h: 480 },
   collectibles: { w: 640, h: 480 },
+  watchlist: { w: 560, h: 420 },
+  candles: { w: 680, h: 420 },
+  portfolio: { w: 620, h: 480 },
+  alerts: { w: 440, h: 460 },
 };
 
 interface Seed {

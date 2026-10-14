@@ -49,6 +49,8 @@ import { applyRpcSettings, rpcSettings, rpcSettingsQuarantinedKey } from './stor
 import { collectiblesStore } from './store/collectibles.js';
 import { approvalsStore } from './store/approvals.js';
 import { automationStore, startAutomations } from './store/automations.js';
+import { alertStore, desktopNotify, startAlerts } from './store/alerts.js';
+import { fmtPct, fmtUsd } from './workspace/elements/market/shared.js';
 import { namesStore } from './store/names.js';
 import { themeQuarantinedKey } from './store/theme.js';
 import { ThemeApplier } from './store/ThemeApplier.js';
@@ -95,11 +97,13 @@ export function App() {
     const unconfigure = tokenStore.configure(registry);
     const unsubscribe = tokenStore.subscribe(() => balanceCache.invalidate());
     const stopAutomations = startAutomations(registry);
+    const stopAlerts = startAlerts();
     void walletConnect.start(registry);
     return () => {
       unconfigure();
       unsubscribe();
       stopAutomations();
+      stopAlerts();
     };
   }, [registry, registryError]);
   return (
@@ -156,6 +160,18 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
     }
     // Runs once: the quarantine happened at module load, before React mounted.
   }, []);
+
+  useEffect(
+    () =>
+      alertStore.onFired((e, a) => {
+        const now =
+          a.condition.kind === 'price' ? fmtUsd(e.usd) : `${fmtPct(e.change24hPct)} in 24h`;
+        const text = `${a.name} · now ${now}`;
+        toasts.push(`Alert · ${text}`);
+        desktopNotify('StackWallet alert', text);
+      }),
+    [toasts],
+  );
 
   const refreshBalances = useCallback(() => {
     if (state.accounts.length === 0) {

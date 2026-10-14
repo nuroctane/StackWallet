@@ -1,23 +1,27 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import { fetchUsdPrices, type UsdPrice } from '@stackwallet/market';
+import { fetchQuotes, type MarketSource, type Quote, type QuoteResult } from '@stackwallet/market';
+
+import { marketClient } from './market.js';
 
 /**
- * USD prices of native coins, in memory only. Asked for by id when a view
- * needs them, refreshed when older than the TTL; a failed fetch keeps the
- * previous answer and marks it stale rather than inventing a value.
+ * USD quotes, in memory only, asked for by coin id when a view needs them and
+ * refreshed when older than the TTL. Each quote names its sources and whether
+ * they agree. A failed source keeps the previous answer, which ages into
+ * stale rather than being replaced by an invented value.
  */
-export const PRICE_TTL_MS = 5 * 60 * 1000;
+export const PRICE_TTL_MS = 2 * 60 * 1000;
 
 class PriceStore {
-  private prices = new Map<string, UsdPrice>();
+  private prices = new Map<string, Quote>();
   private pending = false;
   private wanted = new Set<string>();
   private listeners = new Set<() => void>();
   private version = 0;
-  error: string | null = null;
+  errors: { source: MarketSource; message: string }[] = [];
 
   constructor(
-    private readonly fetcher: (ids: string[]) => Promise<UsdPrice[]> = (ids) => fetchUsdPrices(ids),
+    private readonly fetcher: (ids: string[]) => Promise<QuoteResult> = (ids) =>
+      fetchQuotes(marketClient, ids),
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -29,39 +33,63 @@ class PriceStore {
   };
   getVersion = () => this.version;
 
-  get(id: string): UsdPrice | undefined {
+  get(id: string): Quote | undefined {
     return this.prices.get(id);
+  }
+
+  private due(): string[] {
+    return [...this.wanted].filter((id) => {
+      const p = this.prices.get(id);
+      return !p || this.now() - p.fetchedAtMs > PRICE_TTL_MS;
+    });
   }
 
   async want(ids: readonly string[]): Promise<void> {
     for (const id of ids) this.wanted.add(id);
-    const due = [...this.wanted].filter((id) => {
-      const p = this.prices.get(id);
-      return !p || this.now() - p.fetchedAtMs > PRICE_TTL_MS;
-    });
-    if (due.length === 0 || this.pending) return;
-    this.pending = true;
-    try {
-      for (const p of await this.fetcher(due)) this.prices.set(p.id, p);
-      this.error = null;
-    } catch (err) {
-      this.error = err instanceof Error ? err.message : String(err);
-    } finally {
-      this.pending = false;
-      this.version += 1;
-      for (const l of this.listeners) l();
+    if (this.pending) return;
+    let due = this.due();
+    while (due.length > 0) {
+      this.pending = true;
+      try {
+        const r = await this.fetcher(due);
+        for (const q of r.quotes) this.prices.set(q.id, q);
+        this.errors = r.errors;
+      } catch (err) {
+        this.errors = [
+          { source: 'coingecko', message: err instanceof Error ? err.message : String(err) },
+        ];
+      } finally {
+        this.pending = false;
+        this.version += 1;
+        for (const l of this.listeners) l();
+      }
+      // Ids asked for while the fetch was running; ids that just failed wait for the next ask.
+      const next = this.due().filter((id) => !due.includes(id));
+      due = next;
     }
+  }
+
+  /** Drop cached quotes so the next ask refetches (after a source setting changes). */
+  clear(): void {
+    this.prices.clear();
+    this.version += 1;
+    for (const l of this.listeners) l();
   }
 }
 
 export const priceStore = new PriceStore();
 export { PriceStore };
 
-export function usePrices(ids: readonly string[]): (id: string) => UsdPrice | undefined {
+export function usePrices(ids: readonly string[]): (id: string) => Quote | undefined {
   useSyncExternalStore(priceStore.subscribe, priceStore.getVersion, priceStore.getVersion);
   const key = [...new Set(ids)].sort().join(',');
   useEffect(() => {
     if (key) void priceStore.want(key.split(','));
   }, [key]);
   return (id) => priceStore.get(id);
+}
+
+export function usePriceErrors(): PriceStore['errors'] {
+  useSyncExternalStore(priceStore.subscribe, priceStore.getVersion, priceStore.getVersion);
+  return priceStore.errors;
 }

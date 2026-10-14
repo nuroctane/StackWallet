@@ -4,14 +4,19 @@ import { useThemeEpoch } from './theme/apply.js';
 
 export interface Point {
   t: number;
+  /** The close for candle series. */
   v: number;
+  /** Open, high and low; read only by `candles` series. */
+  o?: number;
+  h?: number;
+  l?: number;
 }
 
 export interface Series {
   id: string;
   label: string;
   points: readonly Point[];
-  kind?: 'line' | 'area' | 'bars';
+  kind?: 'line' | 'area' | 'bars' | 'candles';
   /** Any CSS color; `var(--sw-*)` strings are resolved from the canvas at draw time. */
   color?: string;
 }
@@ -376,9 +381,11 @@ export function CanvasChart({
         vMax = Math.max(vMax, 0);
       }
       for (let i = 0; i < n; i++) {
-        const v = (s.points[i] as Point).v;
-        if (v < vMin) vMin = v;
-        if (v > vMax) vMax = v;
+        const p = s.points[i] as Point;
+        const lo = s.kind === 'candles' ? Math.min(p.v, p.l ?? p.v) : p.v;
+        const hi = s.kind === 'candles' ? Math.max(p.v, p.h ?? p.v) : p.v;
+        if (lo < vMin) vMin = lo;
+        if (hi > vMax) vMax = hi;
       }
     }
     const hasData = Number.isFinite(tMin) && Number.isFinite(vMin);
@@ -478,6 +485,36 @@ export function CanvasChart({
           const py = y(p.v);
           ctx.fillRect(px, Math.min(py, base), bw, Math.max(1, Math.abs(base - py)));
         }
+        return;
+      }
+
+      if (kind === 'candles') {
+        // Monochrome by design: a rising candle is filled, a falling one is hollow, so
+        // direction never borrows the danger role's colour.
+        const bw = Math.max(1, Math.min(12, ((right - left) / n) * 0.7));
+        ctx.lineWidth = 1;
+        for (let i = 0; i < n; i++) {
+          const p = pts[i] as Point;
+          const o = p.o ?? p.v;
+          const cx = Math.round(x(p.t)) + 0.5;
+          ctx.strokeStyle = color;
+          ctx.beginPath();
+          ctx.moveTo(cx, y(p.h ?? Math.max(o, p.v)));
+          ctx.lineTo(cx, y(p.l ?? Math.min(o, p.v)));
+          ctx.stroke();
+          const bodyTop = y(Math.max(o, p.v));
+          const bodyH = Math.max(1, y(Math.min(o, p.v)) - bodyTop);
+          const bx = cx - bw / 2;
+          if (p.v >= o) {
+            ctx.fillStyle = color;
+            ctx.fillRect(bx, bodyTop, bw, bodyH);
+          } else {
+            ctx.fillStyle = P.paper;
+            ctx.fillRect(bx, bodyTop, bw, bodyH);
+            ctx.strokeRect(bx, bodyTop, bw, bodyH);
+          }
+        }
+        ctx.lineWidth = LINE_WIDTH;
         return;
       }
 

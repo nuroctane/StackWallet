@@ -10,6 +10,10 @@ import { TerrainElement } from './TerrainElement.js';
 import { TransactionsElement } from './TransactionsElement.js';
 import { AgentElement } from './AgentElement.js';
 import { AutomationsElement } from './AutomationsElement.js';
+import { AlertsElement } from './market/AlertsElement.js';
+import { CandlesElement } from './market/CandlesElement.js';
+import { PortfolioElement } from './market/PortfolioElement.js';
+import { WatchlistElement } from './market/WatchlistElement.js';
 import type { ElementDefinition, ElementRegistry } from './types.js';
 import {
   ApprovalsElement,
@@ -247,6 +251,52 @@ export const registry: ElementRegistry = {
     defaultSize: elementDefaults.automations,
     minSize: { w: 320, h: 240 },
     body: AutomationsElement,
+  }),
+  watchlist: def({
+    kind: 'watchlist',
+    title: 'watchlist',
+    hint: 'prices and 24h change for held and watched coins, with sources shown',
+    defaultSize: elementDefaults.watchlist,
+    minSize: { w: 360, h: 200 },
+    body: WatchlistElement,
+  }),
+  candles: def({
+    kind: 'candles',
+    title: 'candles',
+    hint: 'OHLC chart for a coin from CoinGecko',
+    defaultSize: elementDefaults.candles,
+    minSize: { w: 320, h: 240 },
+    defaultProps: { coinId: '', days: 30 },
+    titleFor: (p) =>
+      typeof p.props['coinId'] === 'string' && p.props['coinId']
+        ? `candles · ${p.props['coinId']}`
+        : 'candles',
+    scope: (p) => {
+      const d = Number(p.props['days'] ?? 30);
+      return [{ label: d === 1 ? '24h' : `${d}d`, tone: 'warm' }];
+    },
+    body: CandlesElement,
+  }),
+  portfolio: def({
+    kind: 'portfolio',
+    title: 'portfolio',
+    hint: 'USD value over time and allocation, computed on this device',
+    defaultSize: elementDefaults.portfolio,
+    minSize: { w: 320, h: 280 },
+    defaultProps: { days: 30 },
+    scope: (p) => {
+      const d = Number(p.props['days'] ?? 30);
+      return [{ label: d === 1 ? '24h' : `${d}d`, tone: 'warm' }];
+    },
+    body: PortfolioElement,
+  }),
+  alerts: def({
+    kind: 'alerts',
+    title: 'price alerts',
+    hint: 'notify when a coin crosses a price or 24h change; never signs',
+    defaultSize: elementDefaults.alerts,
+    minSize: { w: 320, h: 240 },
+    body: AlertsElement,
   }),
   network: def({
     kind: 'network',

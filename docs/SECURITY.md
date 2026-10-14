@@ -224,7 +224,13 @@ agreement alone is not chain identity or cryptographic proof of balance/finality
 
 - No telemetry, analytics or crash reporting. No remote fonts.
 - Market data requests reveal which assets you look at to the data provider; the UI says so in
-  Settings and lets you choose providers per family or disable them.
+  Settings and lets you choose providers per family or disable them. Requests carry coin ids
+  only, never addresses or amounts. The market elements' sources panel turns CoinGecko and
+  DefiLlama on or off (DefiLlama is off by default); a disabled source is never contacted.
+  Coin search sends the typed query to CoinGecko. Portfolio value history is computed locally
+  from the ledger and public price history, so holdings never leave the device.
+- Price alerts are evaluated locally. A stale or divergent quote never fires an alert, and an
+  alert can only notify; it has no path to proposing or signing a transaction.
 - RPC requests reveal your addresses to the RPC provider; users can supply their own endpoints.
 - Tracking an ERC-20 sends its contract address and account addresses to those same RPC pools.
   Tracked contracts and their untrusted display metadata are stored locally as public metadata;

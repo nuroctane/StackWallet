@@ -96,7 +96,7 @@ export function TotalsStrip({
           {priced && (
             <span
               className="basis-full text-[12px] font-normal text-muted"
-              title="CoinGecko USD prices for mainnet coins; testnet coins have no value"
+              title="USD prices for mainnet coins from the market sources chosen in the watchlist; testnet coins have no value"
             >
               ≈ {formatUsd(usd)}
               {unpriced > 0 ? ` · ${unpriced} asset${unpriced === 1 ? '' : 's'} unpriced` : ''}

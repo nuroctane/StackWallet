@@ -781,6 +781,16 @@ client for which folder a wallet sits in; the wallet key is bound to the wallet 
    First increment (`packages/market`): CoinGecko USD prices for mainnet native coins, requested
    by coin id only, and integer valuation; holdings totals show an approximate USD sum. Testnet
    coins have no price, so USD spend caps still fail closed for the testnet sends the core signs.
+   Second increment: a shared market client (per-URL cache, in-flight dedupe, per-source
+   spacing, cooldown after HTTP 429) and quotes that carry provenance. CoinGecko is on by
+   default; DefiLlama is an opt-in cross-check, and the median of the sources is shown with
+   `single`, `agreed` or `divergent` (spread over 2%) confidence. The `watchlist`, `candles`
+   (CoinGecko OHLC on the canvas chart), `portfolio` (local value history from ledger holdings
+   × price history, with unpriced assets and incomplete points called out) and `alerts`
+   elements are in. Alerts use the automations condition evaluator, which is three-valued:
+   stale (over 15 minutes) or divergent quotes evaluate to unknown and never fire. Alerts only
+   notify (toast, optional desktop notification); they never propose or sign. Remaining: DEX
+   Screener and Pyth sources, the other §11.1 elements, alerts as automation triggers.
 8. **Desktop polish + packaging**: Tauri bundles, background scheduler, OS keychain unlock,
    hardware wallet signer (Ledger EVM signing is in, through WebHID in the shared bundle). The
    desktop window runs the bundled wasm core, so it has the same
