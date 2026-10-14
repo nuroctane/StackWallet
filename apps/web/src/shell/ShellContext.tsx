@@ -15,7 +15,7 @@ export type ShellDialog =
   | { kind: 'transferSet'; folderId: string }
   | { kind: 'transferWallet'; walletId: string }
   | { kind: 'receive'; walletId: string }
-  | { kind: 'addAccount'; walletId: string }
+  | { kind: 'addAccount'; walletId: string; chainId?: string }
   | { kind: 'contacts' }
   | { kind: 'walletConnect' }
   | { kind: 'signMessage'; walletId: string }
@@ -26,7 +26,7 @@ export type ShellDialog =
   | ({ kind: 'sendNft' } & import('./NftSendDialog.js').NftSendTarget)
   | { kind: 'exportKey'; scope: 'folder' | 'wallet'; id: string }
   | { kind: 'importSet' }
-  | { kind: 'send'; accountId?: string };
+  | { kind: 'send'; accountId?: string; walletId?: string };
 
 export type UiRoute = { kind: 'directory' } | { kind: 'network' } | { kind: 'devices' };
 

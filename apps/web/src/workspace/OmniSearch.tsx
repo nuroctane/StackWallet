@@ -15,6 +15,7 @@ import { useShell } from '../shell/ShellContext.js';
 import { ELEMENT_KINDS, registry } from './elements/registry.js';
 import { workspace, useWorkspace } from './persist.js';
 import { exportLayoutBundle } from './layoutTransfer.js';
+import { openDirectoryItem } from './open.js';
 import type { ElementKind } from './schema.js';
 
 export type ResultType = 'action' | 'element' | 'layout' | 'wallet' | 'folder' | 'device' | 'chain';
@@ -314,10 +315,7 @@ function SearchBody({
           .slice(1)
           .map((p) => p.name)
           .join(' / ')} · ${kindLabel(w)}`,
-        run: () => {
-          directory.reveal(w.id);
-          openOrAdd('wallet', { walletId: w.id }, (p) => p['walletId'] === w.id);
-        },
+        run: () => openDirectoryItem(w.id),
       });
     }
     for (const f of state.folders) {
@@ -330,10 +328,7 @@ function SearchBody({
           .slice(1, -1)
           .map((p) => p.name)
           .join(' / '),
-        run: () => {
-          directory.reveal(f.id);
-          openOrAdd('folder', { folderId: f.id }, (p) => p['folderId'] === f.id);
-        },
+        run: () => openDirectoryItem(f.id),
       });
     }
     for (const d of activeDevices(devices)) {

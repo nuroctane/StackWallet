@@ -5,6 +5,7 @@ import { FAMILY_LABEL } from '../lib/chains.js';
 import { directory, useDirectory } from '../store/persist.js';
 import type { DirectoryState } from '../store/schema.js';
 import { flattenTree, kindLabel, walletFamilies, type TreeRow } from '../store/selectors.js';
+import { openDirectoryItem } from '../workspace/open.js';
 import { useShell } from './ShellContext.js';
 import { SetTags, UserTags, WalletTags } from './ProvenanceTags.js';
 import { WalletName } from './WalletName.js';
@@ -52,8 +53,7 @@ export function DirectoryTree() {
   // Selecting from the drawer is the end of the interaction on a narrow
   // screen, so the drawer closes and the main pane shows the selection.
   const selectRow = (id: string) => {
-    directory.select(id);
-    shell.navigate({ kind: 'directory' });
+    openDirectoryItem(id);
     shell.closeTree();
   };
 

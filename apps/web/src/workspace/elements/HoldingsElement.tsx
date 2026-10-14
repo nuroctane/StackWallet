@@ -6,8 +6,9 @@ import { findChain } from '../../lib/chains.js';
 import { formatUnits, relativeTime } from '../../lib/format.js';
 import { useBalances, type BalanceEntry } from '../../store/balances.js';
 import { useNames, walletLabel } from '../../store/names.js';
-import { directory, useDirectory } from '../../store/persist.js';
+import { useDirectory } from '../../store/persist.js';
 import { useRegistry } from '../../store/RegistryContext.js';
+import { openDirectoryItem } from '../open.js';
 import type { ElementBodyProps } from './types.js';
 
 const CLOCK_TICK_MS = 10_000;
@@ -249,7 +250,7 @@ export function HoldingsElement({ pane, width, height }: ElementBodyProps) {
             <button
               type="button"
               className="sw-pressable mt-2 min-h-8 text-muted underline"
-              onClick={() => directory.reveal(r.walletId)}
+              onClick={() => openDirectoryItem(r.walletId)}
             >
               Open wallet
             </button>
@@ -269,7 +270,7 @@ export function HoldingsElement({ pane, width, height }: ElementBodyProps) {
         height={bodyHeight + HEADER_H}
         density="normal"
         selectedKey={state.ui.selectedId}
-        onRowClick={(r) => directory.reveal(r.walletId)}
+        onRowClick={(r) => openDirectoryItem(r.walletId)}
         rowAge={(r) =>
           now - r.fetchedAtMs < 2_000 ? 0 : now - r.fetchedAtMs < 6_000 ? 1 : undefined
         }

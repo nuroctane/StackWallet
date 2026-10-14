@@ -27,10 +27,20 @@ export function TotalsStrip({
 }) {
   const registry = useRegistry();
   const balances = useBalances(accounts);
-  const totals = useMemo(
-    () => aggregateNative(accounts, balances.byAccount, (id) => findChain(registry, id)),
-    [accounts, balances.byAccount, registry],
-  );
+  const totals = useMemo(() => {
+    const chainOf = (assetRef: string) =>
+      findChain(registry, assetRef.slice(0, assetRef.lastIndexOf(':')));
+    const all = aggregateNative(accounts, balances.byAccount, (id) => findChain(registry, id));
+    // Mainnet first so the valued coins lead; the sort is stable within each group.
+    return all
+      .map((t) => {
+        const chain = chainOf(t.assetRef);
+        return { ...t, chainName: chain?.name ?? '', testnet: chain?.testnet === true };
+      })
+      .sort((a, b) => Number(a.testnet) - Number(b.testnet));
+  }, [accounts, balances.byAccount, registry]);
+  const symbolCount = new Map<string, number>();
+  for (const t of totals) symbolCount.set(t.symbol, (symbolCount.get(t.symbol) ?? 0) + 1);
   const ids = totals.map((t) => {
     const chain = findChain(registry, t.assetRef.slice(0, t.assetRef.lastIndexOf(':')));
     return chain ? coinIdFor(chain) : null;
@@ -86,9 +96,17 @@ export function TotalsStrip({
                   ·
                 </span>
               )}
-              <span title={`${t.accounts} ${t.accounts === 1 ? 'account' : 'accounts'}`}>
+              <span
+                title={`${t.chainName ? `${t.chainName} · ` : ''}${t.accounts} ${t.accounts === 1 ? 'account' : 'accounts'}${t.testnet ? ' · testnet, no value' : ''}`}
+                className={t.testnet ? 'text-muted' : undefined}
+              >
                 {formatUnits(t.amount, t.decimals, 4)}{' '}
                 <span className="text-[13px] font-medium text-muted">{t.symbol}</span>
+                {(t.testnet || (symbolCount.get(t.symbol) ?? 0) > 1) && t.chainName && (
+                  <span className="ml-1 text-[11px] font-normal text-faint">
+                    {t.testnet ? `${t.chainName} · test` : t.chainName}
+                  </span>
+                )}
               </span>
             </span>
           ))}

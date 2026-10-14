@@ -2,7 +2,10 @@ import type { ReactNode } from 'react';
 import type { WalletKind } from '@stackwallet/core-client';
 import { Badge, Button } from '@stackwallet/ui';
 
+import { vault } from '../../core/bridge.js';
+import { useVaultView } from '../../core/vault.js';
 import { findChain, listChains } from '../../lib/chains.js';
+import { useBalances } from '../../store/balances.js';
 import { useRegistry } from '../../store/RegistryContext.js';
 import type { DirectoryState } from '../../store/schema.js';
 import { chainIdsInUse, countByKind } from '../../store/selectors.js';
@@ -27,6 +30,7 @@ export function Overview({ state }: { state: DirectoryState }) {
 
   return (
     <div className="flex flex-col gap-5 p-5">
+      <GettingStarted state={state} />
       {total > 0 && <TotalsStrip accounts={state.accounts} label="All holdings" />}
       <section className="grid grid-cols-2 gap-3 min-[900px]:grid-cols-4">
         {KIND_ORDER.map((kind) => (
@@ -82,65 +86,177 @@ export function Overview({ state }: { state: DirectoryState }) {
         <div className="sw-elevated flex flex-col">
           <header className="border-b border-edge px-4 py-2.5">
             <h3 className="text-[11px] font-semibold tracking-[0.12em] text-muted uppercase">
-              Getting started
+              More ways to hold keys
             </h3>
           </header>
-          <ol className="divide-y divide-edge">
+          <ul className="divide-y divide-edge">
             <Step
-              n={1}
-              title="Add a watch wallet"
+              title="Watch an address"
               body="Follow any address on any supported chain. Read-only, nothing to sign."
-              badge={<Badge tone="ok">now</Badge>}
               action={
                 <Button size="sm" onClick={() => shell.openDialog({ kind: 'watch' })}>
-                  Add
+                  Watch…
                 </Button>
               }
             />
             <Step
-              n={2}
-              title="Pair a device and create a TSS wallet"
-              body="Threshold keys split across your devices. No single party ever holds the key."
-              badge={<Badge>phase 1</Badge>}
+              title="Connect a Ledger"
+              body="The device signs EVM transactions; the key never reaches this browser."
               action={
-                <Button size="sm" onClick={() => shell.navigate({ kind: 'devices' })}>
-                  Devices
+                <Button size="sm" onClick={() => shell.openDialog({ kind: 'hardwareWallet' })}>
+                  Ledger…
                 </Button>
               }
             />
             <Step
-              n={3}
-              title="Attach an automation"
-              body="Schedules and triggers run as their own signing party and still need a human share."
-              badge={<Badge>phase 6</Badge>}
+              title="Shared wallet across two devices"
+              body="A threshold key split between devices. No single device ever holds the key."
+              action={
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    shell.openDialog({ kind: 'threshold', target: { mode: 'create' } })
+                  }
+                >
+                  Shared…
+                </Button>
+              }
             />
-          </ol>
+          </ul>
         </div>
       </section>
     </div>
   );
 }
 
+/**
+ * The first-run path from nothing to a signed transfer. Hidden once every step is done so a
+ * returning user sees their numbers first.
+ */
+function GettingStarted({ state }: { state: DirectoryState }) {
+  const shell = useShell();
+  const view = useVaultView(vault);
+  const balances = useBalances(state.accounts);
+  const status = view.status.kind;
+  const vaultReady = status === 'unlocked';
+  const keyed = state.wallets.find((w) => w.kind !== 'watch');
+  const funded = state.accounts.some((a) =>
+    balances.byAccount.get(a.id)?.holdings.some((h) => !h.error && !/^0*$/.test(h.amount)),
+  );
+  const sent = (view.ledger?.txs.length ?? 0) > 0;
+  if (vaultReady && keyed && funded && sent) return null;
+
+  const vaultStep =
+    status === 'absent'
+      ? { label: 'Create vault…', done: false }
+      : status === 'locked'
+        ? { label: 'Unlock…', done: false }
+        : { label: '', done: status === 'unlocked' };
+
+  return (
+    <section className="sw-elevated flex flex-col">
+      <header className="border-b border-edge px-4 py-2.5">
+        <h3 className="text-[11px] font-semibold tracking-[0.12em] text-muted uppercase">
+          Getting started
+        </h3>
+      </header>
+      <ol className="divide-y divide-edge">
+        <Step
+          n={1}
+          done={vaultStep.done}
+          title={status === 'locked' ? 'Unlock your vault' : 'Create your vault'}
+          body="One passphrase encrypts every key on this device. It never leaves the device, and there is no reset."
+          action={
+            !vaultStep.done &&
+            vaultStep.label && (
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => shell.openDialog({ kind: 'vault' })}
+              >
+                {vaultStep.label}
+              </Button>
+            )
+          }
+        />
+        <Step
+          n={2}
+          done={!!keyed}
+          title="Create a wallet"
+          body="A new recovery phrase is generated inside the core and sealed in the vault. You can also restore one you already have."
+          action={
+            !keyed && (
+              <Button
+                size="sm"
+                variant={vaultStep.done ? 'primary' : 'ghost'}
+                onClick={() =>
+                  shell.openDialog(vaultReady ? { kind: 'newWallet' } : { kind: 'vault' })
+                }
+              >
+                New wallet…
+              </Button>
+            )
+          }
+        />
+        <Step
+          n={3}
+          done={funded}
+          title="Receive coins"
+          body="Share an address or QR code. Testnet accounts link to a free faucet."
+          action={
+            keyed &&
+            !funded && (
+              <Button
+                size="sm"
+                onClick={() => shell.openDialog({ kind: 'receive', walletId: keyed.id })}
+              >
+                Receive…
+              </Button>
+            )
+          }
+        />
+        <Step
+          n={4}
+          done={sent}
+          title="Send"
+          body="The core checks every transfer against its intent and your policies, then it waits in the approval queue for your passphrase."
+          action={
+            keyed &&
+            !sent && (
+              <Button
+                size="sm"
+                onClick={() => shell.openDialog({ kind: 'send', walletId: keyed.id })}
+              >
+                Send…
+              </Button>
+            )
+          }
+        />
+      </ol>
+    </section>
+  );
+}
+
 function Step({
   n,
+  done,
   title,
   body,
-  badge,
   action,
 }: {
-  n: number;
+  n?: number;
+  done?: boolean;
   title: string;
   body: string;
-  badge: ReactNode;
   action?: ReactNode;
 }) {
   return (
     <li className="flex items-start gap-3 px-4 py-3">
-      <span className="w-4 pt-0.5 text-faint">{n}</span>
+      {n !== undefined && <span className="w-4 pt-0.5 text-faint">{n}</span>}
       <div className="flex flex-1 flex-col gap-0.5">
         <div className="flex items-center gap-2">
-          <span className="text-ink">{title}</span>
-          {badge}
+          <span className={done ? 'text-muted' : 'text-ink'}>{title}</span>
+          {done && <Badge tone="ok">done</Badge>}
         </div>
         <p className="text-[12px] text-faint">{body}</p>
       </div>

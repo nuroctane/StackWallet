@@ -7,7 +7,7 @@ import { formatUnits } from '../../lib/format.js';
 import { useBalances, type BalanceEntry } from '../../store/balances.js';
 import { vault } from '../../core/bridge.js';
 import { useVaultView } from '../../core/vault.js';
-import { directory } from '../../store/persist.js';
+import { openDirectoryItem } from '../../workspace/open.js';
 import { useRegistry } from '../../store/RegistryContext.js';
 import type { DirectoryState } from '../../store/schema.js';
 import {
@@ -166,7 +166,7 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
             <button
               key={f.id}
               type="button"
-              onClick={() => directory.reveal(f.id)}
+              onClick={() => openDirectoryItem(f.id)}
               className="sw-pressable sw-elevated flex h-8 items-center gap-2 px-3 text-muted"
             >
               <span className="text-ink">{f.name}</span>
@@ -267,10 +267,10 @@ function WalletRow({
   return (
     <tr
       className="h-9 cursor-pointer hover:bg-hover focus-visible:bg-hover"
-      onClick={() => directory.reveal(wallet.id)}
+      onClick={() => openDirectoryItem(wallet.id)}
       tabIndex={0}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') directory.reveal(wallet.id);
+        if (e.key === 'Enter') openDirectoryItem(wallet.id);
       }}
     >
       <td data-label="Name" className="truncate px-4 text-ink">

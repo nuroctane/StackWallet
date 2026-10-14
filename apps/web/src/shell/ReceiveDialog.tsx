@@ -1,4 +1,7 @@
 import { useId, useState } from 'react';
+import { BITCOIN_SIGNET } from '@stackwallet/chains-bitcoin';
+import { COSMOS_TESTNET } from '@stackwallet/chains-cosmos';
+import { SOLANA_DEVNET } from '@stackwallet/chains-solana';
 import { Button, Dialog, Field, Select, useToasts } from '@stackwallet/ui';
 
 import { findChain } from '../lib/chains.js';
@@ -6,6 +9,13 @@ import { useDirectory } from '../store/persist.js';
 import { useRegistry } from '../store/RegistryContext.js';
 import { accountsOf } from '../store/selectors.js';
 import { QrCode } from './views/QrCode.js';
+
+const FAUCETS: Record<string, string> = {
+  'eip155:11155111': 'https://cloud.google.com/application/web3/faucet/ethereum/sepolia',
+  [SOLANA_DEVNET]: 'https://faucet.solana.com/',
+  [BITCOIN_SIGNET]: 'https://signetfaucet.com/',
+  [COSMOS_TESTNET]: 'https://faucet.testnet.osmosis.zone/',
+};
 
 /**
  * One address to receive on, as text and as a QR code. The chain is named
@@ -66,6 +76,20 @@ function ReceiveBody({ walletId }: { walletId: string }) {
       <code className="rounded-sw-sm border border-edge bg-paper p-2 text-center font-mono text-[12px] break-all text-ink select-all">
         {account.address}
       </code>
+      {FAUCETS[account.chainId] && (
+        <p className="text-[11px] text-faint">
+          Free test coins:{' '}
+          <a
+            href={FAUCETS[account.chainId]}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-muted underline"
+          >
+            {new URL(FAUCETS[account.chainId]!).hostname}
+          </a>{' '}
+          (a third-party faucet; paste the address above).
+        </p>
+      )}
       <div className="flex justify-end">
         <Button variant="primary" onClick={copy}>
           Copy address

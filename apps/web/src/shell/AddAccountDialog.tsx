@@ -5,6 +5,7 @@ import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
 import { adapterOrNull, listChains } from '../lib/chains.js';
 import { accountPath, nextAccountIndex } from '../lib/keys.js';
+import { canSendFrom } from '../lib/sendable.js';
 import { directory, useDirectory } from '../store/persist.js';
 import { useRegistry } from '../store/RegistryContext.js';
 import { accountsOf } from '../store/selectors.js';
@@ -17,10 +18,12 @@ import { accountsOf } from '../store/selectors.js';
 export function AddAccountDialog({
   open,
   walletId,
+  chainId,
   onClose,
 }: {
   open: boolean;
   walletId?: string | undefined;
+  chainId?: string | undefined;
   onClose: () => void;
 }) {
   const view = useVaultView(vault);
@@ -29,13 +32,21 @@ export function AddAccountDialog({
       {!walletId ? null : view.status.kind !== 'unlocked' ? (
         <p className="p-4 text-[12px] text-faint">Unlock the vault to derive an account.</p>
       ) : (
-        <AddAccountForm walletId={walletId} onClose={onClose} />
+        <AddAccountForm walletId={walletId} initialChainId={chainId} onClose={onClose} />
       )}
     </Dialog>
   );
 }
 
-function AddAccountForm({ walletId, onClose }: { walletId: string; onClose: () => void }) {
+function AddAccountForm({
+  walletId,
+  initialChainId,
+  onClose,
+}: {
+  walletId: string;
+  initialChainId?: string | undefined;
+  onClose: () => void;
+}) {
   const state = useDirectory();
   const registry = useRegistry();
   const toasts = useToasts();
@@ -45,7 +56,13 @@ function AddAccountForm({ walletId, onClose }: { walletId: string; onClose: () =
     () => listChains(registry).filter((c) => accountPath(c, 0) !== null),
     [registry],
   );
-  const [chainId, setChainId] = useState(existing[0]?.chainId ?? chains[0]?.chainId ?? '');
+  const [chainId, setChainId] = useState(
+    chains.find((c) => c.chainId === initialChainId)?.chainId ??
+      existing[0]?.chainId ??
+      chains[0]?.chainId ??
+      '',
+  );
+  const wallet = state.wallets.find((w) => w.id === walletId);
   const [label, setLabel] = useState('');
   const [preview, setPreview] = useState<{ address: string; hex: string; path: string } | null>(
     null,
@@ -109,6 +126,9 @@ function AddAccountForm({ walletId, onClose }: { walletId: string; onClose: () =
             <option key={c.chainId} value={c.chainId}>
               {c.name}
               {c.testnet ? ' · testnet' : ''}
+              {canSendFrom({ chainId: c.chainId, family: c.family, derivationPath: 'm' }, wallet)
+                ? ' · can send'
+                : ''}
             </option>
           ))}
         </Select>

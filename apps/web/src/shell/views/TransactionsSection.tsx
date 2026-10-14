@@ -36,7 +36,11 @@ export function TransactionsSection({ wallet }: { wallet: Wallet }) {
         <div className="flex items-center gap-2 text-[11px] text-faint">
           {view.ledger && <span>audit chain verified by the core · {audit.length} rows</span>}
           {wallet.kind === 'single' && (
-            <Button size="sm" variant="ghost" onClick={() => shell.openDialog({ kind: 'send' })}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => shell.openDialog({ kind: 'send', walletId: wallet.id })}
+            >
               Send…
             </Button>
           )}

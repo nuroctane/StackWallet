@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { Account, Wallet } from '@stackwallet/core-client';
-import { type ChainInfo, type Holding } from '@stackwallet/chains';
+import { shortAddress, type ChainInfo, type Holding } from '@stackwallet/chains';
 import { Badge, Button, Kbd, useToasts } from '@stackwallet/ui';
 
 import { explorerAddressUrl, FAMILY_LABEL, findChain } from '../../lib/chains.js';
 import { formatUnits, relativeTime } from '../../lib/format.js';
+import { canSendFrom } from '../../lib/sendable.js';
 import { useBalances, type BalanceEntry } from '../../store/balances.js';
 import { directory } from '../../store/persist.js';
 import { useRegistry } from '../../store/RegistryContext.js';
@@ -68,6 +69,7 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
     () => buildRows(accounts, balances.byAccount, (id) => findChain(registry, id)),
     [accounts, balances.byAccount, registry],
   );
+  const firstSendable = accounts.find((a) => canSendFrom(a, wallet));
 
   return (
     <div className="flex flex-col gap-5 p-5">
@@ -93,6 +95,22 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
           <Badge>{kindLabel(wallet)}</Badge>
           <WalletTags wallet={wallet} />
           <span className="flex-1" />
+          {wallet.kind !== 'watch' && (
+            <Button
+              size="sm"
+              variant="primary"
+              title="Propose a transfer; it waits in the approval queue until you sign it"
+              onClick={() =>
+                shell.openDialog({
+                  kind: 'send',
+                  walletId: wallet.id,
+                  ...(firstSendable ? { accountId: firstSendable.id } : {}),
+                })
+              }
+            >
+              Send…
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -204,8 +222,11 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
                   <th className="px-2 text-left font-semibold" title="How many RPC endpoints agree">
                     Source
                   </th>
-                  <th className="px-4 text-right font-semibold" title="Time since last read">
+                  <th className="px-2 text-right font-semibold" title="Time since last read">
                     Age
+                  </th>
+                  <th className="px-4">
+                    <span className="sr-only">Actions</span>
                   </th>
                 </tr>
               </thead>
@@ -216,6 +237,16 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
                     row={row}
                     now={now}
                     onCopy={() => void copy(row.account.address)}
+                    onSend={
+                      row.native && canSendFrom(row.account, wallet)
+                        ? () =>
+                            shell.openDialog({
+                              kind: 'send',
+                              walletId: wallet.id,
+                              accountId: row.account.id,
+                            })
+                        : undefined
+                    }
                   />
                 ))}
               </tbody>
@@ -339,10 +370,12 @@ function HoldingRow({
   row,
   now,
   onCopy,
+  onSend,
 }: {
   row: HoldingRowData;
   now: number;
   onCopy: () => void;
+  onSend?: (() => void) | undefined;
 }) {
   const { account, info, entry, holding } = row;
   const explorer = info ? explorerAddressUrl(info, account.address) : undefined;
@@ -387,7 +420,7 @@ function HoldingRow({
           title={`${account.address} (click to copy)`}
           className="sw-pressable -mx-1 rounded-sw-sm px-1 font-mono text-muted"
         >
-          {account.address}
+          {shortAddress(account.address)}
         </button>
         {explorer && (
           <a
@@ -422,8 +455,20 @@ function HoldingRow({
       <td data-label="Source" className="px-2 whitespace-nowrap">
         <Verified holding={holding} info={info} native={row.native} />
       </td>
-      <td data-label="Age" className="px-4 text-right whitespace-nowrap text-faint tabular-nums">
+      <td data-label="Age" className="px-2 text-right whitespace-nowrap text-faint tabular-nums">
         {holding ? relativeTime(holding.updatedAtMs, now) : entry?.error ? 'failed' : ''}
+      </td>
+      <td className="px-4 text-right whitespace-nowrap">
+        {onSend && (
+          <button
+            type="button"
+            onClick={onSend}
+            title={`Send from this ${info?.name ?? ''} account`}
+            className="sw-pressable rounded-sw-sm px-1 text-[11px] text-muted underline"
+          >
+            send
+          </button>
+        )}
       </td>
     </tr>
   );

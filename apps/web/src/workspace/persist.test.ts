@@ -58,11 +58,11 @@ describe('defaultWorkspace', () => {
     }
     const home = state.layouts[0]!;
     const kind = (k: string) => home.panes.find((p) => p.kind === k);
-    expect(kind('terrain')?.props).toEqual({ weeks: 26 });
+    expect(kind('watchlist')?.props).toEqual({});
     expect(kind('ledger')?.props).toEqual({ range: '30d' });
     expect(kind('holdings')?.props).toEqual({ hideZero: false });
     expect(home.panes.map((p) => p.kind).sort()).toEqual(
-      ['overview', 'directory', 'holdings', 'terrain', 'ledger', 'approvals'].sort(),
+      ['overview', 'directory', 'holdings', 'watchlist', 'ledger', 'approvals'].sort(),
     );
     expect(state.layouts[1]?.panes.map((p) => p.kind)).toEqual(['devices', 'network']);
   });

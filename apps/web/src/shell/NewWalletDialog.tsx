@@ -6,6 +6,7 @@ import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
 import { adapterOrNull, FAMILY_LABEL, FAMILY_ORDER, listChains } from '../lib/chains.js';
 import { standardPath } from '../lib/keys.js';
+import { SENDABLE_TESTNETS } from '../lib/sendable.js';
 import { directory, useDirectory } from '../store/persist.js';
 import { rootOf } from '../store/reducers.js';
 import { useRegistry } from '../store/RegistryContext.js';
@@ -18,6 +19,7 @@ const DEFAULT_CHAINS = [
   'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
   'bip122:000000000019d6689c085ae165831e93',
   'cosmos:cosmoshub-4',
+  ...SENDABLE_TESTNETS,
 ];
 
 export function NewWalletDialog({
@@ -66,14 +68,16 @@ function NewWalletForm({
     () => listChains(registry).filter((c) => standardPath(c) !== null),
     [registry],
   );
-  const [name, setName] = useState('');
+  const [name, setName] = useState(
+    () => `Wallet ${state.wallets.filter((w) => w.kind !== 'watch').length + 1}`,
+  );
   const [folder, setFolder] = useState(initialFolderId ?? rootOf(state).id);
   const [mode, setMode] = useState<'create' | 'restore'>('create');
   const [phrase, setPhrase] = useState('');
   const [picked, setPicked] = useState<Set<string>>(
     () => new Set(DEFAULT_CHAINS.filter((id) => chains.some((c) => c.chainId === id))),
   );
-  const [showTestnets, setShowTestnets] = useState(false);
+  const [showTestnets, setShowTestnets] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
 
@@ -218,6 +222,10 @@ function NewWalletForm({
           />
           show testnets
         </label>
+        <p className="text-[11px] text-faint">
+          Sending works on testnets in this build (Sepolia and other EVM test networks, Bitcoin
+          Signet, Solana Devnet, Osmosis Testnet). Mainnet accounts receive and show balances.
+        </p>
       </fieldset>
 
       {error && <p className="text-[12px] text-danger">{error}</p>}

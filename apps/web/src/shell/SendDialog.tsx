@@ -1,9 +1,8 @@
 import { useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { isValidEvmAddress, tokenInfo, type EvmAdapter } from '@stackwallet/chains-evm';
-import { SOLANA_DEVNET, isValidSolanaAddress } from '@stackwallet/chains-solana';
-import { COSMOS_TESTNET, isValidCosmosAddress } from '@stackwallet/chains-cosmos';
+import { isValidSolanaAddress } from '@stackwallet/chains-solana';
+import { isValidCosmosAddress } from '@stackwallet/chains-cosmos';
 import {
-  BITCOIN_SIGNET,
   isSignetRecipient,
   signetRecipient,
   type BitcoinAdapter,
@@ -14,8 +13,10 @@ import { Button, Dialog, Field, Input, LoadingWord, Select } from '@stackwallet/
 
 import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
-import { EVM_SIGNING_CHAINS, findChain } from '../lib/chains.js';
-import { parseUnits } from '../lib/format.js';
+import { findChain } from '../lib/chains.js';
+import { canSendFrom, SENDABLE_TESTNETS } from '../lib/sendable.js';
+import { formatUnits, parseUnits } from '../lib/format.js';
+import { useBalances } from '../store/balances.js';
 import { useDirectory } from '../store/persist.js';
 import { useRegistry } from '../store/RegistryContext.js';
 import { proposeSend } from '../store/txs.js';
@@ -34,10 +35,13 @@ import { useWalletLabel } from './WalletName.js';
 export function SendDialog({
   open,
   accountId,
+  walletId,
   onClose,
 }: {
   open: boolean;
   accountId?: string | undefined;
+  /** Opened from one wallet: offer only its accounts. */
+  walletId?: string | undefined;
   onClose: () => void;
 }) {
   const view = useVaultView(vault);
@@ -45,7 +49,7 @@ export function SendDialog({
   return (
     <Dialog open={open} onClose={onClose} title="Send" meta="queued for approval">
       {view.status.kind === 'unlocked' ? (
-        <SendForm initialAccountId={accountId} onClose={onClose} />
+        <SendForm initialAccountId={accountId} walletId={walletId} onClose={onClose} />
       ) : (
         <div className="flex flex-col gap-3 p-4 text-[12px] text-faint">
           <p>Sending needs the vault: the key and the transaction ledger both live in it.</p>
@@ -67,9 +71,11 @@ function AccountOption({ walletId, walletName }: { walletId: string; walletName:
 
 function SendForm({
   initialAccountId,
+  walletId,
   onClose,
 }: {
   initialAccountId?: string | undefined;
+  walletId?: string | undefined;
   onClose: () => void;
 }) {
   const state = useDirectory();
@@ -78,27 +84,25 @@ function SendForm({
   const ids = { from: useId(), to: useId(), asset: useId(), token: useId(), amount: useId() };
 
   const accounts = useMemo(() => {
-    const single = new Set(state.wallets.filter((w) => w.kind === 'single').map((w) => w.id));
-    // A Ledger signs EVM transactions; its accounts send through the device.
-    for (const w of state.wallets) if (w.kind === 'hardware') single.add(w.id);
-    // A shared wallet signs Solana Devnet transfers through a two-device ceremony.
-    const shared = new Set(state.wallets.filter((w) => w.kind === 'tss').map((w) => w.id));
+    const wallets = new Map(state.wallets.map((w) => [w.id, w]));
     return state.accounts.filter(
-      (a) =>
-        (shared.has(a.walletId) && a.chainId === SOLANA_DEVNET) ||
-        (((a.family === 'evm' && EVM_SIGNING_CHAINS.has(a.chainId)) ||
-          (a.family === 'solana' && a.chainId === SOLANA_DEVNET) ||
-          (a.family === 'cosmos' && a.chainId === COSMOS_TESTNET) ||
-          (a.family === 'bitcoin' && a.chainId === BITCOIN_SIGNET)) &&
-          single.has(a.walletId) &&
-          a.derivationPath),
+      (a) => (!walletId || a.walletId === walletId) && canSendFrom(a, wallets.get(a.walletId)),
     );
-  }, [state]);
+  }, [state, walletId]);
+  const shell = useShell();
   const [accountId, setAccountId] = useState(
     accounts.find((a) => a.id === initialAccountId)?.id ?? accounts[0]?.id ?? '',
   );
   const account = accounts.find((a) => a.id === accountId);
   const chain = account ? findChain(registry, account.chainId) : undefined;
+  const balanceAccounts = useMemo(() => (account ? [account] : []), [account]);
+  const balances = useBalances(balanceAccounts);
+  const nativeHolding =
+    account && chain
+      ? balances.byAccount
+          .get(account.id)
+          ?.holdings.find((h) => h.assetRef === chain.nativeAsset.ref && !h.error)
+      : undefined;
 
   const [to, setTo] = useState('');
   const [assetKind, setAssetKind] = useState<'native' | 'token'>('native');
@@ -114,11 +118,40 @@ function SendForm({
   const [messageVersion, setMessageVersion] = useState<'legacy' | 'v0'>('legacy');
 
   if (accounts.length === 0) {
+    const keyed = state.wallets.find(
+      (w) => w.kind === 'single' && (!walletId || w.id === walletId),
+    );
     return (
-      <p className="p-4 text-[12px] text-faint">
-        Create a single-key wallet with an EVM chain, Bitcoin Signet, Solana Devnet or Osmosis
-        Testnet to send here.
-      </p>
+      <div className="flex flex-col gap-3 p-4 text-[12px] text-faint">
+        <p>
+          This build signs on testnets only: Sepolia and the other EVM test networks, Bitcoin
+          Signet, Solana Devnet and Osmosis Testnet. Mainnet accounts receive and show balances, but
+          cannot send yet.
+        </p>
+        <p>
+          {keyed
+            ? `Add a testnet account to "${keyed.name}" to send from it.`
+            : 'Create a wallet first; new wallets include one testnet account per chain family.'}
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() =>
+              shell.openDialog(
+                keyed
+                  ? { kind: 'addAccount', walletId: keyed.id, chainId: SENDABLE_TESTNETS[0]! }
+                  : { kind: 'newWallet' },
+              )
+            }
+          >
+            {keyed ? 'Add testnet account…' : 'New wallet…'}
+          </Button>
+        </div>
+      </div>
     );
   }
 
@@ -138,6 +171,12 @@ function SendForm({
     (account?.family === 'solana' || account?.family === 'cosmos') &&
     units !== null &&
     BigInt(units) > 0xffffffffffffffffn;
+  // Advisory only: the read may be stale, and the core's simulation is what decides.
+  const overBalance =
+    assetKind === 'native' &&
+    nativeHolding !== undefined &&
+    units !== null &&
+    BigInt(units) > BigInt(nativeHolding.amount);
   const canSubmit =
     !working &&
     (account?.family !== 'bitcoin' || bitcoinReady) &&
@@ -374,12 +413,19 @@ function SendForm({
       <Field
         label={`Amount${symbol ? ` (${symbol})` : ''}`}
         htmlFor={ids.amount}
+        hint={
+          assetKind === 'native' && nativeHolding && chain
+            ? `available ${formatUnits(nativeHolding.amount, chain.nativeAsset.decimals)} ${chain.nativeAsset.symbol}`
+            : undefined
+        }
         error={
           exceedsLamports
             ? 'Amount exceeds the transfer base-unit limit'
             : amount !== '' && units === null
               ? 'Not an amount this asset can hold'
-              : null
+              : overBalance
+                ? `More than this account holds (${formatUnits(nativeHolding!.amount, chain!.nativeAsset.decimals)} ${chain!.nativeAsset.symbol}); the network will refuse it. Receive coins first.`
+                : null
         }
       >
         <Input

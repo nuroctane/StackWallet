@@ -60,6 +60,7 @@ import { registry as elementRegistry } from './workspace/elements/registry.js';
 import { LayoutTabs } from './workspace/LayoutTabs.js';
 import { LockSignal } from './workspace/LockSignal.js';
 import { OmniSearch } from './workspace/OmniSearch.js';
+import { openOrAddPane } from './workspace/open.js';
 import { workspace, workspaceQuarantinedKey } from './workspace/persist.js';
 import { Recorders } from './workspace/Recorders.js';
 import type { ElementKind } from './workspace/schema.js';
@@ -115,20 +116,7 @@ export function App() {
   );
 }
 
-/** Open the first pane of a kind, or add one at the next free slot. */
-function revealElement(kind: ElementKind): void {
-  const existing = workspace.findPane(kind);
-  if (existing) {
-    workspace.raise(existing.id);
-    workspace.focus(existing.id);
-    return;
-  }
-  const def = elementRegistry[kind];
-  workspace.addPane(
-    { kind, props: { ...(def.defaultProps ?? {}) }, w: def.defaultSize.w, h: def.defaultSize.h },
-    getCanvasViewport(),
-  );
-}
+const revealElement = (kind: ElementKind): void => openOrAddPane(kind);
 
 const ROUTE_HOME: UiRoute = { kind: 'directory' };
 
@@ -390,6 +378,7 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       <AddAccountDialog
         open={dialog?.kind === 'addAccount'}
         walletId={dialog?.kind === 'addAccount' ? dialog.walletId : undefined}
+        chainId={dialog?.kind === 'addAccount' ? dialog.chainId : undefined}
         onClose={closeDialog}
       />
       <ReceiveDialog
@@ -400,6 +389,7 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       <SendDialog
         open={dialog?.kind === 'send'}
         accountId={dialog?.kind === 'send' ? dialog.accountId : undefined}
+        walletId={dialog?.kind === 'send' ? dialog.walletId : undefined}
         onClose={closeDialog}
       />
     </ShellContext>

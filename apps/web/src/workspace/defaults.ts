@@ -36,12 +36,12 @@ interface Seed {
 // Both default layouts are laid out for a 1440x820 canvas with an 8px gutter
 // on every side so a fresh install shows every element without scrolling.
 const HOME: readonly Seed[] = [
-  { kind: 'overview', x: 8, y: 8, w: 688, h: 216 },
-  { kind: 'terrain', x: 704, y: 8, w: 416, h: 216, props: { weeks: 26 } },
+  { kind: 'overview', x: 8, y: 8, w: 688, h: 384 },
+  { kind: 'watchlist', x: 704, y: 8, w: 416, h: 384 },
   { kind: 'approvals', x: 1128, y: 8, w: 296, h: 784 },
-  { kind: 'directory', x: 8, y: 232, w: 296, h: 560 },
-  { kind: 'holdings', x: 312, y: 232, w: 384, h: 560, props: { hideZero: false } },
-  { kind: 'ledger', x: 704, y: 232, w: 416, h: 560, props: { range: '30d' } },
+  { kind: 'directory', x: 8, y: 400, w: 296, h: 392 },
+  { kind: 'holdings', x: 312, y: 400, w: 384, h: 392, props: { hideZero: false } },
+  { kind: 'ledger', x: 704, y: 400, w: 416, h: 392, props: { range: '30d' } },
 ];
 
 const DEVICES: readonly Seed[] = [
