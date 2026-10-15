@@ -12,6 +12,7 @@ pub enum ChainFamily {
     Bitcoin,
     Solana,
     Cosmos,
+    Tron,
 }
 
 /// CAIP-2 chain identifier, e.g. `eip155:1` or `cosmos:osmosis-1`.
@@ -52,6 +53,7 @@ impl ChainId {
             "bip122" => Some(ChainFamily::Bitcoin),
             "solana" => Some(ChainFamily::Solana),
             "cosmos" => Some(ChainFamily::Cosmos),
+            "tron" => Some(ChainFamily::Tron),
             _ => None,
         }
     }
@@ -77,7 +79,7 @@ pub enum Curve {
 impl Curve {
     pub fn for_family(family: ChainFamily) -> &'static [Curve] {
         match family {
-            ChainFamily::Evm | ChainFamily::Cosmos => &[Curve::Secp256k1],
+            ChainFamily::Evm | ChainFamily::Cosmos | ChainFamily::Tron => &[Curve::Secp256k1],
             ChainFamily::Bitcoin => &[Curve::Secp256k1, Curve::Secp256k1Tr],
             ChainFamily::Solana => &[Curve::Ed25519],
         }

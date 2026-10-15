@@ -30,6 +30,13 @@ import {
   cosmosTransferStatus,
   type CosmosAdapter,
 } from '@stackwallet/chains-cosmos';
+import {
+  broadcastTron,
+  prepareTron,
+  tronApprovalValid,
+  tronTransferStatus,
+  type TronAdapter,
+} from '@stackwallet/chains-tron';
 
 import { vault } from '../core/bridge.js';
 import type { ProposedBy } from '../core/vault.js';
@@ -71,6 +78,11 @@ function cosmosAdapter(registry: ChainRegistry, chainId: string): CosmosAdapter 
   const a = registry.adapterFor(chainId);
   if (a.family !== 'cosmos') throw new Error(`${chainId} is not a Cosmos chain`);
   return a as unknown as CosmosAdapter;
+}
+function tronAdapter(registry: ChainRegistry, chainId: string): TronAdapter {
+  const a = registry.adapterFor(chainId);
+  if (a.family !== 'tron') throw new Error(`Not a Tron network: ${chainId}`);
+  return a as unknown as TronAdapter;
 }
 function bitcoinAdapter(registry: ChainRegistry, chainId: string): BitcoinAdapter {
   const a = registry.adapterFor(chainId);
@@ -224,12 +236,18 @@ async function proposeIntent(
                 account.address,
                 account.publicKeyHex,
               )
-            : await prepareEvm(
-                evmAdapter(registry, account.chainId),
-                proposed.value.intent,
-                account.address,
-                req.replace,
-              );
+            : account.family === 'tron'
+              ? await prepareTron(
+                  tronAdapter(registry, account.chainId),
+                  proposed.value.intent,
+                  account.address,
+                )
+              : await prepareEvm(
+                  evmAdapter(registry, account.chainId),
+                  proposed.value.intent,
+                  account.address,
+                  req.replace,
+                );
   } catch (err) {
     return {
       ok: false,
@@ -341,6 +359,7 @@ async function approveAndBroadcast(
 ): Promise<Result<TxRecord>> {
   const solana = tx.unsigned && 'recentBlockhash' in tx.unsigned ? tx.unsigned : null;
   const cosmos = tx.unsigned && 'timeoutHeight' in tx.unsigned ? tx.unsigned : null;
+  const tron = tx.unsigned && 'refBlockHash' in tx.unsigned ? tx.unsigned : null;
   const bitcoin = tx.unsigned && 'inputs' in tx.unsigned ? tx.unsigned : null;
   if (bitcoin) {
     try {
@@ -376,6 +395,18 @@ async function approveAndBroadcast(
         );
     } catch (err) {
       return { ok: false, error: `Could not check account and timeout: ${nodeMessage(err)}` };
+    }
+  }
+  if (tron) {
+    try {
+      if (!(await tronApprovalValid(tronAdapter(registry, tx.intent.chainId), tron)))
+        return vault.txReport(
+          tx.id,
+          'expired',
+          'Expiration is too close for the network to accept it; propose and approve a fresh transfer',
+        );
+    } catch (err) {
+      return { ok: false, error: `Could not check expiration: ${nodeMessage(err)}` };
     }
   }
   const signed = await vault.txApprove(tx.id, passphrase);
@@ -415,6 +446,7 @@ async function broadcastSaved(
   const tx = signed;
   const solana = tx.unsigned && 'recentBlockhash' in tx.unsigned ? tx.unsigned : null;
   const cosmos = tx.unsigned && 'timeoutHeight' in tx.unsigned ? tx.unsigned : null;
+  const tron = tx.unsigned && 'refBlockHash' in tx.unsigned ? tx.unsigned : null;
   const bitcoin = tx.unsigned && 'inputs' in tx.unsigned ? tx.unsigned : null;
   const raw = signed.rawSignedHex;
   if (signed.state === 'signed') {
@@ -428,7 +460,9 @@ async function broadcastSaved(
         ? await broadcastSolana(solanaAdapter(registry, tx.intent.chainId), tx.intent.chainId, raw)
         : cosmos
           ? await broadcastCosmos(cosmosAdapter(registry, tx.intent.chainId), cosmos, raw)
-          : await broadcastEvm(evmAdapter(registry, tx.intent.chainId), tx.intent.chainId, raw);
+          : tron
+            ? await broadcastTron(tronAdapter(registry, tx.intent.chainId), tron, raw)
+            : await broadcastEvm(evmAdapter(registry, tx.intent.chainId), tx.intent.chainId, raw);
     const note = (solana ? hash === signed.hash : hash.toLowerCase() === signed.hash?.toLowerCase())
       ? null
       : `node reported ${hash}; tracking the core signature`;
@@ -547,6 +581,7 @@ export async function pollPending(
       try {
         const solana = t.unsigned && 'recentBlockhash' in t.unsigned ? t.unsigned : null;
         const cosmos = t.unsigned && 'timeoutHeight' in t.unsigned ? t.unsigned : null;
+        const tron = t.unsigned && 'refBlockHash' in t.unsigned ? t.unsigned : null;
         const bitcoin = t.unsigned && 'inputs' in t.unsigned ? t.unsigned : null;
         // Resume tracking after a crash between signing, broadcast and the saved response.
         if (t.state !== 'pending') {
@@ -575,7 +610,9 @@ export async function pollPending(
                   cosmos,
                   t.hash,
                 )
-              : await registry.adapterFor(t.intent.chainId).status(t.hash, t.intent.chainId);
+              : tron
+                ? await tronTransferStatus(tronAdapter(registry, t.intent.chainId), tron, t.hash)
+                : await registry.adapterFor(t.intent.chainId).status(t.hash, t.intent.chainId);
         if (status.state === 'confirmed') {
           const done = await vault.txReport(t.id, 'confirmed', `block ${status.blockNumber}`);
           if (done.ok) await settleNonceSiblings(done.value, txs);
@@ -587,7 +624,9 @@ export async function pollPending(
             'expired',
             cosmos
               ? 'Timeout passed without a transfer; propose again'
-              : 'Blockhash expired without a finalized transfer; propose again',
+              : tron
+                ? 'Expiration passed without a transfer; propose again'
+                : 'Blockhash expired without a finalized transfer; propose again',
           );
         }
       } catch {

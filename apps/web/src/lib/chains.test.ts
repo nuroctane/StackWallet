@@ -45,6 +45,18 @@ describe('explorerAddressUrl', () => {
     ).toBeUndefined();
   });
 
+  it('maps Tronscan fragment routes to the address page', () => {
+    expect(
+      explorerAddressUrl(
+        { ...base, explorerTxUrl: 'https://nile.tronscan.org/#/transaction/{hash}' },
+        'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+      ),
+    ).toBe('https://nile.tronscan.org/#/address/TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t');
+    expect(
+      explorerAddressUrl({ ...base, explorerTxUrl: 'http://x.org/#/transaction/{hash}' }, 'T1'),
+    ).toBeUndefined();
+  });
+
   it('refuses non-https templates', () => {
     expect(
       explorerAddressUrl({ ...base, explorerTxUrl: 'http://example.org/tx/{hash}' }, '0xabc'),

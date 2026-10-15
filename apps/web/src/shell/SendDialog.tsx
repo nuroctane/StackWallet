@@ -2,6 +2,7 @@ import { useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { isValidEvmAddress, tokenInfo, type EvmAdapter } from '@stackwallet/chains-evm';
 import { isValidSolanaAddress } from '@stackwallet/chains-solana';
 import { isValidCosmosAddress } from '@stackwallet/chains-cosmos';
+import { isValidTronAddress } from '@stackwallet/chains-tron';
 import {
   isSignetRecipient,
   signetRecipient,
@@ -125,8 +126,8 @@ function SendForm({
       <div className="flex flex-col gap-3 p-4 text-[12px] text-faint">
         <p>
           This build signs on testnets only: Sepolia and the other EVM test networks, Bitcoin
-          Signet, Solana Devnet and Osmosis Testnet. Mainnet accounts receive and show balances, but
-          cannot send yet.
+          Signet, Solana Devnet, Osmosis Testnet and Tron Nile. Mainnet accounts receive and show
+          balances, but cannot send yet.
         </p>
         <p>
           {keyed
@@ -165,12 +166,14 @@ function SendForm({
         ? isValidSolanaAddress(to.trim())
         : account?.family === 'cosmos'
           ? isValidCosmosAddress(to.trim(), 'osmo') && to.trim() === to.trim().toLowerCase()
-          : isValidEvmAddress(to.trim());
+          : account?.family === 'tron'
+            ? isValidTronAddress(to.trim())
+            : isValidEvmAddress(to.trim());
   const units = decimals === undefined ? null : parseUnits(amount, decimals);
   const exceedsLamports =
-    (account?.family === 'solana' || account?.family === 'cosmos') &&
+    (account?.family === 'solana' || account?.family === 'cosmos' || account?.family === 'tron') &&
     units !== null &&
-    BigInt(units) > 0xffffffffffffffffn;
+    BigInt(units) > (account.family === 'tron' ? 0x7fffffffffffffffn : 0xffffffffffffffffn);
   // Advisory only: the read may be stale, and the core's simulation is what decides.
   const overBalance =
     assetKind === 'native' &&
@@ -303,7 +306,9 @@ function SendForm({
               ? 'Not a valid Solana public key'
               : account?.family === 'cosmos'
                 ? 'Not a lowercase osmo address'
-                : 'Not a valid EVM address (checksum included)'
+                : account?.family === 'tron'
+                  ? 'Not a valid Tron address (T…, checksum included)'
+                  : 'Not a valid EVM address (checksum included)'
             : null
         }
       >
@@ -317,7 +322,9 @@ function SendForm({
               ? 'Solana public key…'
               : account?.family === 'cosmos'
                 ? 'osmo1…'
-                : '0x…'
+                : account?.family === 'tron'
+                  ? 'T…'
+                  : '0x…'
           }
           spellCheck={false}
           autoComplete="off"
@@ -366,6 +373,12 @@ function SendForm({
         <p className="text-[11px] text-faint">
           Osmosis Testnet native transfers only. A changed account sequence or expired timeout needs
           a fresh proposal.
+        </p>
+      )}
+      {account?.family === 'tron' && (
+        <p className="text-[11px] text-faint">
+          Tron Nile native TRX transfers only. Sending to a new address burns its activation fee.
+          The transfer expires 30 minutes after it is prepared.
         </p>
       )}
       {account?.family === 'bitcoin' && (

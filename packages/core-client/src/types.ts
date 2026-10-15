@@ -5,7 +5,7 @@
  */
 import { z } from 'zod';
 
-export const ChainFamily = z.enum(['evm', 'bitcoin', 'solana', 'cosmos']);
+export const ChainFamily = z.enum(['evm', 'bitcoin', 'solana', 'cosmos', 'tron']);
 export type ChainFamily = z.infer<typeof ChainFamily>;
 
 /** CAIP-2: `namespace:reference`. */
@@ -25,6 +25,8 @@ export function chainFamilyOf(chainId: ChainId): ChainFamily | undefined {
       return 'solana';
     case 'cosmos':
       return 'cosmos';
+    case 'tron':
+      return 'tron';
     default:
       return undefined;
   }
@@ -778,7 +780,19 @@ export const BitcoinTx = z.strictObject({
     .max(8),
 });
 export type BitcoinTx = z.infer<typeof BitcoinTx>;
-export const LedgerUnsignedTx = z.union([EvmTx, SolanaTx, CosmosTx, BitcoinTx]);
+const TronAddress = z.string().regex(/^T[1-9A-HJ-NP-Za-km-z]{33}$/);
+export const TronTx = z.strictObject({
+  chainId: z.literal('tron:0xcd8690dc'),
+  from: TronAddress,
+  to: TronAddress,
+  sun: Amount,
+  refBlockBytes: z.string().regex(/^[0-9a-f]{4}$/),
+  refBlockHash: z.string().regex(/^[0-9a-f]{16}$/),
+  expiration: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  timestamp: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
+export type TronTx = z.infer<typeof TronTx>;
+export const LedgerUnsignedTx = z.union([EvmTx, SolanaTx, CosmosTx, BitcoinTx, TronTx]);
 export type LedgerUnsignedTx = z.infer<typeof LedgerUnsignedTx>;
 
 export const Signer = z.object({ walletId: z.string(), path: z.string(), address: z.string() });

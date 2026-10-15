@@ -26,6 +26,7 @@ use crate::policy::{self, Decision, Policy, PolicyContext, Window};
 use crate::provenance;
 use crate::solana::{self, SolanaTx};
 use crate::threshold;
+use crate::tron::{self, TronTx};
 use crate::vault::SessionProof;
 use crate::vault::{EncryptedVault, Secret, Vault};
 use crate::{CoreError, Result};
@@ -60,8 +61,14 @@ pub enum UnsignedTx {
     Solana(SolanaTx),
     Cosmos(CosmosTx),
     Bitcoin(BitcoinTx),
+    Tron(TronTx),
 }
 
+impl From<TronTx> for UnsignedTx {
+    fn from(tx: TronTx) -> Self {
+        Self::Tron(tx)
+    }
+}
 impl From<EvmTx> for UnsignedTx {
     fn from(tx: EvmTx) -> Self {
         Self::Evm(tx)
@@ -84,11 +91,12 @@ impl UnsignedTx {
             Self::Solana(tx) => tx.check_matches_intent(intent),
             Self::Cosmos(tx) => tx.check_matches_intent(intent),
             Self::Bitcoin(tx) => tx.check_matches_intent(intent),
+            Self::Tron(tx) => tx.check_matches_intent(intent),
         }
     }
     fn curve(&self) -> Curve {
         match self {
-            Self::Evm(_) | Self::Cosmos(_) | Self::Bitcoin(_) => Curve::Secp256k1,
+            Self::Evm(_) | Self::Cosmos(_) | Self::Bitcoin(_) | Self::Tron(_) => Curve::Secp256k1,
             Self::Solana(_) => Curve::Ed25519,
         }
     }
@@ -328,6 +336,8 @@ pub fn propose(
         cosmos::check_chain(&intent.chain_id.0)?;
     } else if intent.chain_id.0.starts_with("bip122:") {
         bitcoin::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("tron:") {
+        tron::check_chain(&intent.chain_id.0)?;
     } else {
         evm::check_chain(&intent.chain_id.0)?;
     }
@@ -382,6 +392,7 @@ fn signer_address(
         UnsignedTx::Solana(_) => Ok(bs58::encode(&key.public).into_string()),
         UnsignedTx::Cosmos(_) => cosmos::address(&key.public),
         UnsignedTx::Bitcoin(_) => bitcoin::address(&key.public),
+        UnsignedTx::Tron(_) => tron::address(&key.public),
         UnsignedTx::Evm(_) => Ok(evm::checksum_address(&evm::address_from_public(
             &key.public,
         )?)),
@@ -436,6 +447,7 @@ pub fn attach(
         UnsignedTx::Solana(tx) => derived == signer.address && tx.from == derived,
         UnsignedTx::Cosmos(tx) => derived == signer.address && tx.from == derived,
         UnsignedTx::Bitcoin(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Tron(tx) => derived == signer.address && tx.from == derived,
     };
     if !matches {
         return Err(invalid(format!(
@@ -575,6 +587,7 @@ pub fn approve(
             UnsignedTx::Solana(tx) => tx.sign(key.secret()),
             UnsignedTx::Cosmos(tx) => tx.sign(key.secret()),
             UnsignedTx::Bitcoin(tx) => tx.sign(key.secret()),
+            UnsignedTx::Tron(tx) => tx.sign(key.secret()),
         }
     })();
     match signed {
@@ -979,7 +992,7 @@ pub fn report(
     if to == TxState::Expired
         && !matches!(
             ledger.txs[i].unsigned,
-            Some(UnsignedTx::Solana(_) | UnsignedTx::Cosmos(_))
+            Some(UnsignedTx::Solana(_) | UnsignedTx::Cosmos(_) | UnsignedTx::Tron(_))
         )
     {
         return Err(invalid(
@@ -1698,6 +1711,85 @@ mod tests {
         );
         assert!(approve(&mut v, "cosmos", &pw(), "d", 12).is_err());
         load_ledger(&v).unwrap().validate().unwrap();
+    }
+
+    #[test]
+    fn tron_nile_transfer_signs_as_the_derived_address() {
+        let mut v = vault();
+        let path = "m/44'/195'/0'/0/0";
+        let key = provenance::signing_key(&v, "w", Curve::Secp256k1, path).unwrap();
+        let from = tron::address(&key.public).unwrap();
+        let other =
+            provenance::signing_key(&v, "w", Curve::Secp256k1, "m/44'/195'/0'/0/1").unwrap();
+        let to = tron::address(&other.public).unwrap();
+        let unsigned = TronTx {
+            chain_id: tron::NILE.into(),
+            from: from.clone(),
+            to: to.clone(),
+            sun: "1000000".into(),
+            ref_block_bytes: "60b9".into(),
+            ref_block_hash: "abababababababab".into(),
+            expiration: 1_760_000_060_000,
+            timestamp: 1_760_000_000_000,
+        };
+        let mut i = intent("tron", &to, "1000000");
+        i.chain_id = ChainId(tron::NILE.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", tron::NILE)),
+            amount: Amount("1000000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        // The UI's address must be the one the core derives at the path.
+        assert!(attach(
+            &mut v,
+            "tron",
+            signer(&to),
+            unsigned.clone(),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        let json = serde_json::to_value(&unsigned).unwrap();
+        let parsed: UnsignedTx = serde_json::from_value(json).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Tron(_)));
+        attach(
+            &mut v,
+            "tron",
+            signer(&from),
+            parsed,
+            serde_json::json!({"ok":true}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "tron", "d", 4).unwrap();
+        let rec = approve(&mut v, "tron", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        assert_eq!(
+            rec.hash.as_deref(),
+            Some(hex::encode(unsigned.txid().unwrap()).as_str())
+        );
+        report(&mut v, "tron", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "tron", TxState::Pending, None, "d", 7).unwrap();
+        assert_eq!(
+            report(&mut v, "tron", TxState::Expired, None, "d", 8)
+                .unwrap()
+                .state,
+            TxState::Expired
+        );
+        load_ledger(&v).unwrap().validate().unwrap();
+        let mut mainnet = intent("tron-main", &to, "1");
+        mainnet.chain_id = ChainId("tron:0x2b6653dc".into());
+        assert!(propose(&mut v, mainnet, "d", 9).is_err());
     }
 
     #[test]

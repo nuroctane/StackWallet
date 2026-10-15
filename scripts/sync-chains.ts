@@ -120,7 +120,7 @@ const CHAINLIST_COLLISIONS = new Set([10001]);
 const COLLISION_RPCS: Record<number, string[]> = { 10001: ['https://mainnet.ethereumpow.org'] };
 
 // Served by curated entries in families the generator does not produce.
-const CURATED_LLAMA = new Set(['Bitcoin', 'Litecoin', 'Doge', 'Solana']);
+const CURATED_LLAMA = new Set(['Bitcoin', 'Litecoin', 'Doge', 'Solana', 'Tron']);
 
 // Listed under EVM by DefiLlama but run their own virtual machines; each needs its own family.
 const NOT_EVM = new Set([

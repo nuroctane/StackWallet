@@ -55,6 +55,7 @@ const SIGNING_PHASE: Record<ChainFamily, string> = {
   bitcoin: 'phase 4',
   solana: 'phase 4',
   cosmos: 'phase 4',
+  tron: 'phase 4',
 };
 
 export abstract class BaseAdapter<F extends ChainFamily = ChainFamily> implements ChainAdapter {

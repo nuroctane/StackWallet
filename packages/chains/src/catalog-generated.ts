@@ -762,7 +762,6 @@ export const GENERATED_INDEXERS: Readonly<Record<string, string>> = {
 
 /** DefiLlama chains no StackWallet family serves yet, by TVL. */
 export const LLAMA_UNSUPPORTED: readonly string[] = [
-  "Tron",
   "Hyperliquid L1",
   "Bittensor",
   "Sui",

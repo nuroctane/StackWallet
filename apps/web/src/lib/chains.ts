@@ -39,9 +39,10 @@ export const FAMILY_LABEL: Record<ChainFamily, string> = {
   bitcoin: 'BTC',
   solana: 'SOL',
   cosmos: 'COSMOS',
+  tron: 'TRON',
 };
 
-export const FAMILY_ORDER: ChainFamily[] = ['evm', 'bitcoin', 'solana', 'cosmos'];
+export const FAMILY_ORDER: ChainFamily[] = ['evm', 'bitcoin', 'solana', 'cosmos', 'tron'];
 
 /**
  * Explorers publish a tx URL; the address page almost always lives next to it
@@ -51,6 +52,14 @@ export const FAMILY_ORDER: ChainFamily[] = ['evm', 'bitcoin', 'solana', 'cosmos'
 export function explorerAddressUrl(info: ChainInfo, address: string): string | undefined {
   const tpl = info.explorerTxUrl;
   if (!tpl) return undefined;
+  // Tronscan routes in the fragment: /#/transaction/<id> -> /#/address/<addr>.
+  const hashRoute = tpl.indexOf('/#/transaction/');
+  if (hashRoute >= 0) {
+    const root = tpl.slice(0, hashRoute);
+    return /^https:\/\/[^/]+$/.test(root)
+      ? `${root}/#/address/${encodeURIComponent(address)}`
+      : undefined;
+  }
   const idx = tpl.indexOf('/tx/');
   if (idx < 0) return undefined;
   const segment = info.family === 'solana' ? 'account' : 'address';

@@ -7,7 +7,8 @@ compute sighashes, simulate, attach signatures, broadcast and report status.
 ## Identifiers
 
 - Chain ids are CAIP-2: `eip155:1`, `bip122:000000000019d6689c085ae165831e93` (first 32 hex
-  chars of the genesis block hash), `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`, `cosmos:osmosis-1`.
+  chars of the genesis block hash), `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`, `cosmos:osmosis-1`,
+  `tron:0x2b6653dc`.
 - The bundled list is `CHAIN_CATALOG` in `packages/chains/src/catalog.ts`; `chainsForFamily()`
   slices it per adapter. Family-specific facts (bech32 prefix, base denom, address algorithm,
   base58 version bytes) live in `ChainInfo.extra`.
@@ -29,7 +30,7 @@ compute sighashes, simulate, attach signatures, broadcast and report status.
 - The generated file is committed, so builds stay reproducible and the app fetches no chain
   registry at runtime (D8). Regenerate it from the repo root and review the diff.
 - Asset refs are `<chainId>:<kind>:<identifier>` where kind ∈ `native | erc20 | erc721 | erc1155 |
-spl | spl2022 | ibc | factory | cw20 | brc20 | rune`.
+spl | spl2022 | ibc | factory | cw20 | brc20 | rune | trc20`.
 - Public keys are `{ curve: 'secp256k1' | 'ed25519' | 'secp256k1-tr', hex }`.
 
 ## Interface
@@ -245,6 +246,35 @@ sends remain disabled. The remaining bullets describe target coverage:
 - Sighash: SIGN_MODE_DIRECT `SignDoc` SHA-256; secp256k1 ECDSA via CGGMP21. Ed25519-keyed chains
   are treated as a later extension.
 - IBC transfers track the acknowledgement on the destination chain before `Confirmed`.
+
+### Tron (`chains-tron`, java-tron HTTP API)
+
+Chain ids are `tron:<EVM-style chain id>`: `tron:0x2b6653dc` (mainnet), `tron:0xcd8690dc` (Nile),
+`tron:0x94a9059e` (Shasta). The genesis block id ends with the same eight hex digits, so every
+endpoint proves its network through `/wallet/getblockbynum {num: 0}` before it is used.
+Addresses are base58check of `0x41 || keccak256(uncompressed key)[12..]`; accounts derive at
+`m/44'/195'/0'/0/i` like TronLink. java-tron reports balances as bare JSON numbers that can
+exceed 2^53, so responses are read as text and long integers are quoted before parsing.
+
+Reads: TRX from `/wallet/getaccount` (an address that never received TRX reads as zero) and the
+mainnet USDT TRC-20 balance from `balanceOf` through `/wallet/triggerconstantcontract`, both
+cross-checked across endpoints. History comes from TronGrid's indexed `/v1/accounts/{addr}/transactions`,
+which plain java-tron nodes do not serve; TRX transfers carry net changes and other contract
+calls are listed without them. Keyless TronGrid allows 3 requests a second, so PublicNode is
+the first mainnet endpoint.
+
+Current send coverage is single-key native TRX on Nile only. `prepareTron` takes the reference
+block from `/wallet/getnowblock` and sets a 30-minute expiration. It reads the chain parameters,
+bandwidth and both accounts, then estimates the fee. Sending to an address with no account
+burns the activation fee, and the simulation warns about it. The core independently encodes
+`Transaction.raw` with exactly one `TransferContract` and no permission id, data, fee limit or
+extra contracts. It signs sha256 of those bytes (the transaction id) with recoverable
+secp256k1 ECDSA and returns the serialized `Transaction`. Rust and TypeScript share a pinned
+byte vector. Approval is refused within a minute of expiration. Broadcast accepts only the
+ledger's own bytes plus one 65-byte signature, through `/wallet/broadcasthex`. Status comes from
+`/walletsolidity/gettransactioninfobyid`. Expiry is reported only after a solidified block
+passes the expiration and the id is still absent. TRC-20 transfers, staking, resources,
+mainnet and threshold sends are not enabled. Threshold Tron needs CGGMP21.
 
 ## Names and collectibles
 

@@ -56,7 +56,7 @@ export type ChainLayer = z.infer<typeof ChainLayer>;
 
 export const ChainInfo = z.object({
   chainId: z.string(),
-  family: z.enum(['evm', 'bitcoin', 'solana', 'cosmos']),
+  family: z.enum(['evm', 'bitcoin', 'solana', 'cosmos', 'tron']),
   name: z.string(),
   nativeAsset: z.object({ ref: z.string(), symbol: z.string(), decimals: z.number().int() }),
   testnet: z.boolean().default(false),

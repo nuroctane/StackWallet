@@ -3,6 +3,7 @@ import { createBitcoinAdapter } from '@stackwallet/chains-bitcoin';
 import { createCosmosAdapter } from '@stackwallet/chains-cosmos';
 import { createEvmAdapter } from '@stackwallet/chains-evm';
 import { createSolanaAdapter } from '@stackwallet/chains-solana';
+import { createTronAdapter } from '@stackwallet/chains-tron';
 
 /**
  * One registry per app with every bundled family adapter registered. The
@@ -15,5 +16,6 @@ export function createDefaultRegistry(): ChainRegistry {
     .register(createEvmAdapter({ rpc }))
     .register(createBitcoinAdapter({ rpc }))
     .register(createSolanaAdapter({ rpc }))
-    .register(createCosmosAdapter({ rpc }));
+    .register(createCosmosAdapter({ rpc }))
+    .register(createTronAdapter({ rpc }));
 }

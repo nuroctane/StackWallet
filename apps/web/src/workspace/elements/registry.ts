@@ -184,7 +184,7 @@ export const registry: ElementRegistry = {
   transactions: def({
     kind: 'transactions',
     title: 'transaction history',
-    hint: 'Wallet transactions across EVM L1s, L2s, sidechains and appchains, Bitcoin-family networks, Solana and Cosmos. Local signing records plus paginated public-chain reads; source and coverage are always shown.',
+    hint: 'Wallet transactions across EVM L1s, L2s, sidechains and appchains, Bitcoin-family networks, Solana, Cosmos and Tron. Local signing records plus paginated public-chain reads; source and coverage are always shown.',
     defaultSize: elementDefaults.transactions,
     defaultProps: { walletId: '' },
     settings: [

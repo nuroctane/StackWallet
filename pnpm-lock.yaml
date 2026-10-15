@@ -53,6 +53,9 @@ importers:
       '@stackwallet/chains-solana':
         specifier: workspace:*
         version: link:../../packages/chains-solana
+      '@stackwallet/chains-tron':
+        specifier: workspace:*
+        version: link:../../packages/chains-tron
       '@stackwallet/collectibles':
         specifier: workspace:*
         version: link:../../packages/collectibles
@@ -283,6 +286,31 @@ importers:
       '@solana/kit':
         specifier: 8.4.0
         version: 8.4.0(typescript@7.0.2)
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-tron:
+    dependencies:
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
       typescript:
         specifier: 7.0.2
         version: 7.0.2

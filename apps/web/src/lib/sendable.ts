@@ -2,6 +2,7 @@ import type { Account, Wallet } from '@stackwallet/core-client';
 import { BITCOIN_SIGNET } from '@stackwallet/chains-bitcoin';
 import { COSMOS_TESTNET } from '@stackwallet/chains-cosmos';
 import { SOLANA_DEVNET } from '@stackwallet/chains-solana';
+import { TRON_NILE } from '@stackwallet/chains-tron';
 
 import { EVM_SIGNING_CHAINS } from './chains.js';
 
@@ -11,6 +12,7 @@ export const SENDABLE_TESTNETS: readonly string[] = [
   BITCOIN_SIGNET,
   SOLANA_DEVNET,
   COSMOS_TESTNET,
+  TRON_NILE,
 ];
 
 /**
@@ -36,5 +38,7 @@ export function canSendFrom(
       return account.chainId === COSMOS_TESTNET;
     case 'bitcoin':
       return account.chainId === BITCOIN_SIGNET;
+    case 'tron':
+      return account.chainId === TRON_NILE;
   }
 }

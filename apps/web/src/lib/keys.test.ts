@@ -29,6 +29,9 @@ describe('account paths', () => {
       "m/84'/0'/1'/0/0",
     );
     expect(accountPath(c('cosmos:cosmoshub-4'), 4)?.path).toBe("m/44'/118'/0'/0/4");
+    // TronLink steps the address index under coin type 195.
+    expect(accountPath(c('tron:0x2b6653dc'), 0)?.path).toBe("m/44'/195'/0'/0/0");
+    expect(accountPath(c('tron:0xcd8690dc'), 2)?.path).toBe("m/44'/195'/0'/0/2");
     expect(accountPath(c('eip155:8453'), 0)).toEqual(standardPath(c('eip155:8453')));
     expect(accountPath(c('eip155:8453'), -1)).toBeNull();
     expect(nextAccountIndex(c('eip155:8453'), ["m/44'/60'/0'/0/0", "m/44'/60'/0'/0/1"])).toBe(2);

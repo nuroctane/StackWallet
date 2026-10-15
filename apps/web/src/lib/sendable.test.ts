@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { BITCOIN_SIGNET } from '@stackwallet/chains-bitcoin';
 import { COSMOS_TESTNET } from '@stackwallet/chains-cosmos';
 import { SOLANA_DEVNET } from '@stackwallet/chains-solana';
+import { TRON_NILE } from '@stackwallet/chains-tron';
 
 import { canSendFrom, SENDABLE_TESTNETS } from './sendable.js';
 
 const single = { kind: 'single' as const };
-const acct = (chainId: string, family: 'evm' | 'bitcoin' | 'solana' | 'cosmos') => ({
+const acct = (chainId: string, family: 'evm' | 'bitcoin' | 'solana' | 'cosmos' | 'tron') => ({
   chainId,
   family,
   derivationPath: "m/44'/60'/0'/0/0",
@@ -18,11 +19,13 @@ describe('canSendFrom', () => {
     expect(canSendFrom(acct(BITCOIN_SIGNET, 'bitcoin'), single)).toBe(true);
     expect(canSendFrom(acct(SOLANA_DEVNET, 'solana'), single)).toBe(true);
     expect(canSendFrom(acct(COSMOS_TESTNET, 'cosmos'), single)).toBe(true);
+    expect(canSendFrom(acct(TRON_NILE, 'tron'), single)).toBe(true);
   });
 
   it('refuses mainnets, watch wallets and accounts without a path', () => {
     expect(canSendFrom(acct('eip155:1', 'evm'), single)).toBe(false);
     expect(canSendFrom(acct('cosmos:cosmoshub-4', 'cosmos'), single)).toBe(false);
+    expect(canSendFrom(acct('tron:0x2b6653dc', 'tron'), single)).toBe(false);
     expect(canSendFrom(acct('eip155:11155111', 'evm'), { kind: 'watch' })).toBe(false);
     expect(
       canSendFrom({ ...acct('eip155:11155111', 'evm'), derivationPath: undefined }, single),
@@ -43,7 +46,9 @@ describe('canSendFrom', () => {
           ? 'bitcoin'
           : chainId.startsWith('solana:')
             ? 'solana'
-            : 'cosmos';
+            : chainId.startsWith('tron:')
+              ? 'tron'
+              : 'cosmos';
       expect(canSendFrom(acct(chainId, family), single)).toBe(true);
     }
   });

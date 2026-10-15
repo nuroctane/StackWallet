@@ -37,6 +37,7 @@ pub mod store;
 pub mod threshold;
 pub mod transfer;
 pub mod transport;
+pub mod tron;
 pub mod tss;
 pub mod vault;
 

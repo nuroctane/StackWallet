@@ -27,6 +27,8 @@ export function standardPath(chain: ChainInfo): StandardPath | null {
       };
     case 'cosmos':
       return coin === null ? null : { curve: 'secp256k1', path: `m/44'/${coin}'/0'/0/0` };
+    case 'tron':
+      return { curve: 'secp256k1', path: "m/44'/195'/0'/0/0" };
     default:
       return null;
   }
@@ -54,6 +56,8 @@ export function accountPath(chain: ChainInfo, index: number): StandardPath | nul
         : { curve: 'secp256k1', path: `m/44'/${coin}'/${index}'/0/0` };
     case 'cosmos':
       return { curve: 'secp256k1', path: `m/44'/${coin}'/0'/0/${index}` };
+    case 'tron':
+      return { curve: 'secp256k1', path: `m/44'/195'/0'/0/${index}` };
     default:
       return null;
   }

@@ -23,6 +23,7 @@
     "@stackwallet/chains-cosmos": "workspace:*",
     "@stackwallet/chains-evm": "workspace:*",
     "@stackwallet/chains-solana": "workspace:*",
+    "@stackwallet/chains-tron": "workspace:*",
     "@stackwallet/collectibles": "workspace:*",
     "@stackwallet/core-client": "workspace:*",
     "@stackwallet/market": "workspace:*",

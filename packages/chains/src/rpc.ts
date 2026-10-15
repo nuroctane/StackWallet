@@ -540,6 +540,27 @@ export async function fetchJson(url: string, opts: FetchOptions = {}): Promise<u
   return fetchJsonBody(url, { method: 'GET', headers: { accept: 'application/json' } }, opts);
 }
 
+/**
+ * POST a JSON body and return the raw response text, for REST APIs whose
+ * integers can exceed 2^53 and must be read before `JSON.parse` rounds them.
+ */
+export async function postJsonText(
+  url: string,
+  body: unknown,
+  opts: FetchOptions = {},
+): Promise<string> {
+  return (await fetchJsonBody(
+    url,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(body),
+    },
+    opts,
+    true,
+  )) as string;
+}
+
 /** Bounded Esplora text reads and raw-transaction broadcasts share the JSON timeout. */
 export async function fetchText(
   url: string,

@@ -693,9 +693,58 @@ const COSMOS: ChainInfo[] = [
 ];
 
 /** Hand-checked entries. They win over generated ones with the same chain id. */
+/** CAIP-2 references are the EVM-style chain id, which is also the genesis block id's tail. */
+function tron(spec: {
+  ref: string;
+  name: string;
+  testnet: boolean;
+  explorer: string;
+  rpcs: string[];
+}): ChainInfo {
+  const chainId = `tron:${spec.ref}`;
+  return {
+    chainId,
+    family: 'tron',
+    name: spec.name,
+    nativeAsset: { ref: `${chainId}:native`, symbol: 'TRX', decimals: 6 },
+    testnet: spec.testnet,
+    explorerTxUrl: `${spec.explorer}/#/transaction/{hash}`,
+    defaultRpcs: spec.rpcs,
+    extra: { coinType: 195 },
+    layer: 'L1',
+    ...(spec.testnet ? {} : { priceId: 'tron' }),
+  };
+}
+
+const TRON: ChainInfo[] = [
+  tron({
+    ref: '0x2b6653dc',
+    name: 'Tron',
+    testnet: false,
+    explorer: 'https://tronscan.org',
+    // TronGrid without an API key allows 3 requests a second; it stays for indexed history.
+    rpcs: ['https://tron-rpc.publicnode.com', 'https://api.trongrid.io'],
+  }),
+  tron({
+    ref: '0xcd8690dc',
+    name: 'Tron Nile',
+    testnet: true,
+    explorer: 'https://nile.tronscan.org',
+    rpcs: ['https://nile.trongrid.io', 'https://api.nileex.io'],
+  }),
+  tron({
+    ref: '0x94a9059e',
+    name: 'Tron Shasta',
+    testnet: true,
+    explorer: 'https://shasta.tronscan.org',
+    rpcs: ['https://api.shasta.trongrid.io'],
+  }),
+];
+
 export const CURATED_CATALOG: readonly ChainInfo[] = Object.freeze([
   ...EVM,
   ...BITCOIN,
   ...SOLANA,
   ...COSMOS,
+  ...TRON,
 ]);
