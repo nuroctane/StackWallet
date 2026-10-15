@@ -76,4 +76,25 @@ export const KNOWN_TOKENS: Readonly<
     decimals: 6,
     coinId: 'tether',
   },
+  // Base58 mints and IBC denoms are case-sensitive; these keys are exact.
+  'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp:spl:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': {
+    symbol: 'USDC',
+    decimals: 6,
+    coinId: 'usd-coin',
+  },
+  'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp:spl:Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': {
+    symbol: 'USDT',
+    decimals: 6,
+    coinId: 'tether',
+  },
+  'cosmos:osmosis-1:ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2': {
+    symbol: 'ATOM',
+    decimals: 6,
+    coinId: 'cosmos',
+  },
+  'cosmos:osmosis-1:ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4': {
+    symbol: 'USDC',
+    decimals: 6,
+    coinId: 'usd-coin',
+  },
 };

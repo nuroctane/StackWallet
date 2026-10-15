@@ -260,9 +260,12 @@ agreement alone is not chain identity or cryptographic proof of balance/finality
 - Swap quotes are `eth_call`s to the chain's RPC pool, which learns the pair and size quoted.
 - Tax reports are computed on the device. Reading history sends each in-scope address to its
   chain's indexer or RPC pool; price requests name coin ids or tracked token contracts only,
-  never addresses, and untracked (usually airdropped) contracts are never looked up. Review
-  decisions stay in local storage; their export file holds transaction keys, labels, values
-  and notes, no addresses or keys.
+  never addresses, and untracked (usually airdropped) contracts are never looked up. On Solana
+  the read also lists the owner's token accounts and sends each to the RPC pool. Symbols and
+  decimals reported by indexers are untrusted: they only make amounts readable, are reduced to
+  bounded printable ASCII, carry a contract tag (`USDC·abcd`) so a lookalike cannot pass for
+  the real token, and never select a price. Review decisions stay in local storage; their
+  export file holds transaction keys, labels, values and notes, no addresses or keys.
 - The web build sends `Cross-Origin-Embedder-Policy: credentialless` (not `require-corp`) so
   images from hosts without CORP can load without cookies; scripts and fonts stay same-origin.
 

@@ -282,6 +282,35 @@ export class SolanaAdapter extends BaseAdapter<'solana'> {
     return [nativeHolding(chain, value, provenance), ...tokens];
   }
 
+  async historyAddresses(
+    addr: Address,
+    chainId: ChainId,
+    signal?: AbortSignal,
+  ): Promise<Address[]> {
+    if (!isValidSolanaAddress(addr)) throw new TypeError(`invalid solana address ${addr}`);
+    const Accounts = z.object({
+      value: z.array(z.object({ pubkey: SolAddress })).max(5000),
+    });
+    return this.withCluster(chainId, async (rpc) => {
+      const found: string[] = [];
+      for (const programId of [SPL_TOKEN_PROGRAM, SPL_TOKEN_2022_PROGRAM]) {
+        signal?.throwIfAborted();
+        const res = await rpc(
+          'getTokenAccountsByOwner',
+          [
+            addr,
+            { programId },
+            { commitment: 'confirmed', encoding: 'base64', dataSlice: { offset: 0, length: 0 } },
+          ],
+          Accounts,
+        );
+        for (const a of res.value)
+          if (a.pubkey !== addr && !found.includes(a.pubkey)) found.push(a.pubkey);
+      }
+      return found;
+    });
+  }
+
   async status(hash: TxHash, chainId: ChainId): Promise<TxStatus> {
     this.requireChain(chainId);
     const res = await this.call(

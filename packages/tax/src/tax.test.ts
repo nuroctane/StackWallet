@@ -2,8 +2,12 @@ import type { TxRecord } from '@stackwallet/chains';
 import { describe, expect, it } from 'vitest';
 
 import {
+  allocate,
+  buildEvents,
   buildReport,
   eventFlows,
+  priceFraction,
+  valueMicros,
   exportCsv,
   exportJson,
   exportXlsx,
@@ -346,6 +350,134 @@ describe('jurisdictions and scope', () => {
     expect(ids({ tags: [], folderIds: ['set'], excluded: [] })).toEqual(['w2']);
     expect(ids({ tags: ['local'], folderIds: [], excluded: [] })).toEqual(['w4']);
     expect(ids({ tags: [], folderIds: [], excluded: ['w1', 'w4'] })).toEqual(['w2', 'w3']);
+  });
+});
+
+describe('dust, spam and every chain', () => {
+  const SPAM = 'eip155:1:erc20:' + '0x' + 'd'.repeat(40);
+  const PEPE = 'eip155:1:erc20:' + '0x' + 'e'.repeat(40);
+  const more = new Map(assets);
+  more.set(SPAM, { ref: SPAM, symbol: 'SPAM·dddd', decimals: 18, priceKey: null, testnet: false });
+  more.set(PEPE, { ref: PEPE, symbol: 'PEPE', decimals: 18, priceKey: 'pepe', testnet: false });
+  const tiny = new Map(prices);
+  tiny.set('pepe', series([['2025-03-01', 1.23e-12]]));
+  const run = (records: TxRecord[], extra: Partial<AccountHistory> = {}) =>
+    buildReport({
+      accounts: [account('a', 'w1', A)],
+      histories: [{ ...history('a', records), ...extra }],
+      assets: more,
+      prices: tiny,
+      overrides: {},
+      settings: settings(),
+    });
+
+  it('values sub-nano prices exactly instead of rounding them to zero', () => {
+    expect(priceFraction(1.23e-12)).toEqual({ num: 123n, exp: -14 });
+    // A trillion tokens at 1.23e-12 is 1.23 of the fiat.
+    expect(valueMicros(10n ** 30n, 18, 1.23e-12)).toBe(1_230_000n);
+    expect(valueMicros(1n, 0, 0.0000004)).toBe(0n);
+    expect(valueMicros(1n, 0, 0.0000005)).toBe(1n);
+    expect(valueMicros(1n, 18, 3500)).toBe(0n);
+    expect(valueMicros(1n, 0, NaN)).toBeNull();
+    const r = run([tx(X, A, '2025-03-01', [[PEPE, 10n ** 30n]])]);
+    expect(r.holdings.find((h) => h.assetRef === PEPE)?.cost).toBe(1_230_000n);
+  });
+
+  it('a one-wei sale is priced at zero, not missing', () => {
+    const r = run([tx(X, A, '2025-03-01', [[ETH, E]]), tx(A, X, '2025-03-01', [[ETH, -1n]])]);
+    const sale = r.disposals.find((d) => d.label === 'send' && d.amount === 1n);
+    expect(sale?.proceeds).toBe(0n);
+    expect(sale?.cost).toBe(0n);
+    expect(r.issues.some((i) => i.code === 'missing-price')).toBe(false);
+  });
+
+  it('allocates known values first and never weighs raw amounts of different assets', () => {
+    const legs = (...refs: [string, bigint][]) =>
+      refs.map(([assetRef, amount]) => ({ assetRef, amount }));
+    expect(allocate(100n, [60n, null], legs([USDC, 1n], [SPAM, 10n ** 27n]))).toEqual([60n, 40n]);
+    expect(allocate(100n, [null, null], legs([ETH, 1n], [ETH, 3n]))).toEqual([25n, 75n]);
+    expect(allocate(100n, [null, null], legs([ETH, 1n], [SPAM, 3n]))).toEqual([50n, 50n]);
+    expect(allocate(100n, [150n, 50n, null], legs([ETH, 1n], [USDC, 1n], [SPAM, 1n]))).toEqual([
+      75n,
+      25n,
+      0n,
+    ]);
+  });
+
+  it('a swap that also drops spam keeps the basis on the real token', () => {
+    const r = run([
+      tx(X, A, '2024-01-10', [[ETH, E]]),
+      tx(
+        A,
+        X,
+        '2025-03-01',
+        [
+          [ETH, -E],
+          [USDC, 3_000_000_000n],
+          [SPAM, 10n ** 27n],
+        ],
+        null,
+      ),
+    ]);
+    const usdc = r.holdings.find((h) => h.assetRef === USDC);
+    expect($(usdc?.cost ?? null)).toBe('3000.00');
+    expect(r.holdings.find((h) => h.assetRef === SPAM)?.cost).toBe(0n);
+  });
+
+  it('a partly priced trade uses the priced part as a floor and says so', () => {
+    const OTHER = 'eip155:1:erc20:0x' + 'f'.repeat(40);
+    const r = run([
+      tx(
+        A,
+        X,
+        '2025-03-01',
+        [
+          [OTHER, -5n],
+          [USDC, 3_000_000_000n],
+          [SPAM, 1n],
+        ],
+        null,
+      ),
+    ]);
+    const sale = r.disposals.find((d) => d.assetRef === OTHER);
+    expect($(sale?.proceeds ?? null)).toBe('3000.00');
+    expect(r.issues.find((i) => i.code === 'missing-price')?.severity).toBe('warn');
+  });
+
+  it('flags a history that does not add up to the live balance', () => {
+    const records = [tx(X, A, '2025-03-01', [[ETH, E]])];
+    const ok = run(records, { balances: [{ assetRef: ETH, amount: E.toString() }] });
+    expect(ok.issues.some((i) => i.code === 'balance-mismatch')).toBe(false);
+    const off = run(records, { balances: [{ assetRef: ETH, amount: (E + 5n).toString() }] });
+    const issue = off.issues.find((i) => i.code === 'balance-mismatch');
+    expect(issue?.message).toContain('adds up to 1 ETH');
+    expect(issue?.message).toContain('holds 1.000000000000000005');
+  });
+
+  it('a coinjoin fee is capped at what this address actually paid', () => {
+    const BTC_CHAIN = 'bip122:000000000019d6689c085ae165831e93';
+    const BTC = BTC_CHAIN + ':native';
+    const me = 'bc1qme';
+    const events = buildEvents(
+      [{ ...account('b', 'w1', me), chainId: BTC_CHAIN, chainName: 'Bitcoin' }],
+      [
+        history('b', [
+          {
+            hash: 'f'.repeat(64),
+            chainId: BTC_CHAIN,
+            timestampMs: day('2025-03-01'),
+            from: me,
+            assetDeltas: [{ assetRef: BTC, amount: '-1000' }],
+            feeAssetRef: BTC,
+            fee: '5000',
+            status: 'confirmed',
+          },
+        ]),
+      ],
+      {},
+    );
+    expect(events[0]?.fee?.amount).toBe(1000n);
+    expect(events[0]?.legs).toEqual([]);
   });
 });
 

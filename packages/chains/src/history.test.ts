@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { catalogChain } from './catalog.js';
-import { readHistory, HistoryPage } from './history.js';
+import { readHistory, HistoryPage, solanaDeltas } from './history.js';
 import { MemoryRpcPool } from './rpc.js';
 
 const address = '0x' + '11'.repeat(20);
@@ -169,12 +169,141 @@ describe('public transaction history', () => {
     });
     const page = await readHistory(f.chain, 'osmoFixture', f.pool, f.options, '20');
     expect(page.items).toHaveLength(1);
+    // No fee transfer event and no named payer: the sender paid, so the fee is in the net change.
     expect(page.items[0]).toMatchObject({
       fee: '10',
-      assetDeltas: [{ amount: '-123', assetRef: f.chain.nativeAsset.ref }],
+      from: 'osmoFixture',
+      assetDeltas: [{ amount: '-133', assetRef: f.chain.nativeAsset.ref }],
     });
     expect(new URL(urls[1]!).searchParams.get('page')).toBe('2');
     expect(new URL(urls[1]!).searchParams.get('pagination.offset')).toBe('20');
+  });
+  describe('Cosmos fee variants', () => {
+    const run = async (
+      events: { type: string; attributes: { key: string; value: string }[] }[],
+      fee: Record<string, unknown>,
+      code = 0,
+    ) => {
+      const f = fixture('cosmos:osmosis-1', (url) => {
+        if (url.endsWith('/node_info')) return { default_node_info: { network: 'osmosis-1' } };
+        return {
+          txs: [{ auth_info: { fee } }],
+          total: '1',
+          tx_responses: [
+            { txhash: btcHash, height: '42', code, timestamp: '2026-01-01T00:00:00Z', events },
+          ],
+        };
+      });
+      return (await readHistory(f.chain, 'osmoMe', f.pool, f.options)).items[0]!;
+    };
+    const transfer = (sender: string, recipient: string, amount: string, msg?: string) => ({
+      type: 'transfer',
+      attributes: [
+        { key: 'sender', value: sender },
+        { key: 'recipient', value: recipient },
+        { key: 'amount', value: amount },
+        ...(msg !== undefined ? [{ key: 'msg_index', value: msg }] : []),
+      ],
+    });
+    const signer = { type: 'tx', attributes: [{ key: 'acc_seq', value: 'osmoMe/7' }] };
+    const native = 'cosmos:osmosis-1:native';
+
+    it('counts the ante fee transfer once on modern SDKs', async () => {
+      const r = await run(
+        [
+          signer,
+          transfer('osmoMe', 'osmoFees', '10uosmo'),
+          transfer('osmoMe', 'osmoOther', '10uosmo', '0'),
+        ],
+        { amount: [{ denom: 'uosmo', amount: '10' }] },
+      );
+      expect(r).toMatchObject({ fee: '10', from: 'osmoMe' });
+      expect(r.assetDeltas).toEqual([{ assetRef: native, amount: '-20' }]);
+    });
+    it('keeps only the fee of a failed transaction', async () => {
+      const r = await run(
+        [
+          signer,
+          transfer('osmoMe', 'osmoFees', '10uosmo'),
+          transfer('osmoMe', 'osmoOther', '999uosmo', '0'),
+        ],
+        { amount: [{ denom: 'uosmo', amount: '10' }] },
+        5,
+      );
+      expect(r.status).toBe('failed');
+      expect(r.assetDeltas).toEqual([{ assetRef: native, amount: '-10' }]);
+    });
+    it('leaves a granted fee to the granter', async () => {
+      const r = await run(
+        [
+          transfer('osmoGranter', 'osmoFees', '10uosmo'),
+          transfer('osmoMe', 'osmoOther', '10uosmo', '0'),
+        ],
+        { amount: [{ denom: 'uosmo', amount: '10' }], granter: 'osmoGranter' },
+      );
+      expect(r.from).not.toBe('osmoMe');
+      expect(r.assetDeltas).toEqual([{ assetRef: native, amount: '-10' }]);
+    });
+    it('names a non-native fee denom, a zero fee, and an ambiguous multi-coin fee', async () => {
+      const ibc = 'ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2';
+      const paid = await run([signer, transfer('osmoMe', 'osmoFees', '5' + ibc)], {
+        amount: [{ denom: ibc, amount: '5' }],
+      });
+      expect(paid).toMatchObject({ fee: '5', feeAssetRef: 'cosmos:osmosis-1:' + ibc });
+      expect(paid.assetDeltas).toEqual([{ assetRef: 'cosmos:osmosis-1:' + ibc, amount: '-5' }]);
+      expect((await run([signer], { amount: [] })).fee).toBe('0');
+      const multi = await run([signer], {
+        amount: [
+          { denom: 'uosmo', amount: '1' },
+          { denom: ibc, amount: '1' },
+        ],
+      });
+      expect(multi.fee).toBeNull();
+    });
+  });
+  it('credits SPL tokens to their owner and counts token-account rent as SOL', async () => {
+    const mint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const chain = catalogChain('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp')!;
+    const keys = [{ pubkey: 'Owner' }, { pubkey: 'NewTokAcc' }, { pubkey: 'Sender' }];
+    const bal = (accountIndex: number, owner: string | undefined, amount: string, m = mint) => ({
+      accountIndex,
+      mint: m,
+      ...(owner ? { owner } : {}),
+      uiTokenAmount: { amount, decimals: 6 },
+    });
+    const deltas = solanaDeltas(chain, 'Owner', keys, {
+      // The owner funds a new token account with 2039280 lamports of rent.
+      preBalances: [10_000_000, 0, 1],
+      postBalances: [10_000_000 - 5000 - 2_039_280, 2_039_280, 1],
+      preTokenBalances: [bal(2, 'Sender', '1000')],
+      postTokenBalances: [
+        bal(1, 'Owner', '1'),
+        bal(2, 'Sender', '999'),
+        bal(1, 'Owner', '0', 'So11111111111111111111111111111111111111112'),
+      ],
+    });
+    expect(deltas).toEqual([
+      { assetRef: chain.nativeAsset.ref, amount: '-5000' },
+      { assetRef: `${chain.chainId}:spl:${mint}`, amount: '1', decimals: 6 },
+    ]);
+    // Old transactions without owners still credit the listed token account.
+    const legacy = solanaDeltas(
+      chain,
+      'Owner',
+      keys,
+      {
+        preBalances: [1, 5, 1],
+        postBalances: [1, 5, 1],
+        preTokenBalances: [bal(1, undefined, '0')],
+        postTokenBalances: [bal(1, undefined, '7')],
+      },
+      'NewTokAcc',
+    );
+    expect(legacy).toContainEqual({
+      assetRef: `${chain.chainId}:spl:${mint}`,
+      amount: '7',
+      decimals: 6,
+    });
   });
   it('propagates caller cancellation instead of reading other endpoints', async () => {
     const controller = new AbortController();

@@ -57,7 +57,12 @@ const rec = (hash: string, extra: Partial<TxRecord> = {}): TxRecord => ({
 });
 
 function registry(
-  getHistory: (cursor: string | undefined, opts: unknown) => Promise<Page<TxRecord>>,
+  getHistory: (
+    cursor: string | undefined,
+    opts: unknown,
+    address: string,
+  ) => Promise<Page<TxRecord>>,
+  extra: Record<string, unknown> = {},
 ) {
   return {
     chainInfo: (id: string) => {
@@ -66,8 +71,9 @@ function registry(
       return c;
     },
     adapterFor: () => ({
-      getHistory: (_a: string, _c: string, cursor: string | undefined, opts: unknown) =>
-        getHistory(cursor, opts),
+      getHistory: (a: string, _c: string, cursor: string | undefined, opts: unknown) =>
+        getHistory(cursor, opts, a),
+      ...extra,
     }),
   } as unknown as ChainRegistry;
 }
@@ -85,13 +91,41 @@ describe('readAllPages', () => {
   });
 
   it('keeps what it read when a later page fails, and never claims completeness', async () => {
-    const out = await readAllPages(async (c) => {
-      if (c) throw new Error('boom');
-      return { items: [rec('0x1')], nextCursor: 'n' };
-    }, 10);
+    let tries = 0;
+    const out = await readAllPages(
+      async (c) => {
+        if (c) {
+          tries++;
+          throw new Error('boom');
+        }
+        return { items: [rec('0x1')], nextCursor: 'n' };
+      },
+      10,
+      undefined,
+      [0, 0],
+    );
     expect(out.records).toHaveLength(1);
     expect(out.complete).toBe(false);
     expect(out.error).toBe('boom');
+    expect(tries).toBe(3);
+  });
+
+  it('retries a page that timed out once and finishes the stream', async () => {
+    let failed = false;
+    const out = await readAllPages(
+      async (c) => {
+        if (c && !failed) {
+          failed = true;
+          throw new Error('timed out after 8000ms');
+        }
+        return c ? { items: [rec('0x2')] } : { items: [rec('0x1')], nextCursor: 'n' };
+      },
+      10,
+      undefined,
+      [0],
+    );
+    expect(out.complete).toBe(true);
+    expect(out.records.map((r) => r.hash)).toEqual(['0x1', '0x2']);
   });
 
   it('stops at the page limit as incomplete', async () => {
@@ -106,22 +140,97 @@ describe('readAllPages', () => {
 });
 
 describe('readAccountHistory', () => {
-  it('reads both indexer streams on EVM chains with an indexer', async () => {
-    const seen: unknown[] = [];
-    const r = registry(async (_c, opts) => {
-      seen.push(opts);
-      return {
-        items: [rec((opts as { tokenTransfers?: boolean }).tokenTransfers ? '0xt' : '0xn')],
-      };
-    });
+  it('reads every indexer stream on EVM chains, with NFTs, then the live balances', async () => {
+    const seen: { stream?: string; nfts?: boolean }[] = [];
+    const r = registry(
+      async (_c, opts) => {
+        const o = opts as { stream?: string; nfts?: boolean };
+        seen.push(o);
+        return { items: [rec('0x' + o.stream)] };
+      },
+      {
+        getBalances: async () => [
+          { assetRef: 'eip155:1:native', amount: '5' },
+          { assetRef: 'eip155:1:erc20:0xbad', amount: '1', error: 'rpc down' },
+        ],
+      },
+    );
     const h = await readAccountHistory(r, CHAINS[0]!, {
       accountId: 'a',
       chainId: 'eip155:1',
       address: '0xa',
     });
     expect(h.complete).toBe(true);
-    expect(h.records.map((x) => x.hash).sort()).toEqual(['0xn', '0xt']);
-    expect(seen).toHaveLength(2);
+    expect(seen.map((s) => s.stream)).toEqual([
+      'transactions',
+      'tokens',
+      'internal',
+      'withdrawals',
+    ]);
+    expect(seen.every((s) => s.nfts)).toBe(true);
+    expect(h.records).toHaveLength(4);
+    expect(h.balances).toEqual([{ assetRef: 'eip155:1:native', amount: '5' }]);
+  });
+
+  it('skips beacon withdrawals on chains without them', async () => {
+    const streams: string[] = [];
+    const r = registry(async (_c, opts) => {
+      streams.push((opts as { stream: string }).stream);
+      return { items: [] };
+    });
+    await readAccountHistory(
+      r,
+      { ...CHAINS[0]!, chainId: 'eip155:8453' },
+      {
+        accountId: 'a',
+        chainId: 'eip155:8453',
+        address: '0xa',
+      },
+    );
+    expect(streams).not.toContain('withdrawals');
+  });
+
+  it('reads Solana token accounts on behalf of the owner and leaves SOL out of the balance check', async () => {
+    const calls: [string, unknown][] = [];
+    const sol = chain('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', 'solana', 'SOL');
+    const r = registry(
+      async (_c, opts, address) => {
+        calls.push([address, opts]);
+        return { items: [] };
+      },
+      {
+        historyAddresses: async () => ['TokAcc1', 'TokAcc2'],
+        getBalances: async () => [
+          { assetRef: sol.nativeAsset.ref, amount: '9' },
+          { assetRef: `${sol.chainId}:spl:Mint`, amount: '3' },
+        ],
+      },
+    );
+    const h = await readAccountHistory(r, sol, {
+      accountId: 'a',
+      chainId: sol.chainId,
+      address: 'Owner',
+    });
+    expect(calls.map((c) => c[0])).toEqual(['Owner', 'TokAcc1', 'TokAcc2']);
+    expect(calls[1]![1]).toMatchObject({ owner: 'Owner' });
+    expect(h.complete).toBe(true);
+    expect(h.balances).toEqual([{ assetRef: `${sol.chainId}:spl:Mint`, amount: '3' }]);
+  });
+
+  it('marks history incomplete when token accounts cannot be listed', async () => {
+    const sol = chain('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', 'solana', 'SOL');
+    const r = registry(async () => ({ items: [] }), {
+      historyAddresses: async () => {
+        throw new Error('429');
+      },
+    });
+    const h = await readAccountHistory(r, sol, {
+      accountId: 'a',
+      chainId: sol.chainId,
+      address: 'Owner',
+    });
+    expect(h.complete).toBe(false);
+    expect(h.error).toMatch(/Token accounts/);
   });
 
   it('marks RPC-only EVM history incomplete', async () => {
@@ -160,6 +269,41 @@ describe('assetInfoFor', () => {
     const unknown = assetInfoFor(r, 'eip155:1:erc20:0x1111111111111111111111111111111111111111');
     expect(unknown.decimals).toBeNull();
     expect(unknown.priceKey).toBeNull();
+  });
+  it('reads untracked amounts with reported decimals but tags claimed symbols and never prices them', () => {
+    const fake = assetInfoFor(r, 'eip155:1:erc20:0xabcdef0000000000000000000000000000000001', {
+      symbol: 'USDC',
+      decimals: 6,
+    });
+    expect(fake).toMatchObject({ symbol: 'USDC·abcd', decimals: 6, priceKey: null });
+  });
+  it('treats NFTs as whole units and keeps them unpriced', () => {
+    const nft = assetInfoFor(r, 'eip155:1:erc721:0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d:1234', {
+      symbol: 'BAYC',
+    });
+    expect(nft).toMatchObject({ symbol: 'BAYC·bc4c #1234', decimals: 0, priceKey: null });
+  });
+  it('keeps case in Solana mints and IBC denoms', () => {
+    expect(
+      assetInfoFor(
+        r,
+        'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp:spl:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+      ),
+    ).toMatchObject({ symbol: 'USDC', decimals: 6, priceKey: 'usd-coin' });
+    expect(
+      assetInfoFor(
+        r,
+        'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp:spl:epjfwdd5aufqssqem2qn1xzybapc8g4wegGkzwytdt1v',
+      ).priceKey,
+    ).toBeNull();
+    expect(
+      assetInfoFor(
+        r,
+        'cosmos:osmosis-1:ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2',
+      ).symbol,
+    ).toBe('ATOM');
+    const denom = assetInfoFor(r, 'cosmos:osmosis-1:factory/osmo1xyz/coin', { decimals: 6 });
+    expect(denom).toMatchObject({ decimals: 6, priceKey: null });
   });
 });
 

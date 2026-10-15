@@ -21,6 +21,15 @@ export interface HistoryOptions {
   signal?: AbortSignal;
   indexerUrl?: string;
   tokenTransfers?: boolean;
+  /** Indexer stream to read; overrides `tokenTransfers` when set. */
+  stream?: IndexedStream;
+  /** Token stream: report ERC-721/1155 token IDs as separate assets. */
+  nfts?: boolean;
+  /**
+   * Solana: the wallet that owns `addr` when `addr` is one of its token
+   * accounts. Balance changes are computed for this owner.
+   */
+  owner?: string;
 }
 
 const amount = z.string().regex(/^\d{1,78}$/);
@@ -44,14 +53,50 @@ const recordBase = (chain: ChainInfo, txHash: string): TxRecord => ({
   status: 'confirmed',
 });
 
+/** Chains whose consensus layer pays withdrawals straight to execution addresses. */
+export const WITHDRAWAL_CHAINS: ReadonlySet<string> = new Set(['eip155:1', 'eip155:11155111']);
+
+/**
+ * One Blockscout address stream. External transactions carry native value and
+ * fees; token transfers carry ERC-20 (and, on request, NFT) movements;
+ * internal transfers carry native value moved by contracts, which is how
+ * swaps pay out ETH and how contract wallets (Safe, EIP-7702 accounts) spend;
+ * withdrawals carry beacon-chain payouts, which have no transaction at all.
+ */
+export type IndexedStream = 'transactions' | 'tokens' | 'internal' | 'withdrawals';
+
+const STREAM_PATH: Record<IndexedStream, string> = {
+  transactions: '/transactions',
+  tokens: '/token-transfers',
+  internal: '/internal-transactions',
+  withdrawals: '/withdrawals',
+};
+
+// Frames that run code in another context without moving value; their `value` echoes the caller's.
+const VALUELESS_FRAMES = new Set(['delegatecall', 'staticcall', 'callcode']);
+
+/** Indexer token metadata is untrusted display text: printable ASCII only, bounded. */
+function tokenSymbol(raw: string | null | undefined): string | undefined {
+  const clean = (raw ?? '').replace(/[^\x21-\x7e]/g, '').slice(0, 12);
+  return clean || undefined;
+}
+
 export async function readIndexedHistory(
   chain: ChainInfo,
   account: string,
   indexer: string,
   opts: FetchOptions,
   cursor?: string,
-  tokens = false,
+  streamOrTokens: IndexedStream | boolean = 'transactions',
+  nfts = false,
 ): Promise<Page<TxRecord>> {
+  const stream: IndexedStream =
+    typeof streamOrTokens === 'boolean'
+      ? streamOrTokens
+        ? 'tokens'
+        : 'transactions'
+      : streamOrTokens;
+  const tokens = stream === 'tokens';
   if (chain.family !== 'evm') throw new Error('This history indexer requires an EVM chain');
   address.shape.hash.parse(account);
   const base = new URL(z.string().url().max(2000).parse(indexer));
@@ -61,7 +106,7 @@ export async function readIndexedHistory(
     base.pathname.replace(/\/$/, '') +
     '/api/v2/addresses/' +
     encodeURIComponent(account) +
-    (tokens ? '/token-transfers' : '/transactions');
+    STREAM_PATH[stream];
   const query = cursor ? next.parse(JSON.parse(cursor)) : null;
   if (query)
     for (const [key, value] of Object.entries(query)) base.searchParams.set(key, String(value));
@@ -70,7 +115,84 @@ export async function readIndexedHistory(
   opts.signal?.throwIfAborted();
   let items: TxRecord[];
   let cursorParams: z.infer<typeof next>;
-  if (tokens) {
+  const me = account.toLowerCase();
+  if (stream === 'internal') {
+    const response = z
+      .object({
+        next_page_params: next,
+        items: z
+          .array(
+            z.object({
+              transaction_hash: hash,
+              index: z.number().int().nonnegative().safe(),
+              block_number: block,
+              timestamp: time,
+              type: z.string().max(32),
+              success: z.boolean().nullable().optional(),
+              error: z.string().max(512).nullable().optional(),
+              from: address,
+              to: address.nullable(),
+              created_contract: address.nullable().optional(),
+              value: amount,
+            }),
+          )
+          .max(50),
+      })
+      .parse(payload);
+    items = [];
+    for (const t of response.items) {
+      const to = (t.to ?? t.created_contract ?? null)?.hash.toLowerCase();
+      const sent = t.from.hash.toLowerCase() === me;
+      const received = to === me;
+      if (!sent && !received)
+        throw new Error('Indexer returned an internal transfer unrelated to this account');
+      const moved =
+        t.success !== false && !t.error && !VALUELESS_FRAMES.has(t.type.toLowerCase())
+          ? BigInt(t.value) * BigInt(Number(received) - Number(sent))
+          : 0n;
+      items.push({
+        ...recordBase(chain, t.transaction_hash),
+        entryId: t.transaction_hash + ':internal:' + t.index,
+        description: 'internal ' + t.type.replace(/[^a-z0-9]/gi, '').slice(0, 16),
+        status: t.block_number === null ? 'pending' : 'confirmed',
+        from: t.from.hash,
+        ...(to ? { to: (t.to ?? t.created_contract)!.hash } : {}),
+        assetDeltas:
+          moved !== 0n ? [{ assetRef: chain.nativeAsset.ref, amount: String(moved) }] : [],
+        ...(t.block_number !== null ? { blockNumber: t.block_number } : {}),
+        ...(t.timestamp !== null ? { timestampMs: Date.parse(t.timestamp) } : {}),
+      });
+    }
+    cursorParams = response.next_page_params;
+  } else if (stream === 'withdrawals') {
+    const response = z
+      .object({
+        next_page_params: next,
+        items: z
+          .array(
+            z.object({
+              index: z.number().int().nonnegative().safe(),
+              amount,
+              block_number: z.number().int().nonnegative().safe(),
+              timestamp: z.string().datetime({ offset: true }),
+              validator_index: z.number().int().nonnegative().safe(),
+            }),
+          )
+          .max(50),
+      })
+      .parse(payload);
+    items = response.items.map((w) => ({
+      ...recordBase(chain, 'withdrawal-' + w.index),
+      entryId: 'withdrawal-' + w.index,
+      description: 'beacon withdrawal · validator ' + w.validator_index,
+      from: '',
+      to: account,
+      blockNumber: w.block_number,
+      timestampMs: Date.parse(w.timestamp),
+      assetDeltas: [{ assetRef: chain.nativeAsset.ref, amount: w.amount }],
+    }));
+    cursorParams = response.next_page_params;
+  } else if (tokens) {
     const response = z
       .object({
         next_page_params: next,
@@ -83,8 +205,25 @@ export async function readIndexedHistory(
               timestamp: time,
               from: address,
               to: address,
-              token: z.object({ address_hash: address.shape.hash, type: z.string().max(32) }),
-              total: z.object({ value: amount.nullish(), token_id: amount.nullish() }).nullable(),
+              token: z.object({
+                address_hash: address.shape.hash,
+                type: z.string().max(32),
+                symbol: z.string().max(256).nullish(),
+                decimals: z
+                  .string()
+                  .regex(/^\d{1,2}$/)
+                  .nullish(),
+              }),
+              total: z
+                .object({
+                  value: amount.nullish(),
+                  token_id: amount.nullish(),
+                  decimals: z
+                    .string()
+                    .regex(/^\d{1,2}$/)
+                    .nullish(),
+                })
+                .nullable(),
             }),
           )
           .max(50),
@@ -112,15 +251,35 @@ export async function readIndexedHistory(
         ...(t.block_number !== null ? { blockNumber: t.block_number } : {}),
         ...(t.timestamp !== null ? { timestampMs: Date.parse(t.timestamp) } : {}),
       };
+      const direction =
+        Number(t.to.hash.toLowerCase() === me) - Number(t.from.hash.toLowerCase() === me);
+      const contract = t.token.address_hash.toLowerCase();
+      const symbol = tokenSymbol(t.token.symbol);
+      const decimals = t.token.decimals ?? t.total?.decimals;
       if (t.token.type === 'ERC-20' && t.total?.value != null) {
-        const direction =
-          Number(t.to.hash.toLowerCase() === account.toLowerCase()) -
-          Number(t.from.hash.toLowerCase() === account.toLowerCase());
-        const ref = chain.chainId + ':erc20:' + t.token.address_hash.toLowerCase();
-        const prior = tx.assetDeltas.find((d) => d.assetRef === ref);
+        const ref = chain.chainId + ':erc20:' + contract;
         const value = BigInt(t.total.value) * BigInt(direction);
-        if (prior) prior.amount = String(BigInt(prior.amount) + value);
-        else tx.assetDeltas.push({ assetRef: ref, amount: String(value) });
+        tx.assetDeltas.push({
+          assetRef: ref,
+          amount: String(value),
+          ...(symbol ? { symbol } : {}),
+          ...(decimals != null && Number(decimals) <= 36 ? { decimals: Number(decimals) } : {}),
+        });
+      } else if (
+        nfts &&
+        (t.token.type === 'ERC-721' || t.token.type === 'ERC-1155') &&
+        t.total?.token_id != null
+      ) {
+        // Each token ID is its own asset, so a sale can be matched to its purchase.
+        const kind = t.token.type === 'ERC-721' ? 'erc721' : 'erc1155';
+        const count = kind === 'erc721' ? 1n : BigInt(t.total.value ?? '0');
+        if (count > 0n)
+          tx.assetDeltas.push({
+            assetRef: `${chain.chainId}:${kind}:${contract}:${t.total.token_id}`,
+            amount: String(count * BigInt(direction)),
+            ...(symbol ? { symbol } : {}),
+            decimals: 0,
+          });
       }
       items.push(tx);
     }
@@ -182,8 +341,16 @@ export async function readIndexedHistory(
     items,
     ...(cursorParams ? { nextCursor: JSON.stringify(cursorParams) } : {}),
     source: base.origin + base.pathname,
-    coverage: tokens
-      ? 'Blockscout indexed token-transfer events. ERC-20 net deltas only; NFT events appear without fungible amounts. Transaction fees and internal/native calls are not decoded. A page may contain only part of a transaction’s token events.'
-      : 'Blockscout indexed external transactions. Native net changes use reported actual fees; token transfers and internal calls have separate coverage. Indexer records are unverified and may lag or omit data.',
+    coverage: {
+      tokens: nfts
+        ? 'Blockscout indexed token-transfer events. ERC-20 amounts, and ERC-721/1155 token IDs as separate assets. Fees and internal calls are not decoded. A page may contain only part of a transaction’s token events.'
+        : 'Blockscout indexed token-transfer events. ERC-20 net deltas only; NFT events appear without fungible amounts. Transaction fees and internal/native calls are not decoded. A page may contain only part of a transaction’s token events.',
+      transactions:
+        'Blockscout indexed external transactions. Native net changes use reported actual fees; token transfers and internal calls have separate coverage. Indexer records are unverified and may lag or omit data.',
+      internal:
+        'Blockscout indexed internal transfers: native value moved by contract calls, excluding the top-level call. Reverted and delegate/static frames move nothing.',
+      withdrawals:
+        'Blockscout indexed beacon-chain withdrawals paid to this address. They have no transaction hash; each is keyed by its withdrawal index.',
+    }[stream],
   };
 }

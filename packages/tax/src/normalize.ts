@@ -136,6 +136,15 @@ export function buildEvents(
       const alreadyPaid = [...g.slices.values()].some((x) => x !== s && x.fee !== null);
       if (s.fee === null && !alreadyPaid) {
         s.fee = BigInt(r.fee);
+        // A UTXO fee is the whole transaction's. In a coinjoin or payjoin this
+        // address paid at most its own net outflow; the rest came from others.
+        if (r.chainId.startsWith('bip122:')) {
+          const net = r.assetDeltas
+            .filter((d) => d.assetRef === r.feeAssetRef)
+            .reduce((n, d) => n + BigInt(d.amount), 0n);
+          const paid = net < 0n ? -net : 0n;
+          if (s.fee > paid) s.fee = paid;
+        }
         s.feeAssetRef = r.feeAssetRef;
         // Adapters report native net changes including the fee; the legs carry value only.
         s.deltas.set(r.feeAssetRef, (s.deltas.get(r.feeAssetRef) ?? 0n) + s.fee);

@@ -2,8 +2,11 @@ import { useSyncExternalStore } from 'react';
 import {
   HistoryPage,
   HISTORY_INDEXERS,
+  WITHDRAWAL_CHAINS,
   type ChainInfo,
   type ChainRegistry,
+  type HistoryOptions,
+  type IndexedStream,
   type Page,
   type TxRecord,
 } from '@stackwallet/chains';
@@ -132,10 +135,41 @@ export function readError(e: unknown, fallback: string): string {
 }
 
 /** Follows cursors until the stream ends, a page limit is hit, or a read fails. */
+const RETRY_DELAYS_MS = [1500, 4000];
+
+/** One page, retried after a pause: public indexers time out and rate-limit under load. */
+async function readPageWithRetry(
+  readPage: (cursor: string | undefined) => Promise<Page<TxRecord>>,
+  cursor: string | undefined,
+  delays: readonly number[],
+  signal?: AbortSignal,
+): Promise<Page<TxRecord>> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await readPage(cursor);
+    } catch (e) {
+      // A malformed answer stays malformed; only transport failures are worth repeating.
+      if (signal?.aborted || e instanceof z.ZodError || attempt >= delays.length) throw e;
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(resolve, delays[attempt]);
+        signal?.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(t);
+            reject(signal.reason);
+          },
+          { once: true },
+        );
+      });
+    }
+  }
+}
+
 export async function readAllPages(
   readPage: (cursor: string | undefined) => Promise<Page<TxRecord>>,
   maxPages: number,
   signal?: AbortSignal,
+  retryDelaysMs: readonly number[] = RETRY_DELAYS_MS,
 ): Promise<StreamResult> {
   const records: TxRecord[] = [];
   const sources = new Set<string>();
@@ -143,7 +177,9 @@ export async function readAllPages(
   for (let i = 0; i < maxPages; i++) {
     try {
       signal?.throwIfAborted();
-      const page = HistoryPage.parse(await readPage(cursor));
+      const page = HistoryPage.parse(
+        await readPageWithRetry(readPage, cursor, retryDelaysMs, signal),
+      );
       records.push(...page.items);
       if (page.source) sources.add(page.source);
       if (!page.nextCursor) return { records, complete: true, sources: [...sources] };
@@ -173,11 +209,33 @@ export interface SyncTarget {
   address: string;
 }
 
+/** Token accounts read per Solana wallet, and pages per token account. */
+export const MAX_TOKEN_ACCOUNTS = 100;
+export const TOKEN_ACCOUNT_PAGES = 10;
+
+function combine(accountId: string, streams: readonly StreamResult[], extraError?: string) {
+  const error = [...new Set([...streams.map((s) => s.error), extraError].filter(Boolean))].join(
+    ' · ',
+  );
+  return {
+    accountId,
+    records: streams.flatMap((s) => s.records),
+    complete: streams.every((s) => s.complete) && !extraError,
+    sources: [...new Set(streams.flatMap((s) => s.sources))],
+    ...(error ? { error } : {}),
+  };
+}
+
 /**
- * Everything public about one account. EVM chains need two indexer streams
- * (transactions for the native coin and fees, token-transfer events for
- * ERC-20s); without a keyless indexer only recent blocks are reachable over
- * RPC, and the history is marked incomplete rather than presented as whole.
+ * Everything public about one account. EVM chains need several indexer
+ * streams: external transactions (native value and fees), token transfers
+ * (ERC-20 and NFTs), internal transfers (ETH paid out by contracts, and the
+ * spending of contract wallets) and, on Ethereum, beacon withdrawals. Solana
+ * token transfers name the wallet's token accounts rather than the wallet, so
+ * each token account's signatures are read too. Without a keyless indexer only
+ * recent blocks are reachable over RPC, and the history is marked incomplete.
+ * The current balances are read last so the report can check that the
+ * history adds up to them.
  */
 export async function readAccountHistory(
   registry: ChainRegistry,
@@ -187,46 +245,70 @@ export async function readAccountHistory(
 ): Promise<AccountHistory> {
   const adapter = registry.adapterFor(target.chainId);
   const read =
-    (extra: { indexerUrl?: string; tokenTransfers?: boolean }) => (cursor: string | undefined) =>
-      adapter.getHistory(target.address, target.chainId, cursor, {
+    (extra: HistoryOptions, address = target.address) =>
+    (cursor: string | undefined) =>
+      adapter.getHistory(address, target.chainId, cursor, {
         ...(signal ? { signal } : {}),
         ...extra,
       });
+  let history: AccountHistory;
   if (chain.family === 'evm') {
     const indexer = HISTORY_INDEXERS[target.chainId];
     if (!indexer) {
       const recent = await readAllPages(read({}), 1, signal);
-      return {
+      history = {
         accountId: target.accountId,
         records: recent.records,
         complete: false,
         sources: recent.sources,
         error: 'No keyless history indexer for this chain: only recent blocks were read over RPC.',
       };
+    } else {
+      const streams: StreamResult[] = [];
+      const kinds: IndexedStream[] = ['transactions', 'tokens', 'internal'];
+      if (WITHDRAWAL_CHAINS.has(target.chainId)) kinds.push('withdrawals');
+      for (const stream of kinds)
+        streams.push(
+          await readAllPages(
+            read({ indexerUrl: indexer, stream, nfts: true }),
+            MAX_HISTORY_PAGES,
+            signal,
+          ),
+        );
+      history = combine(target.accountId, streams);
     }
-    const txs = await readAllPages(read({ indexerUrl: indexer }), MAX_HISTORY_PAGES, signal);
-    const tokens = await readAllPages(
-      read({ indexerUrl: indexer, tokenTransfers: true }),
-      MAX_HISTORY_PAGES,
-      signal,
-    );
-    const error = [txs.error, tokens.error].filter(Boolean).join(' · ');
-    return {
-      accountId: target.accountId,
-      records: [...txs.records, ...tokens.records],
-      complete: txs.complete && tokens.complete,
-      sources: [...new Set([...txs.sources, ...tokens.sources])],
-      ...(error ? { error } : {}),
-    };
+  } else {
+    const streams = [await readAllPages(read({}), MAX_HISTORY_PAGES, signal)];
+    let extraError: string | undefined;
+    if (adapter.historyAddresses) {
+      try {
+        const accounts = await adapter.historyAddresses(target.address, target.chainId, signal);
+        if (accounts.length > MAX_TOKEN_ACCOUNTS)
+          extraError = `Only ${MAX_TOKEN_ACCOUNTS} of ${accounts.length} token accounts were read.`;
+        for (const a of accounts.slice(0, MAX_TOKEN_ACCOUNTS))
+          streams.push(
+            await readAllPages(read({ owner: target.address }, a), TOKEN_ACCOUNT_PAGES, signal),
+          );
+      } catch (e) {
+        if (signal?.aborted) throw e;
+        extraError = 'Token accounts could not be listed: ' + readError(e, 'request failed');
+      }
+    }
+    history = combine(target.accountId, streams, extraError);
   }
-  const all = await readAllPages(read({}), MAX_HISTORY_PAGES, signal);
-  return {
-    accountId: target.accountId,
-    records: all.records,
-    complete: all.complete,
-    sources: all.sources,
-    ...(all.error ? { error: all.error } : {}),
-  };
+  try {
+    const held = await adapter.getBalances(target.address, target.chainId);
+    history.balances = held
+      .filter((h) => !h.error && /^\d{1,78}$/.test(h.amount))
+      // History counts rent locked in token accounts as SOL still owned; the
+      // wallet's SOL balance leaves it out, so the two never agree exactly.
+      .filter((h) => !(chain.family === 'solana' && h.assetRef === chain.nativeAsset.ref))
+      .map((h) => ({ assetRef: h.assetRef, amount: h.amount }));
+    history.balancesAtMs = Date.now();
+  } catch (e) {
+    if (signal?.aborted) throw e;
+  }
+  return history;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,8 +323,45 @@ function chainOf(registry: ChainRegistry, chainId: string): ChainInfo | undefine
   }
 }
 
-/** Symbol, decimals and price key of an asset ref, from trusted local sources only. */
-export function assetInfoFor(registry: ChainRegistry, ref: string): AssetInfo {
+/** What the history itself reported about an asset: untrusted display metadata. */
+export interface ReportedAsset {
+  symbol?: string | undefined;
+  decimals?: number | undefined;
+}
+
+/** First reported symbol and decimals per asset ref across the given histories. */
+export function reportedAssets(
+  histories: readonly AccountHistory[],
+): ReadonlyMap<string, ReportedAsset> {
+  const out = new Map<string, ReportedAsset>();
+  for (const h of histories)
+    for (const r of h.records)
+      for (const d of r.assetDeltas) {
+        if (d.symbol === undefined && d.decimals === undefined) continue;
+        const prior = out.get(d.assetRef) ?? {};
+        out.set(d.assetRef, {
+          symbol: prior.symbol ?? d.symbol,
+          decimals: prior.decimals ?? d.decimals,
+        });
+      }
+  return out;
+}
+
+const shorten = (s: string) => (s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s);
+// Reported symbols are claims anyone can make ("USDC"); a contract tag keeps a lookalike apart.
+const claimed = (symbol: string, id: string) =>
+  `${symbol.replace(/[^\x21-\x7e]/g, '').slice(0, 10)}·${id.replace(/^0x/, '').slice(0, 4)}`;
+
+/**
+ * Symbol, decimals and price key of an asset ref. Prices come only from
+ * trusted local sources (native coins, the known-token table, tokens the user
+ * tracks); history-reported decimals make untracked amounts readable.
+ */
+export function assetInfoFor(
+  registry: ChainRegistry,
+  ref: string,
+  reported: ReportedAsset = {},
+): AssetInfo {
   if (ref.endsWith(':native')) {
     const chain = chainOf(registry, ref.slice(0, -':native'.length));
     if (chain)
@@ -253,36 +372,62 @@ export function assetInfoFor(registry: ChainRegistry, ref: string): AssetInfo {
         priceKey: coinIdFor(chain),
         testnet: chain.testnet,
       };
-    return { ref, symbol: ref, decimals: null, priceKey: null, testnet: false };
+    return { ref, symbol: shorten(ref), decimals: null, priceKey: null, testnet: false };
   }
-  const m = /^(.+):(erc20|spl):([^:]+)$/.exec(ref);
-  if (!m)
+  const nft = /^(.+):(erc721|erc1155):(0x[0-9a-f]{40}):(\d{1,78})$/.exec(ref);
+  if (nft) {
+    const [, chainId = '', , contract = '', id = ''] = nft;
+    const label = reported.symbol ? claimed(reported.symbol, contract) : shorten(contract);
     return {
       ref,
-      symbol: ref.slice(ref.lastIndexOf(':') + 1, 12),
-      decimals: null,
+      symbol: `${label} #${shorten(id)}`,
+      decimals: 0,
       priceKey: null,
-      testnet: false,
+      testnet: chainOf(registry, chainId)?.testnet ?? false,
     };
+  }
+  const m = /^(.+):(erc20|spl):([^:]+)$/.exec(ref);
+  const evm = ref.startsWith('eip155:');
+  const known = KNOWN_TOKENS[evm ? ref.toLowerCase() : ref];
+  if (!m) {
+    // Cosmos bank denoms (`ibc/…`, `factory/…`) and anything else an adapter names.
+    const lastColon = ref.lastIndexOf(':');
+    const chainId = ref.slice(0, lastColon);
+    const denom = ref.slice(lastColon + 1);
+    const testnet = chainOf(registry, chainId)?.testnet ?? false;
+    if (known)
+      return {
+        ref,
+        symbol: known.symbol,
+        decimals: known.decimals,
+        priceKey: testnet ? null : known.coinId,
+        testnet,
+      };
+    return {
+      ref,
+      symbol: reported.symbol ? claimed(reported.symbol, denom) : shorten(denom || ref),
+      decimals: reported.decimals ?? null,
+      priceKey: null,
+      testnet,
+    };
+  }
   const [, chainId = '', standard, contract = ''] = m;
   const chain = chainOf(registry, chainId);
   const testnet = chain?.testnet ?? false;
-  const known = KNOWN_TOKENS[ref.toLowerCase()];
   if (known)
     return { ref, symbol: known.symbol, decimals: known.decimals, priceKey: known.coinId, testnet };
   const tracked = tokenStore.find(ref);
-  // Untracked contracts are mostly airdropped spam, and without known decimals a price could
-  // not value them anyway; asking about each would also tell the price API what this
-  // address holds.
+  // Untracked contracts are mostly airdropped spam; asking the price API about each would
+  // also tell it what this address holds.
   const key =
     testnet || !tracked
       ? null
       : tokenPriceKey(chainId, standard === 'erc20' ? contract.toLowerCase() : contract);
-  const short = `${contract.slice(0, 6)}…${contract.slice(-4)}`;
   return {
     ref,
-    symbol: tracked?.symbol ?? short,
-    decimals: tracked?.decimals ?? null,
+    symbol:
+      tracked?.symbol ?? (reported.symbol ? claimed(reported.symbol, contract) : shorten(contract)),
+    decimals: tracked?.decimals ?? reported.decimals ?? null,
     priceKey: key,
     testnet,
   };

@@ -114,6 +114,9 @@ export interface AccountHistory {
   complete: boolean;
   sources: readonly string[];
   error?: string | undefined;
+  /** Balances observed right after the history was read, to check it adds up. */
+  balances?: readonly { assetRef: string; amount: string }[] | undefined;
+  balancesAtMs?: number | undefined;
 }
 
 export interface AssetInfo {
@@ -244,6 +247,7 @@ export type IssueCode =
   | 'unknown-decimals'
   | 'history-incomplete'
   | 'history-error'
+  | 'balance-mismatch'
   | 'pending'
   | 'no-timestamp'
   | 'method-approximation';

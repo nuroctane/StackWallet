@@ -23,6 +23,76 @@ const base = (chain: ChainInfo, txHash: string): TxRecord => ({
   status: 'confirmed',
 });
 
+const WRAPPED_SOL = 'So11111111111111111111111111111111111111112';
+
+interface SolanaMeta {
+  preBalances: number[];
+  postBalances: number[];
+  preTokenBalances?:
+    | {
+        accountIndex: number;
+        mint: string;
+        owner?: string | undefined;
+        uiTokenAmount: { amount: string; decimals: number };
+      }[]
+    | null
+    | undefined;
+  postTokenBalances?: SolanaMeta['preTokenBalances'];
+}
+
+/**
+ * Net changes for one wallet. Lamports held by the wallet's own token
+ * accounts (rent deposits, wrapped SOL) still belong to it, so they count as
+ * SOL: opening a token account is not a sale and wrapping is not a trade.
+ */
+export function solanaDeltas(
+  chain: ChainInfo,
+  holder: string,
+  keys: readonly { pubkey: string }[],
+  meta: SolanaMeta,
+  tokenAccount?: string,
+): AssetDelta[] {
+  const lamports = (i: number) =>
+    BigInt(meta.postBalances[i] ?? 0) - BigInt(meta.preBalances[i] ?? 0);
+  const index = keys.findIndex((k) => k.pubkey === holder);
+  let native: bigint | null =
+    index >= 0 && meta.preBalances[index] !== undefined && meta.postBalances[index] !== undefined
+      ? lamports(index)
+      : null;
+  const pre = meta.preTokenBalances ?? [];
+  const post = meta.postTokenBalances ?? [];
+  const mine = (b: { accountIndex: number; owner?: string | undefined }) =>
+    b.owner === holder ||
+    (b.owner === undefined &&
+      tokenAccount !== undefined &&
+      keys[b.accountIndex]?.pubkey === tokenAccount);
+  const owned = new Set<number>();
+  for (const b of [...pre, ...post])
+    if (mine(b) && b.accountIndex !== index) owned.add(b.accountIndex);
+  for (const i of owned) native = (native ?? 0n) + lamports(i);
+  const tokens = new Map<string, { amount: bigint; decimals: number }>();
+  for (const [list, sign] of [
+    [pre, -1n],
+    [post, 1n],
+  ] as const)
+    for (const b of list) {
+      if (!mine(b) || b.mint === WRAPPED_SOL) continue;
+      const t = tokens.get(b.mint) ?? { amount: 0n, decimals: b.uiTokenAmount.decimals };
+      t.amount += sign * BigInt(b.uiTokenAmount.amount);
+      tokens.set(b.mint, t);
+    }
+  const out: AssetDelta[] = [];
+  if (native !== null) out.push({ assetRef: chain.nativeAsset.ref, amount: String(native) });
+  for (const [mint, t] of tokens)
+    if (t.amount !== 0n)
+      out.push({
+        assetRef: `${chain.chainId}:spl:${mint}`,
+        amount: String(t.amount),
+        decimals: t.decimals,
+      });
+  return out;
+}
+
 /** Bounded public reads share the adapter's timeout, body limit, identity check and failover. */
 export async function readHistory(
   chain: ChainInfo,
@@ -35,6 +105,10 @@ export async function readHistory(
   z.string()
     .regex(/^[A-Za-z0-9]{1,128}$/)
     .parse(address);
+  if (options?.owner !== undefined)
+    z.string()
+      .regex(/^[A-Za-z0-9]{1,128}$/)
+      .parse(options.owner);
   opts.signal?.throwIfAborted();
   if (chain.family === 'evm' && options?.indexerUrl !== undefined) {
     await withFailover(
@@ -53,7 +127,8 @@ export async function readHistory(
       options.indexerUrl,
       opts,
       cursor,
-      options.tokenTransfers,
+      options.stream ?? (options.tokenTransfers ? 'tokens' : 'transactions'),
+      options.nfts ?? false,
     );
   }
   return withFailover(
@@ -153,6 +228,13 @@ export async function readHistory(
         );
         // Signature discovery includes program calls; missing/pruned details remain unknown, not zero.
         const items: TxRecord[] = [];
+        const holder = options?.owner ?? address;
+        const tokenBalance = z.object({
+          accountIndex: z.number().int().nonnegative().max(255),
+          mint: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
+          owner: z.string().max(64).optional(),
+          uiTokenAmount: z.object({ amount: decimal, decimals: z.number().int().min(0).max(36) }),
+        });
         const txSchema = z
           .object({
             meta: z
@@ -160,6 +242,8 @@ export async function readHistory(
                 fee: uint,
                 preBalances: z.array(uint).max(256),
                 postBalances: z.array(uint).max(256),
+                preTokenBalances: z.array(tokenBalance).max(256).nullish(),
+                postTokenBalances: z.array(tokenBalance).max(256).nullish(),
                 err: z.unknown(),
               })
               .nullable(),
@@ -184,9 +268,6 @@ export async function readHistory(
             txSchema,
           );
           const keys = tx?.transaction.message.accountKeys ?? [];
-          const index = keys.findIndex((k) => k.pubkey === address);
-          const before = index >= 0 ? tx?.meta?.preBalances[index] : undefined;
-          const after = index >= 0 ? tx?.meta?.postBalances[index] : undefined;
           items.push({
             ...base(chain, t.signature),
             from: keys.find((k) => k.signer)?.pubkey ?? '',
@@ -194,21 +275,15 @@ export async function readHistory(
             ...(t.blockTime !== null ? { timestampMs: timestamp(t.blockTime) } : {}),
             status: t.err != null ? 'failed' : 'confirmed',
             fee: tx?.meta ? String(tx.meta.fee) : null,
-            assetDeltas:
-              before !== undefined && after !== undefined
-                ? [
-                    {
-                      assetRef: chain.nativeAsset.ref,
-                      amount: String(BigInt(after) - BigInt(before)),
-                    },
-                  ]
-                : [],
+            assetDeltas: tx?.meta
+              ? solanaDeltas(chain, holder, keys, tx.meta, holder === address ? undefined : address)
+              : [],
           });
         }
         page = {
           items,
           coverage:
-            'Confirmed signatures referencing this account, including program calls. SOL net changes include fees/rent; SPL token changes are not decoded. Pruned details are unknown.',
+            'Confirmed signatures referencing this account, including program calls. SOL net changes include fees and count lamports in the owner’s token accounts (rent, wrapped SOL) as SOL; SPL and Token-2022 changes come from token balances by owner. Pruned details are unknown.',
         };
         if (records.length === 20) page.nextCursor = records.at(-1)!.signature;
       } else if (chain.family === 'cosmos') {
@@ -224,7 +299,13 @@ export async function readHistory(
           txs: z
             .array(
               z.object({
-                auth_info: z.object({ fee: z.object({ amount: z.array(coin).max(100) }) }),
+                auth_info: z.object({
+                  fee: z.object({
+                    amount: z.array(coin).max(100),
+                    payer: z.string().max(128).optional(),
+                    granter: z.string().max(128).optional(),
+                  }),
+                }),
               }),
             )
             .max(20),
@@ -267,36 +348,70 @@ export async function readHistory(
           params.append('events', query);
           pages.push(await rest('/cosmos/tx/v1beta1/txs?' + params, txSchema));
         }
+        const refOf = (denom: string) =>
+          denom === chain.extra?.baseDenom ? chain.nativeAsset.ref : chain.chainId + ':' + denom;
         const items = new Map<string, TxRecord>();
         for (const p of pages)
           for (const [i, t] of p.tx_responses.entries()) {
             const deltas = new Map<string, bigint>();
             let from = '';
             let to = '';
-            if (t.code === 0)
-              for (const event of t.events.filter((e) => e.type === 'transfer')) {
-                const fields = Object.fromEntries(event.attributes.map((a) => [a.key, a.value]));
-                const sender = fields['sender'];
-                const recipient = fields['recipient'];
-                if (sender !== address && recipient !== address) continue;
-                from ||= sender ?? '';
-                to ||= recipient ?? '';
-                for (const part of (fields['amount'] ?? '').split(',')) {
-                  const match = /^(\d{1,78})([A-Za-z][A-Za-z0-9/:._-]{0,255})$/.exec(part);
-                  if (!match) continue;
-                  const ref =
-                    match[2] === chain.extra?.baseDenom
-                      ? chain.nativeAsset.ref
-                      : chain.chainId + ':' + match[2];
-                  const change =
-                    BigInt(match[1]!) *
-                    BigInt((recipient === address ? 1 : 0) - (sender === address ? 1 : 0));
-                  deltas.set(ref, (deltas.get(ref) ?? 0n) + change);
-                }
+            const feeInfo = p.txs[i]?.auth_info.fee;
+            const coins = feeInfo?.amount ?? [];
+            const attr = (type: string, key: string) =>
+              t.events
+                .find((e) => e.type === type && e.attributes.some((a) => a.key === key))
+                ?.attributes.find((a) => a.key === key)?.value;
+            // A fee grant moves the fee from the granter; otherwise from the payer or first signer.
+            const payer =
+              feeInfo?.granter ||
+              attr('tx', 'fee_payer') ||
+              feeInfo?.payer ||
+              attr('tx', 'acc_seq')?.split('/')[0] ||
+              '';
+            const feeCoin = coins.length === 1 ? coins[0]! : null;
+            const transfers = t.events.filter((e) => e.type === 'transfer');
+            const tagged = transfers.some((e) => e.attributes.some((a) => a.key === 'msg_index'));
+            let feeSeen = false;
+            for (const event of transfers) {
+              const fields = Object.fromEntries(event.attributes.map((a) => [a.key, a.value]));
+              const sender = fields['sender'];
+              const recipient = fields['recipient'];
+              if (sender !== address && recipient !== address) continue;
+              const parts = (fields['amount'] ?? '').split(',');
+              const isFee =
+                !feeSeen &&
+                sender === address &&
+                (!payer || payer === address) &&
+                feeCoin !== null &&
+                (!tagged || fields['msg_index'] === undefined) &&
+                parts.includes(feeCoin.amount + feeCoin.denom);
+              if (isFee) feeSeen = true;
+              // A failed transaction still pays its fee; its message effects are reverted.
+              if (t.code !== 0 && !isFee) continue;
+              from ||= sender ?? '';
+              to ||= recipient ?? '';
+              for (const part of parts) {
+                const match = /^(\d{1,78})([A-Za-z][A-Za-z0-9/:._-]{0,255})$/.exec(part);
+                if (!match) continue;
+                const ref = refOf(match[2]!);
+                const change =
+                  BigInt(match[1]!) *
+                  BigInt((recipient === address ? 1 : 0) - (sender === address ? 1 : 0));
+                deltas.set(ref, (deltas.get(ref) ?? 0n) + change);
               }
-            const fee = p.txs[i]?.auth_info.fee.amount.find(
-              (c) => c.denom === chain.extra?.baseDenom,
-            );
+            }
+            // Consumers treat `from` as the fee payer, so the two must agree: with no
+            // payer on record, the message signer (or first sender) paid.
+            const pays = (payer || attr('message', 'sender') || from) === address;
+            if (pays) from = address;
+            else if (from === address) from = payer;
+            // Older SDKs leave the ante handler's fee transfer out of the events; deltas
+            // always include fees paid, so put it in when the chain did not.
+            if (pays && feeCoin !== null && !feeSeen && BigInt(feeCoin.amount) > 0n) {
+              const ref = refOf(feeCoin.denom);
+              deltas.set(ref, (deltas.get(ref) ?? 0n) - BigInt(feeCoin.amount));
+            }
             items.set(t.txhash, {
               ...base(chain, t.txhash),
               from,
@@ -304,7 +419,9 @@ export async function readHistory(
               blockNumber: uint.parse(Number(t.height)),
               timestampMs: uint.parse(Date.parse(t.timestamp)),
               status: t.code === 0 ? 'confirmed' : 'failed',
-              fee: fee?.amount ?? null,
+              ...(feeCoin ? { feeAssetRef: refOf(feeCoin.denom) } : {}),
+              // No fee coins is a zero fee; several fee coins have no single fee asset.
+              fee: coins.length === 0 ? '0' : feeCoin ? feeCoin.amount : null,
               assetDeltas: [...deltas].map(
                 ([assetRef, amount]): AssetDelta => ({ assetRef, amount: String(amount) }),
               ),
@@ -416,7 +533,14 @@ export const HistoryPage = z.object({
         blockNumber: uint.optional(),
         timestampMs: uint.optional(),
         assetDeltas: z
-          .array(z.object({ assetRef: text, amount: z.string().regex(/^-?\d{1,100}$/) }))
+          .array(
+            z.object({
+              assetRef: text,
+              amount: z.string().regex(/^-?\d{1,100}$/),
+              symbol: z.string().max(12).optional(),
+              decimals: z.number().int().min(0).max(36).optional(),
+            }),
+          )
           .max(1000),
         feeAssetRef: text,
         fee: decimal.nullable(),

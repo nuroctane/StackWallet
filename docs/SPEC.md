@@ -506,10 +506,23 @@ holdings from public chain history, on the device, for any set of wallets.
 - **Scope**: all wallets, one directory (subfolders included), wallet kinds (watched, imported,
   exported, local keys, hardware, shared) and hand-picked wallets. Directory views and the
   directory toolbar open the element pre-scoped.
-- **History**: every in-scope account is read through its indexer (EVM Blockscout transaction
-  and token-transfer streams), up to a page limit; RPC-only chains give one page. A history
-  that stops early is a blocking issue, never a silent gap.
-- **Engine**: bigint micro-units throughout; unknown values are `null`, never zero. Lots are
+- **History**: every in-scope account is read through its indexer, up to a page limit, with
+  each page retried after transport failures; RPC-only chains give one page. EVM reads four
+  Blockscout streams: external transactions (native value, fees), token transfers (ERC-20, and
+  ERC-721/1155 as one whole-unit asset per token ID), internal transfers (native value paid
+  out by contracts or spent by contract wallets) and, on Ethereum, beacon withdrawals. Solana
+  reads the owner's signatures and each of its token accounts; SPL and Token-2022 changes are
+  credited by owner, and rent held in token accounts counts as SOL still owned. Cosmos fees are
+  charged to the granter, payer or signer in the fee's own denom; failed transactions keep only
+  their fee. Bitcoin fees are capped at the address's own net outflow (coinjoins, payjoins). A
+  history that stops early is a blocking issue, never a silent gap.
+- **Reconciliation**: after a complete read, the live balances are compared with the replayed
+  history per asset; any difference is flagged, since something moved that no stream decodes.
+- **Engine**: bigint micro-units throughout; unknown values are `null`, never zero. Prices
+  convert exactly from their decimal form, so sub-nano token prices and one-wei amounts value
+  correctly (rounded half up to the micro-unit). Within a trade, priced legs take their market
+  value and unpriced legs share only the remainder, so spam received alongside a swap never
+  takes its basis; a partly priced trade uses the priced side as a floor and says so. Lots are
   pooled per wallet (the US rule since 2025) or across wallets; FIFO, LIFO, HIFO or average
   cost per jurisdiction profile (US, DE, AT, PT, CZ, CH, UK, CA, AU, FR, generic). Moves between
   in-scope wallets are matched and not taxable. Network fees are either a disposal of the fee

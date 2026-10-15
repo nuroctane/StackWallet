@@ -207,6 +207,138 @@ it('accepts a large indexed page without relaxing ordinary RPC response limits',
     fetchJson('https://rpc.example', { fetch: async () => new Response(payload) }),
   ).rejects.toThrow('body too large');
 });
+describe('indexed EVM streams beyond external transactions', () => {
+  const internal = (over: Record<string, unknown>) => ({
+    transaction_hash: hash,
+    index: 1,
+    block_number: 5,
+    timestamp: tx.timestamp,
+    type: 'call',
+    success: true,
+    error: null,
+    from: { hash: other },
+    to: { hash: account },
+    value: '7',
+    ...over,
+  });
+  it('counts native value paid out or spent by contracts, and nothing from reverted or delegate frames', async () => {
+    const page = await readIndexedHistory(
+      chain,
+      account,
+      'https://indexer.example',
+      {
+        fetch: fetcher({
+          items: [
+            internal({ index: 1 }),
+            internal({ index: 2, from: { hash: account }, to: { hash: other }, value: '3' }),
+            internal({ index: 3, success: false }),
+            internal({ index: 4, type: 'delegatecall' }),
+            internal({ index: 5, to: null, created_contract: { hash: account }, type: 'create' }),
+          ],
+          next_page_params: null,
+        }),
+      },
+      undefined,
+      'internal',
+    );
+    expect(page.items.map((i) => i.entryId)).toEqual(
+      [1, 2, 3, 4, 5].map((n) => `${hash}:internal:${n}`),
+    );
+    expect(page.items.map((i) => i.assetDeltas[0]?.amount)).toEqual([
+      '7',
+      '-3',
+      undefined,
+      undefined,
+      '7',
+    ]);
+    expect(page.items.every((i) => i.fee === null)).toBe(true);
+    expect(page.source).toContain('/internal-transactions');
+  });
+  it('rejects internal transfers unrelated to the account', async () => {
+    await expect(
+      readIndexedHistory(
+        chain,
+        account,
+        'https://indexer.example',
+        {
+          fetch: fetcher({
+            items: [internal({ to: { hash: other } })],
+            next_page_params: null,
+          }),
+        },
+        undefined,
+        'internal',
+      ),
+    ).rejects.toThrow('unrelated');
+  });
+  it('reads beacon withdrawals as receipts keyed by withdrawal index', async () => {
+    const page = await readIndexedHistory(
+      chain,
+      account,
+      'https://indexer.example',
+      {
+        fetch: fetcher({
+          items: [
+            {
+              index: 99,
+              amount: '1234',
+              block_number: 7,
+              timestamp: tx.timestamp,
+              validator_index: 42,
+            },
+          ],
+          next_page_params: null,
+        }),
+      },
+      undefined,
+      'withdrawals',
+    );
+    expect(page.items[0]).toMatchObject({
+      hash: 'withdrawal-99',
+      entryId: 'withdrawal-99',
+      fee: null,
+      assetDeltas: [{ assetRef: chain.nativeAsset.ref, amount: '1234' }],
+    });
+  });
+  it('reports NFTs as one asset per token ID and keeps token metadata bounded', async () => {
+    const nft = (type: string, total: Record<string, string>, symbol: string) => ({
+      transaction_hash: hash,
+      log_index: Math.floor(Math.random() * 1e6),
+      from: { hash: account },
+      to: { hash: other },
+      token: { type, address_hash: other, symbol, decimals: null },
+      total,
+      block_number: 1,
+      timestamp: tx.timestamp,
+    });
+    const page = await readIndexedHistory(
+      chain,
+      account,
+      'https://indexer.example',
+      {
+        fetch: fetcher({
+          items: [
+            nft('ERC-721', { token_id: '5' }, 'APE'),
+            nft('ERC-1155', { token_id: '9', value: '3' }, 'ITEM\u202e evil<script>'),
+          ],
+          next_page_params: null,
+        }),
+      },
+      undefined,
+      'tokens',
+      true,
+    );
+    expect(page.items.map((i) => i.assetDeltas[0])).toEqual([
+      { assetRef: `${chain.chainId}:erc721:${other}:5`, amount: '-1', symbol: 'APE', decimals: 0 },
+      {
+        assetRef: `${chain.chainId}:erc1155:${other}:9`,
+        amount: '-3',
+        symbol: 'ITEMevil<scr',
+        decimals: 0,
+      },
+    ]);
+  });
+});
 it('still rejects oversized indexed bodies under the larger bounded limit', async () => {
   await expect(
     readIndexedHistory(chain, account, 'https://indexer.example', {

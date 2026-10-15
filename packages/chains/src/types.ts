@@ -106,6 +106,9 @@ export interface Page<T> {
 export interface AssetDelta {
   assetRef: AssetRef;
   amount: string;
+  /** Untrusted display metadata reported alongside the movement (indexer or token program). */
+  symbol?: string | undefined;
+  decimals?: number | undefined;
 }
 
 export type SimulationWarning =
@@ -177,6 +180,11 @@ export interface ChainAdapter {
     cursor?: string,
     options?: HistoryOptions,
   ): Promise<Page<TxRecord>>;
+  /**
+   * Other addresses whose history belongs to `addr` (Solana token accounts,
+   * which incoming token transfers name instead of the wallet).
+   */
+  historyAddresses?(addr: Address, chainId: ChainId, signal?: AbortSignal): Promise<Address[]>;
   build(intent: TxIntent, chainId: ChainId): Promise<UnsignedTx>;
   simulate(tx: UnsignedTx): Promise<Simulation>;
   sighashes(tx: UnsignedTx): SignRequest[];

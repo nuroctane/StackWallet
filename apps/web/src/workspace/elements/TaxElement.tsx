@@ -49,6 +49,7 @@ import {
   assetInfoFor,
   historyKey,
   priceBookKey,
+  reportedAssets,
   scopeAccounts,
   scopeWallets,
   tagsFor,
@@ -84,7 +85,12 @@ function amountText(amount: bigint, info: AssetInfo | undefined, symbol = true):
   if (!info || info.decimals === null) return `${neg ? '−' : ''}${abs} base units${sym}`;
   let text = units(abs, info.decimals);
   const dot = text.indexOf('.');
-  if (dot >= 0 && text.length - dot - 1 > 8) text = text.slice(0, dot + 9).replace(/\.?0+$/, '');
+  if (dot >= 0 && text.length - dot - 1 > 8) {
+    const first = text.slice(dot + 1).search(/[1-9]/);
+    // Dust keeps four significant digits instead of truncating to a misleading 0.
+    const keep = text.startsWith('0.') && first >= 8 ? first + 4 : 8;
+    text = text.slice(0, dot + 1 + keep).replace(/\.?0+$/, '');
+  }
   return `${neg ? '−' : ''}${text}${sym}`;
 }
 
@@ -408,12 +414,15 @@ export function TaxElement({ pane, setProps }: ElementBodyProps) {
   );
   const assets = useMemo(() => {
     const refs = new Set<string>();
-    for (const h of histories)
+    for (const h of histories) {
       for (const r of h.records) {
         refs.add(r.feeAssetRef);
         for (const d of r.assetDeltas) refs.add(d.assetRef);
       }
-    return new Map([...refs].map((ref) => [ref, assetInfoFor(registry, ref)]));
+      for (const b of h.balances ?? []) refs.add(b.assetRef);
+    }
+    const reported = reportedAssets(histories);
+    return new Map([...refs].map((ref) => [ref, assetInfoFor(registry, ref, reported.get(ref))]));
     // Tracked tokens change symbols and decimals.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [histories, registry, tokens]);
@@ -448,7 +457,8 @@ export function TaxElement({ pane, setProps }: ElementBodyProps) {
     chainName: (id) => findChain(registry, id)?.name ?? id,
     explorer: (chainId, hash) => {
       const chain = findChain(registry, chainId);
-      return chain ? explorerTxUrl(chain, hash) : undefined;
+      // Beacon withdrawals have no transaction to link to.
+      return chain && !hash.startsWith('withdrawal-') ? explorerTxUrl(chain, hash) : undefined;
     },
   };
   const inPeriod = (t: number | null) =>

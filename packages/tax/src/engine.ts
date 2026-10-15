@@ -19,7 +19,8 @@ import {
   type TaxReport,
   type TaxSettings,
 } from './model.js';
-import { buildEvents } from './normalize.js';
+import { units } from './exports.js';
+import { buildEvents, normHash } from './normalize.js';
 
 /**
  * The cost-basis engine. Everything is integer arithmetic: amounts in base
@@ -59,6 +60,60 @@ export function priceAt(points: readonly PricePoint[] | undefined, t: number): n
   if (found < 0) return null;
   const p = points[found] as PricePoint;
   return t - p.t <= PRICE_MAX_AGE_MS ? p.v : null;
+}
+
+/**
+ * A JSON price as an exact decimal fraction. Floats print their shortest
+ * round-trip form, so `1.23e-12` becomes 123 / 10^14 with nothing lost; a
+ * sub-nano price never collapses to zero.
+ */
+export function priceFraction(v: number): { num: bigint; exp: number } | null {
+  if (!Number.isFinite(v) || v < 0) return null;
+  const m = /^(\d+)(?:\.(\d+))?(?:e([+-]\d+))?$/.exec(String(v));
+  if (!m) return null;
+  const [, int = '0', frac = '', e = '0'] = m;
+  return { num: BigInt(int + frac), exp: Number(e) - frac.length };
+}
+
+/** Fiat micros of `amount` base units at `price` per whole unit, rounded half up. */
+export function valueMicros(amount: bigint, decimals: number, price: number): bigint | null {
+  const p = priceFraction(price);
+  if (p === null) return null;
+  const scale = 6 + p.exp - decimals;
+  const n = (amount < 0n ? -amount : amount) * p.num;
+  if (scale >= 0) return n * 10n ** BigInt(scale);
+  const d = 10n ** BigInt(-scale);
+  return (n + d / 2n) / d;
+}
+
+/**
+ * Shares `total` among parts with known values first and splits what is left
+ * evenly among the unknown ones. Raw amounts of different assets are never
+ * weighed against each other: a billion spam tokens must not take the basis
+ * of the coin they arrived with.
+ */
+export function allocate(
+  total: bigint,
+  known: readonly (bigint | null)[],
+  legs: readonly { assetRef: string; amount: bigint }[],
+): bigint[] {
+  const missing = known.flatMap((k, i) => (k === null ? [i] : []));
+  if (missing.length === 0) return split(total, known as bigint[]);
+  const knownSum = known.reduce<bigint>((s, k) => s + (k ?? 0n), 0n);
+  if (knownSum >= total && knownSum > 0n)
+    return split(
+      total,
+      known.map((k) => k ?? 0n),
+    );
+  const unknownLegs = missing.map((i) => legs[i]!);
+  const oneAsset = unknownLegs.every((l) => l.assetRef === unknownLegs[0]!.assetRef);
+  const rest = split(
+    total - knownSum,
+    unknownLegs.map((l) => (oneAsset ? abs(l.amount) : 0n)),
+  );
+  const out = known.map((k) => k ?? 0n);
+  missing.forEach((i, n) => (out[i] = rest[n]!));
+  return out;
 }
 
 /** Fiat decimal string ("1234.56") to micros. */
@@ -112,9 +167,7 @@ export function buildReport(input: ReportInput): TaxReport {
     if (!a || a.decimals === null || !a.priceKey || a.testnet) return null;
     const price = priceAt(input.prices.get(a.priceKey), at);
     if (price === null) return null;
-    // Nano-precision price keeps sub-cent tokens from rounding to zero.
-    const nanos = BigInt(Math.round(price * 1e9));
-    return (abs(amount) * nanos) / 10n ** BigInt(a.decimals + 3);
+    return valueMicros(amount, a.decimals, price);
   };
   const walletOfAccount = new Map(accounts.map((a) => [a.accountId, a.walletId]));
   const poolOf = (walletId: string) => (settings.pooling === 'wallet' ? walletId : '*');
@@ -271,7 +324,12 @@ export function buildReport(input: ReportInput): TaxReport {
         });
     });
   };
-  const symbolOf = (ref: string) => assetOf(ref)?.symbol ?? ref.split(':').pop() ?? ref;
+  const symbolOf = (ref: string) => {
+    const tail = ref.split(':').pop() || ref;
+    return (
+      assetOf(ref)?.symbol ?? (tail.length > 14 ? `${tail.slice(0, 6)}…${tail.slice(-4)}` : tail)
+    );
+  };
 
   for (const e of events) {
     if (e.label === 'spam') continue;
@@ -348,51 +406,41 @@ export function buildReport(input: ReportInput): TaxReport {
         xs.length > 0 && xs.every((x) => x !== null)
           ? xs.reduce<bigint>((s, x) => s + (x as bigint), 0n)
           : null;
-      const value = fixed ?? sum(inVals) ?? sum(outVals);
+      const partial = (xs: (bigint | null)[]) =>
+        xs.some((x) => x !== null) ? xs.reduce<bigint>((s, x) => s + (x ?? 0n), 0n) : null;
+      const full = fixed ?? sum(inVals) ?? sum(outVals);
+      // With neither side fully priced, the larger priced part is a floor on the value.
+      const floor = [partial(inVals), partial(outVals)].reduce<bigint | null>(
+        (m, x) => (x !== null && (m === null || x > m) ? x : m),
+        null,
+      );
+      const value = full ?? floor;
       values.set(e.id, value);
-      if (value === null && here)
+      if (full === null && here)
         flag({
           code: 'missing-price',
-          severity: 'blocker',
+          severity: value === null ? 'blocker' : 'warn',
           eventId: e.id,
-          message: 'No market price for either side of this trade. Enter its value.',
+          message:
+            value === null
+              ? 'No market price for either side of this trade. Enter its value.'
+              : 'Only part of this trade has a market price, so its value is a lower bound. Enter its value.',
         });
-      const outParts =
-        value === null
-          ? outs.map(() => null)
-          : split(
-              value,
-              outs.map((f, i) => outVals[i] ?? abs(f.amount)),
-            );
+      const outParts = value === null ? outs.map(() => null) : allocate(value, outVals, outs);
       outs.forEach((f, i) =>
         dispose(e, f.walletId, f.assetRef, -f.amount, outParts[i] ?? null, 'trade', false, t),
       );
-      const inParts =
-        value === null
-          ? ins.map(() => null)
-          : split(
-              value,
-              ins.map((f, i) => inVals[i] ?? f.amount),
-            );
+      const inParts = value === null ? ins.map(() => null) : allocate(value, inVals, ins);
       ins.forEach((f, i) => addLot(f.walletId, f.assetRef, f.amount, inParts[i] ?? null, t, e.id));
     } else {
       const inVals = ins.map((f) => valueOf(f.assetRef, f.amount, t));
-      const inParts =
-        fixed !== null
-          ? split(
-              fixed,
-              ins.map((f) => f.amount),
-            )
-          : inVals;
+      const inParts = fixed !== null ? allocate(fixed, inVals, ins) : inVals;
       ins.forEach((f, i) => {
         const v = inParts[i] ?? null;
         if (e.label === 'transfer-in' || e.label === 'gift-in') {
           const basis =
             e.override?.basis !== undefined
-              ? (split(
-                  toMicros(e.override.basis),
-                  ins.map((x) => x.amount),
-                )[i] ?? null)
+              ? (allocate(toMicros(e.override.basis), inVals, ins)[i] ?? null)
               : null;
           const acquired = e.override?.acquiredAtMs ?? t;
           addLot(f.walletId, f.assetRef, f.amount, basis, acquired, e.id);
@@ -428,13 +476,7 @@ export function buildReport(input: ReportInput): TaxReport {
       });
       const removal = ['gift-out', 'transfer-out', 'lost'].includes(e.label);
       const outVals = outs.map((f) => valueOf(f.assetRef, -f.amount, t));
-      const outParts =
-        fixed !== null
-          ? split(
-              fixed,
-              outs.map((f) => -f.amount),
-            )
-          : outVals;
+      const outParts = fixed !== null ? allocate(fixed, outVals, outs) : outVals;
       values.set(e.id, ins.length > 0 ? total(inParts) : outs.length > 0 ? total(outParts) : null);
       outs.forEach((f, i) => {
         const p = outParts[i] ?? null;
@@ -506,6 +548,40 @@ export function buildReport(input: ReportInput): TaxReport {
         accountId: a.accountId,
         message: `${a.walletName} · ${a.chainName}: only the newest records were read. Older acquisitions may be missing, which shows up as missing basis.`,
       });
+    else if (h.balances) reconcile(a, h);
+  }
+
+  /**
+   * Replays the raw history and compares it with what the chain holds now. A
+   * gap means something moved that no history stream decodes (a protocol
+   * mint, a rebasing token, an L2 deposit), so the lots for that asset are off.
+   */
+  function reconcile(a: ScopeAccount, h: AccountHistory) {
+    const sums = new Map<string, bigint>();
+    const seen = new Set<string>();
+    for (const r of h.records) {
+      if (r.chainId !== a.chainId || r.status === 'pending') continue;
+      const key = r.entryId ?? `${normHash(r.chainId, r.hash)}#tx`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      for (const d of r.assetDeltas) {
+        if (!/^-?\d{1,78}$/.test(d.amount)) continue;
+        sums.set(d.assetRef, (sums.get(d.assetRef) ?? 0n) + BigInt(d.amount));
+      }
+    }
+    for (const b of h.balances ?? []) {
+      if (!/^\d{1,78}$/.test(b.amount)) continue;
+      const held = BigInt(b.amount);
+      const replayed = sums.get(b.assetRef) ?? 0n;
+      if (held === replayed) continue;
+      const decimals = assetOf(b.assetRef)?.decimals ?? null;
+      flag({
+        code: 'balance-mismatch',
+        severity: 'warn',
+        accountId: a.accountId,
+        message: `${a.walletName} · ${a.chainName}: the history adds up to ${units(replayed, decimals)} ${symbolOf(b.assetRef)}, but the chain holds ${units(held, decimals)}. Something moved that the history does not show (a reward, rebase, bridge deposit or contract effect), so lots and gains for this asset may be off. Add the missing movement by hand or treat the gap as a deposit.`,
+      });
+    }
   }
 
   const valuedAt = Math.min(period.endMs - 1, now);
