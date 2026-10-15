@@ -7,16 +7,26 @@
  * Only type-only imports reach `catalog.ts`, so no bundler is needed. The
  * script talks to the network and is not part of any test suite.
  */
-import { CHAIN_CATALOG } from '../packages/chains/src/catalog.ts';
+import { CURATED_CATALOG } from '../packages/chains/src/catalog-curated.ts';
+import {
+  CHAIN_META,
+  GENERATED_COSMOS,
+  GENERATED_EVM,
+  GENERATED_SVM,
+} from '../packages/chains/src/catalog-generated.ts';
+import { mergeCatalog } from '../packages/chains/src/catalog-merge.ts';
 import type { ChainInfo } from '../packages/chains/src/types.ts';
 
-const TIMEOUT_MS = 8000;
+// catalog.ts imports its siblings with `.js` specifiers, which Node cannot map to source.
+const CHAIN_CATALOG = mergeCatalog({
+  curated: CURATED_CATALOG,
+  evm: GENERATED_EVM,
+  cosmos: GENERATED_COSMOS,
+  svm: GENERATED_SVM,
+  meta: CHAIN_META,
+});
 
-// Solana genesis hashes; the CAIP-2 reference is the first 32 characters.
-const SOLANA_GENESIS: Record<string, string> = {
-  'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp': '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d',
-  'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1': 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG',
-};
+const TIMEOUT_MS = 8000;
 
 type Outcome = {
   chain: string;
@@ -87,9 +97,10 @@ async function verify(chain: ChainInfo, url: string): Promise<string | undefined
       return undefined;
     }
     case 'solana': {
-      const expected = SOLANA_GENESIS[chain.chainId];
       const got = await jsonRpc(url, 'getGenesisHash');
-      if (got !== expected) return `WRONG CHAIN: genesis=${String(got)} want ${expected}`;
+      const prefix = chain.chainId.slice('solana:'.length);
+      if (typeof got !== 'string' || got.slice(0, 32) !== prefix)
+        return `WRONG CHAIN: genesis=${String(got)} want ${prefix}...`;
       return undefined;
     }
     case 'cosmos': {

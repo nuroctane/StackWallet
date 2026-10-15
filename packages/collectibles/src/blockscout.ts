@@ -1,4 +1,4 @@
-import { fetchJson, type FetchOptions } from '@stackwallet/chains';
+import { fetchJson, HISTORY_INDEXERS, type FetchOptions } from '@stackwallet/chains';
 import { z } from 'zod';
 
 import { cleanText } from './text.js';
@@ -13,8 +13,10 @@ import type {
 /**
  * Blockscout instances that answer the v2 NFT endpoint with CORS. Keyed by
  * EVM chain id; chains without a keyless instance are simply not covered.
+ * Every history indexer is a Blockscout v2 instance, so it serves NFTs too.
  */
 export const BLOCKSCOUT_HOSTS: Readonly<Record<string, string>> = {
+  ...HISTORY_INDEXERS,
   'eip155:1': 'https://eth.blockscout.com',
   'eip155:11155111': 'https://eth-sepolia.blockscout.com',
   'eip155:8453': 'https://base.blockscout.com',

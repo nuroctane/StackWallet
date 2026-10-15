@@ -12,7 +12,8 @@
     "desktop": "pnpm --filter @stackwallet/desktop desktop",
     "format": "prettier --write \"**/*.{ts,tsx,json,md,yml,css}\" --ignore-path .gitignore --ignore-path .prettierignore",
     "format:check": "prettier --check \"**/*.{ts,tsx,json,md,yml,css}\" --ignore-path .gitignore --ignore-path .prettierignore",
-    "probe:rpcs": "node --experimental-strip-types scripts/probe-rpcs.ts"
+    "probe:rpcs": "node --experimental-strip-types scripts/probe-rpcs.ts",
+    "sync:chains": "node --experimental-strip-types scripts/sync-chains.ts"
   },
   "devDependencies": {
     "@types/node": "24.19.1",

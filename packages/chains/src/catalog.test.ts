@@ -1,7 +1,8 @@
 import { ChainId, chainFamilyOf } from '@stackwallet/core-client';
 import { describe, expect, it } from 'vitest';
 
-import { CHAIN_CATALOG, catalogChain, chainsForFamily } from './catalog.js';
+import { CHAIN_CATALOG, catalogChain, chainsForFamily, LLAMA_UNSUPPORTED } from './catalog.js';
+import { CURATED_CATALOG } from './catalog-curated.js';
 import { ChainInfo } from './types.js';
 
 describe('CHAIN_CATALOG', () => {
@@ -29,9 +30,41 @@ describe('CHAIN_CATALOG', () => {
       for (const url of entry.defaultRpcs) {
         expect(url.startsWith('https://'), `${entry.chainId} ${url}`).toBe(true);
       }
-      expect(entry.explorerTxUrl, entry.chainId).toContain('{hash}');
+      if (entry.explorerTxUrl !== undefined) {
+        expect(entry.explorerTxUrl, entry.chainId).toContain('{hash}');
+        expect(entry.explorerTxUrl.startsWith('https://'), entry.chainId).toBe(true);
+      }
+      expect(new Set(entry.defaultRpcs).size, entry.chainId).toBe(entry.defaultRpcs.length);
       expect(entry.nativeAsset.ref).toBe(`${entry.chainId}:native`);
     }
+  });
+
+  it('keeps an explorer for every curated chain', () => {
+    for (const entry of CURATED_CATALOG) expect(entry.explorerTxUrl, entry.chainId).toBeTruthy();
+  });
+
+  it('lets curated entries win over generated ones', () => {
+    for (const curated of CURATED_CATALOG) {
+      const merged = catalogChain(curated.chainId);
+      expect(merged?.name, curated.chainId).toBe(curated.name);
+      expect(merged?.defaultRpcs, curated.chainId).toEqual(curated.defaultRpcs);
+    }
+  });
+
+  it('prices native assets by CoinGecko id, never on testnets', () => {
+    expect(catalogChain('eip155:1')?.priceId).toBe('ethereum');
+    expect(catalogChain('bip122:000000000019d6689c085ae165831e93')?.priceId).toBe('bitcoin');
+    for (const c of CHAIN_CATALOG) if (c.testnet) expect(c.priceId, c.chainId).toBeUndefined();
+  });
+
+  it('covers every DefiLlama chain an existing family can serve', () => {
+    expect(chainsForFamily('evm').length).toBeGreaterThanOrEqual(250);
+    expect(chainsForFamily('cosmos').length).toBeGreaterThanOrEqual(35);
+    expect(chainsForFamily('solana').length).toBeGreaterThanOrEqual(5);
+    for (const name of ['Solana', 'Bitcoin', 'Ethereum', 'Base', 'CosmosHub'])
+      expect(LLAMA_UNSUPPORTED, name).not.toContain(name);
+    expect(catalogChain('eip155:8453')?.layer).toBe('L2');
+    expect(catalogChain('eip155:8453')?.parent).toBe('Ethereum');
   });
 
   it('carries the family-specific extras adapters depend on', () => {

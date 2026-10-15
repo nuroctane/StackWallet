@@ -11,6 +11,23 @@ compute sighashes, simulate, attach signatures, broadcast and report status.
 - The bundled list is `CHAIN_CATALOG` in `packages/chains/src/catalog.ts`; `chainsForFamily()`
   slices it per adapter. Family-specific facts (bech32 prefix, base denom, address algorithm,
   base58 version bytes) live in `ChainInfo.extra`.
+- The catalog has two halves. `catalog-curated.ts` holds hand-checked entries.
+  `catalog-generated.ts` is written by `scripts/sync-chains.ts` (`pnpm sync:chains`). It covers
+  every chain on DefiLlama's list (L1s, alt-L1s, L2s, L3s, sidechains, appchains) that an
+  existing family can serve: EVM chains from chainlist, Cosmos SDK chains from the Cosmos chain
+  registry, and SVM networks. It also lists the Blockscout v2 indexers from Blockscout's
+  directory. Every endpoint the generator keeps answered live with the chain identity it
+  claims (`eth_chainId`, genesis hash, `node_info.network`), answered a browser CORS preflight
+  from the deployed origin, and is not marked as tracking users on chainlist. The fastest
+  three are kept. Curated entries win on conflict.
+- `CHAIN_META` adds DefiLlama facts to both halves: `layer` (L1, L2, L3, sidechain, parachain,
+  subnet, appchain), `parent` (the settlement chain), `priceId` (the native asset's CoinGecko
+  id, used ahead of the symbol because symbols collide) and `halted` (no new block for 14 days
+  at generation time). Chains with no endpoint that passed are still listed so their balances
+  can be read after the user adds an endpoint. `LLAMA_UNSUPPORTED` lists the DefiLlama chains
+  that need a new family.
+- The generated file is committed, so builds stay reproducible and the app fetches no chain
+  registry at runtime (D8). Regenerate it from the repo root and review the diff.
 - Asset refs are `<chainId>:<kind>:<identifier>` where kind ∈ `native | erc20 | erc721 | erc1155 |
 spl | spl2022 | ibc | factory | cw20 | brc20 | rune`.
 - Public keys are `{ curve: 'secp256k1' | 'ed25519' | 'secp256k1-tr', hex }`.
@@ -73,8 +90,8 @@ Current state (`packages/chains/src/rpc.ts`):
   transaction building.
 - `scripts/probe-rpcs.ts` (`pnpm probe:rpcs`) hits every catalog endpoint once and verifies it
   serves the claimed chain (`eth_chainId`, Solana `getGenesisHash`, Cosmos `node_info.network`,
-  Bitcoin `/blocks/tip/height`). It cannot check CORS, so a browser may still reject an endpoint
-  the probe accepts.
+  Bitcoin `/blocks/tip/height`). It does not check CORS. `pnpm sync:chains` does check CORS for
+  the endpoints it generates.
 
 ## Per-family notes
 

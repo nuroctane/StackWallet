@@ -1,7 +1,8 @@
 import { useId, useState, type FormEvent } from 'react';
-import { Button, Dialog, Field, Input, Select, useToasts } from '@stackwallet/ui';
+import { Button, Dialog, Field, Input, useToasts } from '@stackwallet/ui';
 
 import { listChains } from '../lib/chains.js';
+import { ChainSelect } from './ChainSelect.js';
 import { directory, useDirectory } from '../store/persist.js';
 import { useRegistry } from '../store/RegistryContext.js';
 
@@ -115,15 +116,13 @@ function ContactsBody() {
           />
         </Field>
         <Field label="Network" htmlFor={ids.chain}>
-          <Select id={ids.chain} value={chainId} onChange={(e) => setChainId(e.target.value)}>
-            <option value="evm">Every EVM chain</option>
-            {chains.map((c) => (
-              <option key={c.chainId} value={c.chainId}>
-                {c.name}
-                {c.testnet ? ' · testnet' : ''}
-              </option>
-            ))}
-          </Select>
+          <ChainSelect
+            id={ids.chain}
+            chains={chains}
+            value={chainId}
+            onChange={setChainId}
+            leading={<option value="evm">Every EVM chain</option>}
+          />
         </Field>
         <Field label="Address" htmlFor={ids.address}>
           <Input

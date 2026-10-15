@@ -1,5 +1,7 @@
 import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
-import { Button, Dialog, Field, Input, LoadingWord, Select, useToasts } from '@stackwallet/ui';
+import { Button, Dialog, Field, Input, LoadingWord, useToasts } from '@stackwallet/ui';
+
+import { ChainSelect, chainOptionLabel } from './ChainSelect.js';
 
 import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
@@ -121,17 +123,18 @@ function AddAccountForm({
   return (
     <form onSubmit={submit} className="flex flex-col gap-4 p-4">
       <Field label="Chain" htmlFor={ids.chain}>
-        <Select id={ids.chain} value={chainId} onChange={(e) => setChainId(e.target.value)}>
-          {chains.map((c) => (
-            <option key={c.chainId} value={c.chainId}>
-              {c.name}
-              {c.testnet ? ' · testnet' : ''}
-              {canSendFrom({ chainId: c.chainId, family: c.family, derivationPath: 'm' }, wallet)
-                ? ' · can send'
-                : ''}
-            </option>
-          ))}
-        </Select>
+        <ChainSelect
+          id={ids.chain}
+          chains={chains}
+          value={chainId}
+          onChange={setChainId}
+          label={(c) =>
+            chainOptionLabel(c) +
+            (canSendFrom({ chainId: c.chainId, family: c.family, derivationPath: 'm' }, wallet)
+              ? ' · can send'
+              : '')
+          }
+        />
       </Field>
       <Field label="Label" htmlFor={ids.label} hint="optional">
         <Input

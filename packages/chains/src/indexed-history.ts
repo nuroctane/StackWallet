@@ -1,9 +1,12 @@
 import { z } from 'zod';
+import { GENERATED_INDEXERS } from './catalog-generated.js';
 import { fetchJson, MAX_BODY_BYTES, type FetchOptions } from './rpc.js';
 import type { ChainInfo, Page, TxRecord } from './types.js';
 
 // Bundled from Blockscout's chain directory; no registry is fetched at runtime.
+// Hand-picked hosts win over generated ones.
 export const HISTORY_INDEXERS: Readonly<Record<string, string>> = {
+  ...GENERATED_INDEXERS,
   'eip155:1': 'https://eth.blockscout.com',
   'eip155:11155111': 'https://eth-sepolia.blockscout.com',
   'eip155:8453': 'https://base.blockscout.com',

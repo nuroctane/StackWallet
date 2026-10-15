@@ -1,15 +1,9 @@
 import { useId, useMemo, useState, type FormEvent } from 'react';
-import type { ChainInfo } from '@stackwallet/chains';
 import { Button, Chip, Dialog, Field, Input, Select, useToasts } from '@stackwallet/ui';
 
-import {
-  adapterOrNull,
-  FAMILY_LABEL,
-  FAMILY_ORDER,
-  listChains,
-  POPULAR_EVM,
-} from '../lib/chains.js';
+import { adapterOrNull, listChains, POPULAR_EVM } from '../lib/chains.js';
 import { AddressAvatar } from './AddressAvatar.js';
+import { ChainSelect, groupChains } from './ChainSelect.js';
 import { directory, useDirectory } from '../store/persist.js';
 import { rootOf } from '../store/reducers.js';
 import { useRegistry } from '../store/RegistryContext.js';
@@ -29,29 +23,6 @@ export function AddWatchWalletDialog({
       <AddWatchWalletForm initialFolderId={folderId} onClose={onClose} />
     </Dialog>
   );
-}
-
-interface ChainGroup {
-  label: string;
-  chains: ChainInfo[];
-}
-
-function groupChains(chains: ChainInfo[]): ChainGroup[] {
-  const groups: ChainGroup[] = [];
-  for (const testnet of [false, true]) {
-    for (const family of FAMILY_ORDER) {
-      const list = chains
-        .filter((c) => c.family === family && c.testnet === testnet)
-        .sort((a, b) => a.name.localeCompare(b.name));
-      if (list.length > 0) {
-        groups.push({
-          label: `${FAMILY_LABEL[family]}${testnet ? ' · testnets' : ''}`,
-          chains: list,
-        });
-      }
-    }
-  }
-  return groups;
 }
 
 function AddWatchWalletForm({
@@ -147,23 +118,14 @@ function AddWatchWalletForm({
         htmlFor={ids.chain}
         error={chains.length === 0 ? 'No chain adapters loaded' : null}
       >
-        <Select
+        <ChainSelect
           id={ids.chain}
+          chains={chains}
           value={chainId}
           disabled={chains.length === 0}
-          onChange={(e) => setChainId(e.target.value)}
-        >
-          {chains.length === 0 && <option value="">No chains available</option>}
-          {groups.map((g) => (
-            <optgroup key={g.label} label={g.label}>
-              {g.chains.map((c) => (
-                <option key={c.chainId} value={c.chainId}>
-                  {c.name} · {c.nativeAsset.symbol}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </Select>
+          onChange={setChainId}
+          leading={chains.length === 0 && <option value="">No chains available</option>}
+        />
       </Field>
       <Field
         label="Address"

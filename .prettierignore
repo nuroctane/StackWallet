@@ -4,3 +4,4 @@ dist
 node_modules
 apps/desktop/src-tauri/gen
 packages/core-client/wasm
+packages/chains/src/catalog-generated.ts

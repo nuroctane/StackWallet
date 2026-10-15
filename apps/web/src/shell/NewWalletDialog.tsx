@@ -10,6 +10,7 @@ import { SENDABLE_TESTNETS } from '../lib/sendable.js';
 import { directory, useDirectory } from '../store/persist.js';
 import { rootOf } from '../store/reducers.js';
 import { useRegistry } from '../store/RegistryContext.js';
+import { chainMatches, chainOptionLabel } from './ChainSelect.js';
 import { FolderOptions } from './FolderOptions.js';
 import { useShell } from './ShellContext.js';
 
@@ -78,6 +79,7 @@ function NewWalletForm({
     () => new Set(DEFAULT_CHAINS.filter((id) => chains.some((c) => c.chainId === id))),
   );
   const [showTestnets, setShowTestnets] = useState(true);
+  const [query, setQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
 
@@ -137,7 +139,12 @@ function NewWalletForm({
     FAMILY_ORDER.map((family) => ({
       family,
       list: chains
-        .filter((c) => c.family === family && c.testnet === testnet)
+        .filter(
+          (c) =>
+            c.family === family &&
+            c.testnet === testnet &&
+            (picked.has(c.chainId) || chainMatches(c, query)),
+        )
         .sort((a, b) => a.name.localeCompare(b.name)),
     })).filter((g) => g.list.length > 0);
 
@@ -201,6 +208,14 @@ function NewWalletForm({
         <legend className="pb-1 text-[11px] font-semibold tracking-[0.12em] text-muted uppercase">
           Accounts ({picked.size})
         </legend>
+        <Input
+          aria-label="Filter chains"
+          value={query}
+          placeholder={`Filter ${chains.length} chains by name, symbol or id`}
+          spellCheck={false}
+          autoComplete="off"
+          onChange={(e) => setQuery(e.target.value)}
+        />
         <div className="max-h-[220px] overflow-auto rounded-sw-sm border border-edge p-2">
           {[false, ...(showTestnets ? [true] : [])].map((testnet) =>
             groups(testnet).map((g) => (
@@ -263,7 +278,9 @@ function ChainGroup({
               checked={picked.has(c.chainId)}
               onChange={() => toggle(c.chainId)}
             />
-            <span className="truncate">{c.name}</span>
+            <span className="truncate" title={chainOptionLabel(c)}>
+              {c.name}
+            </span>
           </label>
         ))}
       </div>

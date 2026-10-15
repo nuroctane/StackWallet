@@ -42,6 +42,18 @@ export const ChainExtra = z.object({
 });
 export type ChainExtra = z.infer<typeof ChainExtra>;
 
+/** Where a chain sits, as DefiLlama classifies it. */
+export const ChainLayer = z.enum([
+  'L1',
+  'L2',
+  'L3',
+  'sidechain',
+  'parachain',
+  'subnet',
+  'appchain',
+]);
+export type ChainLayer = z.infer<typeof ChainLayer>;
+
 export const ChainInfo = z.object({
   chainId: z.string(),
   family: z.enum(['evm', 'bitcoin', 'solana', 'cosmos']),
@@ -53,6 +65,13 @@ export const ChainInfo = z.object({
   /** JSON-RPC urls for evm/solana; REST base urls for bitcoin (mempool API) and cosmos (LCD). */
   defaultRpcs: z.array(z.string().url()).default([]),
   extra: ChainExtra.optional(),
+  /** CoinGecko id of the native asset; symbols collide across chains, ids do not. */
+  priceId: z.string().optional(),
+  layer: ChainLayer.optional(),
+  /** Settlement chain for L2/L3s, by DefiLlama name. */
+  parent: z.string().optional(),
+  /** Blocks stopped advancing when the catalog was generated; kept so old funds stay visible. */
+  halted: z.boolean().optional(),
 });
 export type ChainInfo = z.infer<typeof ChainInfo>;
 

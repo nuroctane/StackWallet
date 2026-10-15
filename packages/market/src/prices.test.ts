@@ -15,6 +15,12 @@ describe('prices', () => {
     ).toBeNull();
   });
 
+  it("prefers the chain's own price id over a shared symbol", () => {
+    const native = { ref: 'x', symbol: 'S', decimals: 18 };
+    expect(coinIdFor({ testnet: false, nativeAsset: native, priceId: 'other-s' })).toBe('other-s');
+    expect(coinIdFor({ testnet: true, nativeAsset: native, priceId: 'other-s' })).toBeNull();
+  });
+
   it('values base units with integer math', () => {
     expect(usdMicros('1500000000000000000', 18, 2000)).toBe(3_000_000_000n);
     expect(usdMicros('1', 8, 60000)).toBe(600n);

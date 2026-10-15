@@ -116,6 +116,15 @@ describe('CosmosAdapter addresses', () => {
     expect(isValidCosmosAddress('', 'cosmos')).toBe(false);
     expect(cosmos.chains()).toEqual(chainsForFamily('cosmos'));
   });
+
+  it('derives and accepts an address on every catalog chain', () => {
+    for (const c of chainsForFamily('cosmos')) {
+      const addr = cosmos.deriveAddress({ curve: 'secp256k1', hex: PUB1 }, c.chainId);
+      expect(addr.startsWith(`${c.extra?.bech32Prefix}1`), c.chainId).toBe(true);
+      expect(cosmos.validateAddress(addr, c.chainId), c.chainId).toBe(true);
+      expect(c.extra?.gasPrice, c.chainId).toMatch(/^\d+(\.\d+)?[a-zA-Z][a-zA-Z0-9/:._-]*$/);
+    }
+  });
 });
 
 describe('CosmosAdapter reads', () => {

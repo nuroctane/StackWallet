@@ -22,6 +22,7 @@ import type { ApprovalSummary } from './provenance.js';
 
 export const APPROVALS_STORAGE_KEY = 'stackwallet.approvals.v1';
 export const APPROVALS_TTL_MS = 30 * 60 * 1000;
+const SCAN_CONCURRENCY = 6;
 
 const Entry = z.object({
   chainId: z.string().max(64),
@@ -180,29 +181,39 @@ export class ApprovalsStore {
   async scan(owner: string, opts: { force?: boolean } = {}): Promise<void> {
     if (!this.scanner) return;
     const scanner = this.scanner;
-    await Promise.all(
-      this.chains.map(async (chainId) => {
-        const key = approvalKey(chainId, owner);
-        const prior = this.cache[key];
-        if (this.status.get(key)?.scanning) return;
-        if (!opts.force && prior && this.now() - prior.checkedAtMs < APPROVALS_TTL_MS) return;
-        this.status.set(key, { scanning: true, error: null });
-        this.emit();
-        try {
-          const result = await scanner(chainId, owner);
-          this.cache[key] = result;
-          this.status.set(key, { scanning: false, error: null });
-          this.persist();
-        } catch (err) {
-          // The prior answer stays: a failed scan never clears a security tag.
-          this.status.set(key, {
-            scanning: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-        this.emit();
-      }),
-    );
+    const queue = this.chains.filter((chainId) => {
+      const key = approvalKey(chainId, owner);
+      const prior = this.cache[key];
+      if (this.status.get(key)?.scanning) return false;
+      return opts.force || !prior || this.now() - prior.checkedAtMs >= APPROVALS_TTL_MS;
+    });
+    if (queue.length === 0) return;
+    // Queued chains count as scanning so an overlapping call does not queue them twice.
+    for (const chainId of queue)
+      this.status.set(approvalKey(chainId, owner), { scanning: true, error: null });
+    this.emit();
+    const scanOne = async (chainId: string) => {
+      const key = approvalKey(chainId, owner);
+      try {
+        const result = await scanner(chainId, owner);
+        this.cache[key] = result;
+        this.status.set(key, { scanning: false, error: null });
+        this.persist();
+      } catch (err) {
+        // The prior answer stays: a failed scan never clears a security tag.
+        this.status.set(key, {
+          scanning: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      this.emit();
+    };
+    // Dozens of indexed chains: a few at a time keeps the browser's connection pool usable.
+    let next = 0;
+    const worker = async () => {
+      while (next < queue.length) await scanOne(queue[next++]!);
+    };
+    await Promise.all(Array.from({ length: Math.min(SCAN_CONCURRENCY, queue.length) }, worker));
   }
 
   private persist(): void {

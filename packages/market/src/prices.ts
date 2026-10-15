@@ -49,9 +49,11 @@ export const NATIVE_IDS: Readonly<Record<string, string>> = {
   tBTC: 'tbtc',
 };
 
-export function coinIdFor(chain: Pick<ChainInfo, 'testnet' | 'nativeAsset'>): string | null {
+export function coinIdFor(
+  chain: Pick<ChainInfo, 'testnet' | 'nativeAsset'> & { priceId?: string | undefined },
+): string | null {
   if (chain.testnet) return null;
-  return NATIVE_IDS[chain.nativeAsset.symbol] ?? null;
+  return chain.priceId ?? NATIVE_IDS[chain.nativeAsset.symbol] ?? null;
 }
 
 export interface UsdPrice {

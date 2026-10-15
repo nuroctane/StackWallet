@@ -15,6 +15,7 @@ import {
 } from '../../store/rpcSettings.js';
 import type { DirectoryState } from '../../store/schema.js';
 import { chainIdsInUse } from '../../store/selectors.js';
+import { chainMatches } from '../ChainSelect.js';
 import { useShell } from '../ShellContext.js';
 
 /** Health flags change as fetches land, so the pools are re-read on a slow clock. */
@@ -24,6 +25,7 @@ export function NetworkView({ state }: { state: DirectoryState }) {
   const registry = useRegistry();
   const shell = useShell();
   const [showAll, setShowAll] = useState(false);
+  const [query, setQuery] = useState('');
   const [, bump] = useReducer((n: number) => n + 1, 0);
 
   useEffect(() => {
@@ -38,14 +40,16 @@ export function NetworkView({ state }: { state: DirectoryState }) {
   const inUse = useMemo(() => new Set(chainIdsInUse(state)), [state]);
   const chains = useMemo(() => {
     const all = listChains(registry);
-    const list = showAll ? all : all.filter((c) => inUse.has(c.chainId));
+    const list = (showAll ? all : all.filter((c) => inUse.has(c.chainId))).filter((c) =>
+      chainMatches(c, query),
+    );
     return [...list].sort(
       (a, b) =>
         Number(inUse.has(b.chainId)) - Number(inUse.has(a.chainId)) ||
         Number(a.testnet) - Number(b.testnet) ||
         a.name.localeCompare(b.name),
     );
-  }, [registry, showAll, inUse]);
+  }, [registry, showAll, inUse, query]);
 
   return (
     <div className="flex flex-col gap-5 p-5">
@@ -63,6 +67,15 @@ export function NetworkView({ state }: { state: DirectoryState }) {
         </nav>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-[22px] font-semibold tracking-[-0.01em]">RPC endpoints</h1>
+          <Input
+            aria-label="Filter chains"
+            value={query}
+            placeholder="Filter by name, symbol or id"
+            spellCheck={false}
+            autoComplete="off"
+            className="max-w-[260px]"
+            onChange={(e) => setQuery(e.target.value)}
+          />
           <label className="flex cursor-pointer items-center gap-2 text-[12px] text-muted">
             <input
               type="checkbox"
