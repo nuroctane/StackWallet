@@ -7,7 +7,7 @@ import { formatUnits } from '../../lib/format.js';
 import { useBalances, type BalanceEntry } from '../../store/balances.js';
 import { vault } from '../../core/bridge.js';
 import { useVaultView } from '../../core/vault.js';
-import { openDirectoryItem } from '../../workspace/open.js';
+import { openDirectoryItem, openTaxFor } from '../../workspace/open.js';
 import { useRegistry } from '../../store/RegistryContext.js';
 import type { DirectoryState } from '../../store/schema.js';
 import {
@@ -131,6 +131,18 @@ export function FolderView({ state, folder }: { state: DirectoryState; folder: F
               }
             >
               {vault.hasExportKey('folder', folder.id) ? 'Directory key ✓' : 'Directory key…'}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              title={
+                folder.parentId === null
+                  ? 'Cost basis, gains and income across every wallet'
+                  : 'Cost basis, gains and income for the wallets in this directory'
+              }
+              onClick={() => openTaxFor(folder.parentId === null ? null : folder.id)}
+            >
+              Taxes…
             </Button>
             {folder.parentId !== null && (
               <Button

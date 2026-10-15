@@ -15,7 +15,7 @@ import { useShell } from '../shell/ShellContext.js';
 import { ELEMENT_KINDS, registry } from './elements/registry.js';
 import { workspace, useWorkspace } from './persist.js';
 import { exportLayoutBundle } from './layoutTransfer.js';
-import { openDirectoryItem } from './open.js';
+import { openDirectoryItem, openTaxFor } from './open.js';
 import type { ElementKind } from './schema.js';
 
 export type ResultType = 'action' | 'element' | 'layout' | 'wallet' | 'folder' | 'device' | 'chain';
@@ -136,6 +136,20 @@ function SearchBody({
   const all = useMemo<SearchResult[]>(() => {
     const out: SearchResult[] = [];
     out.push(
+      {
+        id: 'a:connect',
+        type: 'action',
+        label: 'add wallet',
+        dim: 'create, restore, browser wallet, Ledger, shared or watch',
+        run: () => shell.openDialog({ kind: 'connect' }),
+      },
+      {
+        id: 'a:tax',
+        type: 'action',
+        label: 'tax report',
+        dim: 'gains, income and exports for every wallet',
+        run: () => openTaxFor(null),
+      },
       {
         id: 'a:watch',
         type: 'action',

@@ -84,7 +84,7 @@ export async function readIndexedHistory(
               from: address,
               to: address,
               token: z.object({ address_hash: address.shape.hash, type: z.string().max(32) }),
-              total: z.object({ value: amount.optional(), token_id: amount.optional() }).nullable(),
+              total: z.object({ value: amount.nullish(), token_id: amount.nullish() }).nullable(),
             }),
           )
           .max(50),
@@ -112,7 +112,7 @@ export async function readIndexedHistory(
         ...(t.block_number !== null ? { blockNumber: t.block_number } : {}),
         ...(t.timestamp !== null ? { timestampMs: Date.parse(t.timestamp) } : {}),
       };
-      if (t.token.type === 'ERC-20' && t.total?.value !== undefined) {
+      if (t.token.type === 'ERC-20' && t.total?.value != null) {
         const direction =
           Number(t.to.hash.toLowerCase() === account.toLowerCase()) -
           Number(t.from.hash.toLowerCase() === account.toLowerCase());

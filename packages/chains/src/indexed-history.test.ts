@@ -132,6 +132,46 @@ describe('indexed EVM history', () => {
     );
     expect(page.items[0]?.assetDeltas).toEqual([]);
   });
+  it('accepts transfers whose indexer total carries null fields', async () => {
+    const page = await readIndexedHistory(
+      chain,
+      account,
+      'https://indexer.example',
+      {
+        fetch: fetcher({
+          items: [
+            {
+              transaction_hash: hash,
+              log_index: 0,
+              from: { hash: other },
+              to: { hash: account },
+              token: { type: 'ERC-20', address_hash: other },
+              total: { value: '5', token_id: null },
+              block_number: 1,
+              timestamp: tx.timestamp,
+            },
+            {
+              transaction_hash: hash,
+              log_index: 1,
+              from: { hash: other },
+              to: { hash: account },
+              token: { type: 'ERC-20', address_hash: other },
+              total: { value: null, token_id: null },
+              block_number: 1,
+              timestamp: tx.timestamp,
+            },
+          ],
+          next_page_params: null,
+        }),
+      },
+      undefined,
+      true,
+    );
+    expect(page.items[0]?.assetDeltas).toEqual([
+      { assetRef: chain.chainId + ':erc20:' + other.toLowerCase(), amount: '5' },
+    ]);
+    expect(page.items[1]?.assetDeltas).toEqual([]);
+  });
   it('rejects credentials, non-HTTPS endpoints and cursor injection', async () => {
     for (const url of [
       'http://indexer.example',

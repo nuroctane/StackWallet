@@ -89,3 +89,17 @@ export function explorerTxUrl(info: ChainInfo, hash: string): string | undefined
 export const EVM_SIGNING_CHAINS: ReadonlySet<string> = new Set(
   [11155111, 17000, 560048, 84532, 11155420, 421614, 80002].map((n) => `eip155:${n}`),
 );
+
+/** EVM networks offered first wherever one address is watched across chains. */
+export const POPULAR_EVM: readonly string[] = [
+  'eip155:1',
+  'eip155:8453',
+  'eip155:42161',
+  'eip155:10',
+  'eip155:137',
+  'eip155:56',
+  'eip155:43114',
+  'eip155:324',
+  'eip155:59144',
+  'eip155:534352',
+];

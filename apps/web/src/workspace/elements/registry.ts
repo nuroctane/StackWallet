@@ -8,6 +8,9 @@ import { LedgerElement, RANGES } from './LedgerElement.js';
 import { ActivityLogElement } from './ActivityLogElement.js';
 import { TerrainElement } from './TerrainElement.js';
 import { TransactionsElement } from './TransactionsElement.js';
+import { TaxElement } from './TaxElement.js';
+import { jurisdiction, taxYearLabel } from '@stackwallet/tax';
+import { taxStore } from '../../store/tax.js';
 import { AgentElement } from './AgentElement.js';
 import { AutomationsElement } from './AutomationsElement.js';
 import { AlertsElement } from './market/AlertsElement.js';
@@ -297,6 +300,20 @@ export const registry: ElementRegistry = {
     defaultSize: elementDefaults.alerts,
     minSize: { w: 320, h: 240 },
     body: AlertsElement,
+  }),
+  tax: def({
+    kind: 'tax',
+    title: 'tax',
+    hint: 'cost basis, gains and income per tax year; review, then export xlsx, json or csv for CoinTracker, Blockpit, Koinly',
+    defaultSize: elementDefaults.tax,
+    minSize: { w: 360, h: 320 },
+    defaultProps: { tab: 'summary' },
+    scope: () => {
+      const { settings } = taxStore.getSnapshot().prefs;
+      const j = jurisdiction(settings.jurisdiction);
+      return [{ label: taxYearLabel(j, settings.year), tone: 'warm' }, { label: j.id }];
+    },
+    body: TaxElement,
   }),
   network: def({
     kind: 'network',

@@ -22,6 +22,7 @@ export const elementDefaults: Record<ElementKind, { w: number; h: number }> = {
   candles: { w: 680, h: 420 },
   portfolio: { w: 620, h: 480 },
   alerts: { w: 440, h: 460 },
+  tax: { w: 760, h: 620 },
 };
 
 interface Seed {

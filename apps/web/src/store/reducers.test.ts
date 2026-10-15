@@ -160,6 +160,30 @@ describe('createWatchWallet', () => {
     );
     expect(expectFail(r.createWatchWallet(s, { ...base, address: '  ' }, ctx))).toMatch(/Address/);
   });
+
+  it('watches one address on several chains of the same family', () => {
+    const { s, ctx, cold } = seeded();
+    const base = { name: 'Multi', folderId: cold, chainId: 'eip155:1', address: '0xabc' };
+    const made = expectOk(
+      r.createWatchWallet(
+        s,
+        { ...base, extraChainIds: ['eip155:8453', 'eip155:1', 'eip155:10'] },
+        ctx,
+      ),
+    );
+    const accounts = made.state.accounts.filter((a) => a.walletId === made.value);
+    expect(accounts.map((a) => a.chainId)).toEqual(['eip155:1', 'eip155:8453', 'eip155:10']);
+    expect(new Set(accounts.map((a) => a.address))).toEqual(new Set(['0xabc']));
+    expect(
+      expectFail(
+        r.createWatchWallet(
+          s,
+          { ...base, extraChainIds: ['solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'] },
+          ctx,
+        ),
+      ),
+    ).toMatch(/same address format/);
+  });
 });
 
 describe('deleteWallet', () => {

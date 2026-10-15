@@ -5,7 +5,7 @@ import { FAMILY_LABEL } from '../lib/chains.js';
 import { directory, useDirectory } from '../store/persist.js';
 import type { DirectoryState } from '../store/schema.js';
 import { flattenTree, kindLabel, walletFamilies, type TreeRow } from '../store/selectors.js';
-import { openDirectoryItem } from '../workspace/open.js';
+import { openDirectoryItem, openTaxFor } from '../workspace/open.js';
 import { useShell } from './ShellContext.js';
 import { SetTags, UserTags, WalletTags } from './ProvenanceTags.js';
 import { WalletName } from './WalletName.js';
@@ -143,12 +143,27 @@ export function DirectoryTree() {
           <Button size="sm" variant="ghost" onClick={() => shell.openDialog({ kind: 'folder' })}>
             + folder
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => shell.openDialog({ kind: 'newWallet' })}>
+          <Button
+            size="sm"
+            variant="ghost"
+            title="Create, restore, Ledger, shared, browser wallet or watch"
+            onClick={() => shell.openDialog({ kind: 'connect' })}
+          >
             + wallet
           </Button>
           <Button size="sm" variant="ghost" onClick={() => shell.openDialog({ kind: 'watch' })}>
             + watch
           </Button>
+          {state.wallets.length > 0 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Cost basis, gains and income across every wallet"
+              onClick={() => openTaxFor(null)}
+            >
+              taxes
+            </Button>
+          )}
         </div>
       }
       className="sw-enter min-w-0"
@@ -169,11 +184,11 @@ export function DirectoryTree() {
         {onlyRoot ? (
           <EmptyState
             title="No wallets yet"
-            description="Start with a watch-only address, or make a folder to organize what comes next."
+            description="Create one, bring a browser wallet or Ledger, or watch any address."
             action={
               <>
-                <Button size="sm" onClick={() => shell.openDialog({ kind: 'watch' })}>
-                  Add watch wallet
+                <Button size="sm" onClick={() => shell.openDialog({ kind: 'connect' })}>
+                  Add wallet
                 </Button>
                 <Button
                   size="sm"

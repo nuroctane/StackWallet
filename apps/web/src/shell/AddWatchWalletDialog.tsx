@@ -1,8 +1,15 @@
 import { useId, useMemo, useState, type FormEvent } from 'react';
 import type { ChainInfo } from '@stackwallet/chains';
-import { Button, Dialog, Field, Input, Select, useToasts } from '@stackwallet/ui';
+import { Button, Chip, Dialog, Field, Input, Select, useToasts } from '@stackwallet/ui';
 
-import { adapterOrNull, FAMILY_LABEL, FAMILY_ORDER, listChains } from '../lib/chains.js';
+import {
+  adapterOrNull,
+  FAMILY_LABEL,
+  FAMILY_ORDER,
+  listChains,
+  POPULAR_EVM,
+} from '../lib/chains.js';
+import { AddressAvatar } from './AddressAvatar.js';
 import { directory, useDirectory } from '../store/persist.js';
 import { rootOf } from '../store/reducers.js';
 import { useRegistry } from '../store/RegistryContext.js';
@@ -69,6 +76,16 @@ function AddWatchWalletForm({
   const [chainId, setChainId] = useState(firstChain);
   const [address, setAddress] = useState('');
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [extra, setExtra] = useState<string[]>([]);
+  const primary = chains.find((c) => c.chainId === chainId);
+  const siblings =
+    primary?.family === 'evm'
+      ? POPULAR_EVM.flatMap((id) => {
+          const c = chains.find((x) => x.chainId === id);
+          return c && c.chainId !== chainId && c.testnet === primary.testnet ? [c] : [];
+        })
+      : [];
+  const extraChainIds = extra.filter((id) => siblings.some((c) => c.chainId === id));
 
   const trimmedAddress = address.trim();
   const adapter = chainId ? adapterOrNull(registry, chainId) : null;
@@ -93,7 +110,13 @@ function AddWatchWalletForm({
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
-    const result = directory.createWatchWallet({ name, folderId: folder, chainId, address });
+    const result = directory.createWatchWallet({
+      name,
+      folderId: folder,
+      chainId,
+      address,
+      extraChainIds,
+    });
     if (!result.ok) {
       setSubmitError(result.error);
       return;
@@ -161,6 +184,32 @@ function AddWatchWalletForm({
           autoComplete="off"
         />
       </Field>
+      {addressState === 'valid' && (
+        <div className="-mt-2 flex items-center gap-2 text-[11px] text-faint">
+          <AddressAvatar address={trimmedAddress} size={16} />
+          <span>This mark stands for this address everywhere in StackWallet.</span>
+        </div>
+      )}
+      {siblings.length > 0 && (
+        <Field label="Also watch on" hint="The same address exists on every EVM network.">
+          <div className="flex flex-wrap gap-1.5">
+            {siblings.map((c) => {
+              const on = extraChainIds.includes(c.chainId);
+              return (
+                <Chip
+                  key={c.chainId}
+                  active={on}
+                  onClick={() =>
+                    setExtra(on ? extra.filter((x) => x !== c.chainId) : [...extra, c.chainId])
+                  }
+                >
+                  {c.name}
+                </Chip>
+              );
+            })}
+          </div>
+        </Field>
+      )}
       <div className="flex justify-end gap-2 border-t border-edge pt-3">
         <Button variant="ghost" onClick={onClose}>
           Cancel

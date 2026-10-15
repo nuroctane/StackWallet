@@ -132,6 +132,12 @@ keeps the tag rather than clearing it, and an indexer that omits a log hides tha
   untrusted; signing requests go through core message signing with a fresh session proof, and
   `personal_sign` payloads that are not UTF-8 text (usually a bare hash) are refused. Dapp names
   and URLs are reduced to printable ASCII, and Reown's domain verification is shown, not trusted.
+- **Browser wallets** (EIP-6963 extensions, with a legacy `window.ethereum` fallback) are used
+  only to read addresses: the add-wallet sheet calls `eth_requestAccounts` and `eth_chainId` and
+  nothing else, and the result becomes watch-only wallets. StackWallet never asks an extension
+  to sign. Provider names are stripped of control, bidi and zero-width characters; icons are
+  accepted only as base64 `data:image/` URIs under a size limit, so a provider cannot make the
+  page fetch a remote URL. Returned addresses are validated and de-duplicated.
 
 ### Browser persistence and transaction recovery
 
@@ -252,6 +258,11 @@ agreement alone is not chain identity or cryptographic proof of balance/finality
   Reown's relay and asks Reown's verify service about each dapp's domain; the relay learns that
   this device talks to that dapp and when. Session keys live in the SDK's IndexedDB store.
 - Swap quotes are `eth_call`s to the chain's RPC pool, which learns the pair and size quoted.
+- Tax reports are computed on the device. Reading history sends each in-scope address to its
+  chain's indexer or RPC pool; price requests name coin ids or tracked token contracts only,
+  never addresses, and untracked (usually airdropped) contracts are never looked up. Review
+  decisions stay in local storage; their export file holds transaction keys, labels, values
+  and notes, no addresses or keys.
 - The web build sends `Cross-Origin-Embedder-Policy: credentialless` (not `require-corp`) so
   images from hosts without CORP can load without cookies; scripts and fonts stay same-origin.
 

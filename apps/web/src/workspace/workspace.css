@@ -424,3 +424,71 @@
     touch-action: manipulation;
   }
 }
+
+/* Connect hub: each step settles in, options arrive in a short cascade. */
+.sw-connect-step {
+  animation: sw-tax-in 200ms var(--sw-ease) both;
+}
+.sw-connect-item {
+  animation: sw-tax-in 220ms var(--sw-ease) both;
+}
+.sw-connect-arrow {
+  transition:
+    translate 160ms var(--sw-ease),
+    color 160ms var(--sw-ease);
+}
+.group:hover .sw-connect-arrow,
+.group:focus-visible .sw-connect-arrow {
+  translate: 2px 0;
+}
+.sw-connect-check {
+  animation: sw-connect-pop 240ms var(--sw-ease) both;
+}
+@keyframes sw-connect-pop {
+  from {
+    opacity: 0;
+    scale: 0.8;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sw-connect-step,
+  .sw-connect-item,
+  .sw-connect-check {
+    animation: none;
+  }
+}
+
+/* Tax: a tab change settles in place; meters grow toward their value. */
+.sw-tax-body {
+  animation: sw-tax-in 180ms var(--sw-ease) both;
+}
+@keyframes sw-tax-in {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+.sw-tax-meter {
+  transition: transform 260ms var(--sw-ease);
+}
+.sw-tax-card {
+  transition:
+    border-color 140ms var(--sw-ease),
+    background-color 140ms var(--sw-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sw-tax-body {
+    animation: none;
+  }
+  .sw-tax-meter {
+    transition: none;
+  }
+}

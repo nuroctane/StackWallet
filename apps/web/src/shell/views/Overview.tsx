@@ -91,6 +91,15 @@ export function Overview({ state }: { state: DirectoryState }) {
           </header>
           <ul className="divide-y divide-edge">
             <Step
+              title="Bring a browser wallet"
+              body="MetaMask, Rabby and other extensions share their addresses to watch here. They keep their keys; nothing is signed."
+              action={
+                <Button size="sm" onClick={() => shell.openDialog({ kind: 'connect' })}>
+                  Add wallet…
+                </Button>
+              }
+            />
+            <Step
               title="Watch an address"
               body="Follow any address on any supported chain. Read-only, nothing to sign."
               action={

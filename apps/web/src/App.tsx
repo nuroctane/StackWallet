@@ -8,6 +8,7 @@ import { AddFolderDialog } from './shell/AddFolderDialog.js';
 import { AddWatchWalletDialog } from './shell/AddWatchWalletDialog.js';
 import { ApprovalRailBody } from './shell/ApprovalRail.js';
 import { ConfirmDeleteDialog } from './shell/ConfirmDeleteDialog.js';
+import { ConnectDialog } from './shell/ConnectDialog.js';
 import { MoveWalletDialog } from './shell/MoveWalletDialog.js';
 import {
   isTypingTarget,
@@ -300,6 +301,11 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       <AddWatchWalletDialog
         open={dialog?.kind === 'watch'}
         folderId={dialog?.kind === 'watch' ? dialog.folderId : undefined}
+        onClose={closeDialog}
+      />
+      <ConnectDialog
+        open={dialog?.kind === 'connect'}
+        folderId={dialog?.kind === 'connect' ? dialog.folderId : undefined}
         onClose={closeDialog}
       />
       <MoveWalletDialog

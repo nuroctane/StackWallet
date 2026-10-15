@@ -27,6 +27,7 @@
     "@stackwallet/core-client": "workspace:*",
     "@stackwallet/market": "workspace:*",
     "@stackwallet/names": "workspace:*",
+    "@stackwallet/tax": "workspace:*",
     "@stackwallet/ui": "workspace:*",
     "@walletconnect/sign-client": "2.25.0",
     "@walletconnect/types": "2.25.0",

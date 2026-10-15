@@ -65,6 +65,9 @@ importers:
       '@stackwallet/names':
         specifier: workspace:*
         version: link:../../packages/names
+      '@stackwallet/tax':
+        specifier: workspace:*
+        version: link:../../packages/tax
       '@stackwallet/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -371,6 +374,25 @@ importers:
       '@stackwallet/chains-evm':
         specifier: workspace:*
         version: link:../chains-evm
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/tax:
+    dependencies:
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/market':
+        specifier: workspace:*
+        version: link:../market
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
       typescript:
         specifier: 7.0.2
         version: 7.0.2

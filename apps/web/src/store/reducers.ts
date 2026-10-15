@@ -377,7 +377,11 @@ export interface WatchWalletInput {
   folderId: string;
   chainId: string;
   address: string;
+  /** More chains of the same family to watch the same address on (EVM addresses span chains). */
+  extraChainIds?: readonly string[] | undefined;
 }
+
+export const MAX_WATCH_CHAINS = 64;
 
 export function createWatchWallet(
   state: DirectoryState,
@@ -398,6 +402,15 @@ export function createWatchWallet(
   if (address.length > 128 || !/^[A-Za-z0-9]+$/.test(address)) {
     return fail('Address contains unexpected characters');
   }
+  const chainIds = [chain.data];
+  for (const raw of input.extraChainIds ?? []) {
+    const extra = ChainId.safeParse(raw);
+    if (!extra.success) return fail('Chain id must be CAIP-2 (namespace:reference)');
+    if (chainFamilyOf(extra.data) !== family)
+      return fail('Every chain of a watch wallet must use the same address format');
+    if (!chainIds.includes(extra.data)) chainIds.push(extra.data);
+  }
+  if (chainIds.length > MAX_WATCH_CHAINS) return fail(`Watch at most ${MAX_WATCH_CHAINS} chains`);
 
   const t = ctx.now();
   const wallet: Wallet = {
@@ -410,19 +423,19 @@ export function createWatchWallet(
     createdAtMs: t,
     updatedAtMs: t,
   };
-  const account: Account = {
+  const accounts: Account[] = chainIds.map((chainId) => ({
     id: ctx.newId(),
     walletId: wallet.id,
     family,
-    chainId: chain.data,
+    chainId,
     address,
     publicKeyHex: '',
     hidden: false,
-  };
+  }));
   let next: DirectoryState = {
     ...state,
     wallets: [...state.wallets, wallet],
-    accounts: [...state.accounts, account],
+    accounts: [...state.accounts, ...accounts],
   };
   next = withExpanded(next, input.folderId, true);
   next = { ...next, ui: { ...next.ui, selectedId: wallet.id } };

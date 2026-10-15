@@ -1,4 +1,5 @@
 import { directory } from '../store/persist.js';
+import { taxStore } from '../store/tax.js';
 import { registry as elementRegistry } from './elements/registry.js';
 import { workspace } from './persist.js';
 import type { ElementKind, PaneProps } from './schema.js';
@@ -26,6 +27,12 @@ export function openOrAddPane(
     },
     getCanvasViewport(),
   );
+}
+
+/** Point the tax report at one directory (or everything, for the root) and show it. */
+export function openTaxFor(folderId: string | null): void {
+  taxStore.setScope({ tags: [], folderIds: folderId ? [folderId] : [], excluded: [] });
+  openOrAddPane('tax');
 }
 
 /**

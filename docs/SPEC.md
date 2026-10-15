@@ -498,6 +498,34 @@ in the vault (as D4 does for model keys). They never become the default: they se
 queried, and the ones without CORS cannot be called from the web build without a server (D3),
 so they are desktop-only, called from the Rust side.
 
+### 11.2 Tax reports
+
+The `tax` element (package `packages/tax`) rebuilds cost basis, gains, income and year-end
+holdings from public chain history, on the device, for any set of wallets.
+
+- **Scope**: all wallets, one directory (subfolders included), wallet kinds (watched, imported,
+  exported, local keys, hardware, shared) and hand-picked wallets. Directory views and the
+  directory toolbar open the element pre-scoped.
+- **History**: every in-scope account is read through its indexer (EVM Blockscout transaction
+  and token-transfer streams), up to a page limit; RPC-only chains give one page. A history
+  that stops early is a blocking issue, never a silent gap.
+- **Engine**: bigint micro-units throughout; unknown values are `null`, never zero. Lots are
+  pooled per wallet (the US rule since 2025) or across wallets; FIFO, LIFO, HIFO or average
+  cost per jurisdiction profile (US, DE, AT, PT, CZ, CH, UK, CA, AU, FR, generic). Moves between
+  in-scope wallets are matched and not taxable. Network fees are either a disposal of the fee
+  coin or removed without gain.
+- **Review**: the chain shows movement, not intent. Each event can be labelled (income kinds,
+  gifts, own-account transfers with paid value, spam) with a value override and note. Decisions
+  are stored locally and can be saved and loaded as a file keyed by transaction, with no
+  addresses or keys.
+- **Prices**: daily closes from CoinGecko's public API (the last 365 days). Only native coins,
+  known tokens and tokens the user tracks are priced; older events need a value entered in
+  review. Lots without a proven basis are reported apart from the term totals.
+- **Exports**: all from one report: an XLSX workbook (dependency-free writer, reproducible
+  bytes), a JSON report with exact amounts and a SHA-256 digest, and CSVs (ledger, Form 8949
+  style disposals, income, holdings, CoinTracker, Blockpit and Koinly templates) with a comma
+  or semicolon delimiter. Every export lists open issues and states that it is not tax advice.
+
 ## 12. UI surfaces
 
 1. **Directory**: tree sidebar (folders / subfolders / wallets), bulk tag and move, folder-level

@@ -3,6 +3,7 @@ import { createContext, useContext } from 'react';
 export type ShellDialog =
   | { kind: 'folder'; parentId?: string }
   | { kind: 'watch'; folderId?: string }
+  | { kind: 'connect'; folderId?: string }
   | { kind: 'deleteWallet'; walletId: string }
   | { kind: 'deleteFolder'; folderId: string }
   | { kind: 'move'; walletId: string }
