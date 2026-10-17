@@ -1,3 +1,4 @@
+import { MemoryRpcPool } from '@stackwallet/chains';
 import type { TxIntent } from '@stackwallet/core-client';
 import { describe, expect, it } from 'vitest';
 
@@ -325,10 +326,102 @@ describe('balances over each driver (mocked)', () => {
   it('fails honestly where no endpoint exists', async () => {
     await expect(
       dashAdapter().getBalances(TESTNET_SENDERS[ZCASH_TESTNET]!, ZCASH_TESTNET),
-    ).rejects.toThrow('No public Zcash Testnet endpoint');
+    ).rejects.toThrow();
     await expect(
       dashAdapter().getBalances(TESTNET_SENDERS[DEFICHAIN_TESTNET]!, DEFICHAIN_TESTNET),
     ).rejects.toThrow('No public DefiChain Testnet endpoint');
+  });
+});
+
+// Pinned Zcash vector from the Rust tests (v4 funding transaction).
+const ZCASH_FUNDING_TXID = '0c835c3d03b2c86326248d5e3cefccc374e767a8b59ec495874865a1b8954953';
+const ZCASH_FUNDING_HEX =
+  '0400008085202f890102020202020202020202020202020202020202020202020202020202020202020100000003515151ffffffff02a0860100000000001976a91479b000887626b294a914501a4cd226b58b23598388ac01000000000000001976a91479b000887626b294a914501a4cd226b58b23598388ac00000000bfc62d000000000000000000000000';
+const ZCASH_SENDER = TESTNET_SENDERS[ZCASH_TESTNET]!;
+const ZCASH_RECIPIENT = 'tmXCuFFeKD8bWywACziRGkn1yZEgcAMBabN';
+const ZCASH_NODE = 'https://zebra.example.test:18232';
+
+/** A user-added zcashd/zebrad testnet node; `chain` and `consensus` drive the checks. */
+function zcashAdapter(chain = 'test', nextblock = 'c8e71055'): BtcForkAdapter {
+  const pool = new MemoryRpcPool(BTCSFORK_CHAINS);
+  pool.setEndpoints(ZCASH_TESTNET, [ZCASH_NODE]);
+  return new BtcForkAdapter({
+    rpc: pool,
+    fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string; params: unknown[] };
+      let result: unknown;
+      switch (body.method) {
+        case 'getblockchaininfo':
+          result = {
+            chain,
+            blocks: 3_000_000,
+            consensus: { chaintip: '4dec4df0', nextblock },
+          };
+          break;
+        case 'getaddressutxos':
+          result = [
+            {
+              address: ZCASH_SENDER,
+              txid: ZCASH_FUNDING_TXID,
+              outputIndex: 0,
+              script: `76a914${HASH160}88ac`,
+              satoshis: 100_000,
+              height: 2_999_000,
+            },
+          ];
+          break;
+        case 'getrawtransaction':
+          result = ZCASH_FUNDING_HEX;
+          break;
+        case 'getaddressbalance':
+          result = { balance: 100_000, received: 100_000 };
+          break;
+        default:
+          return new Response(
+            JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32601, message: 'nope' } }),
+            { status: 200 },
+          );
+      }
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status: 200 });
+    }) as typeof fetch,
+  });
+}
+
+describe('Zcash testnet through a user-added node', () => {
+  const zcashIntent = intent({
+    chainId: ZCASH_TESTNET,
+    asset: `${ZCASH_TESTNET}:native`,
+    to: ZCASH_RECIPIENT,
+  });
+
+  it('carries the consensus branch id the node reports for the next block', async () => {
+    const { unsigned, simulation } = await prepareBtcFork(
+      zcashAdapter(),
+      zcashIntent,
+      ZCASH_SENDER,
+    );
+    expect(unsigned.consensusBranchId).toBe('c8e71055');
+    expect(unsigned.expiryHeight).toBe(3_000_100);
+    expect(unsigned.inputs).toEqual([
+      { txid: ZCASH_FUNDING_TXID, vout: 0, previousTxHex: ZCASH_FUNDING_HEX },
+    ]);
+    const note = simulation.warnings[0];
+    expect(note?.kind === 'other' && note.message).toContain('consensus branch c8e71055');
+    BtcForkTx.parse(unsigned);
+    const [holding] = await zcashAdapter().getBalances(ZCASH_SENDER, ZCASH_TESTNET);
+    expect(holding?.amount).toBe('100000');
+  });
+
+  it('refuses a node that serves another Zcash network', async () => {
+    await expect(prepareBtcFork(zcashAdapter('main'), zcashIntent, ZCASH_SENDER)).rejects.toThrow(
+      'another Zcash network',
+    );
+  });
+
+  it('refuses a node that reports a malformed branch id', async () => {
+    await expect(
+      prepareBtcFork(zcashAdapter('test', 'C8E71055'), zcashIntent, ZCASH_SENDER),
+    ).rejects.toThrow();
   });
 });
 

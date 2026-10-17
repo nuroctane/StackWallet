@@ -14,10 +14,13 @@ import { z } from 'zod';
 import {
   DASH_TESTNET,
   SIGNING_CHAINS,
+  ZcashChainInfo,
   decodeForkAddress,
   forkParams,
+  isRpcDriver,
   type BtcForkAdapter,
   type ForkClient,
+  type ForkDriver,
   type SigningChainId,
 } from './btcfork.js';
 
@@ -44,6 +47,15 @@ export const BtcForkTx = z.strictObject({
   fee: Sats,
   inputs: z.array(BtcForkInput).min(1).max(8),
   expiryHeight: z.number().int().min(1).max(500_000_000).optional(),
+  /**
+   * Zcash only: the ZIP-143 consensus branch id the node reports for the next
+   * block, so a network upgrade needs no wallet release. The core falls back
+   * to its last known id when absent and refuses other forks' ids.
+   */
+  consensusBranchId: z
+    .string()
+    .regex(/^[0-9a-f]{8}$/)
+    .optional(),
 });
 export type BtcForkTx = z.infer<typeof BtcForkTx>;
 
@@ -212,7 +224,7 @@ async function readCoins(client: ForkClient, driver: string, from: string): Prom
       };
     });
   }
-  if (driver === 'verus-rpc') {
+  if (isRpcDriver(driver as ForkDriver)) {
     const utxos = await client.rpc('getaddressutxos', [{ addresses: [from] }], VerusUtxos);
     const seen = new Set<string>();
     return utxos.map((u) => {
@@ -236,7 +248,7 @@ async function fundingHex(client: ForkClient, driver: string, txid: string): Pro
     if (!res) throw new Error('Cannot fetch the funding transaction');
     return res.rawtx;
   }
-  if (driver === 'verus-rpc') {
+  if (isRpcDriver(driver as ForkDriver)) {
     return FundingHex.parse(await client.rpc('getrawtransaction', [txid, 0], FundingHex));
   }
   throw new Error(`No funding fetch driver for ${driver}`);
@@ -250,7 +262,24 @@ async function tipHeight(client: ForkClient, driver: string): Promise<number | n
   if (driver === 'verus-rpc') {
     return (await client.rpc('getinfo', [], VerusHeight)).blocks;
   }
+  if (driver === 'zcash-rpc') {
+    return (await client.rpc('getblockchaininfo', [], ZcashChainInfo)).blocks;
+  }
   return null;
+}
+
+/**
+ * The ZIP-143 branch id for a transaction mined after the current tip. Only
+ * a Zcash node knows it; the other v4 fork (Verus) pins its id in the core.
+ */
+async function consensusBranchId(client: ForkClient, driver: string): Promise<string | undefined> {
+  if (driver !== 'zcash-rpc') return undefined;
+  return (await client.rpc('getblockchaininfo', [], ZcashChainInfo)).consensus.nextblock;
+}
+
+/** Whether a driver can select inputs and watch them (prepare, approval, expiry). */
+function canSelectInputs(driver: ForkDriver): driver is 'insight' | 'verus-rpc' | 'zcash-rpc' {
+  return driver === 'insight' || isRpcDriver(driver);
 }
 
 /** vbytes of a P2PKH spend; v4 forks carry a small fixed framing overhead. */
@@ -278,7 +307,7 @@ export async function prepareBtcFork(
     throw new Error(
       `No public ${f.name} endpoint is reachable, so inputs cannot be selected; preparation is unavailable`,
     );
-  if (f.driver !== 'insight' && f.driver !== 'verus-rpc')
+  if (!canSelectInputs(f.driver))
     throw new Error(`The ${f.driver} driver cannot list UTXOs; preparation is unavailable`);
   const driver = f.driver;
   const amount = BigInt(intent.amount);
@@ -289,6 +318,7 @@ export async function prepareBtcFork(
     const height = f.v4 ? await tipHeight(client, driver) : null;
     if (f.v4 && (height === null || height < 1))
       throw new Error('Cannot determine the chain height for the expiry height');
+    const branch = f.v4 ? await consensusBranchId(client, driver) : undefined;
     const selected: Coin[] = [];
     let total = 0n;
     let fee = 0n;
@@ -321,6 +351,7 @@ export async function prepareBtcFork(
       fee: fee.toString(),
       inputs,
       ...(f.v4 ? { expiryHeight: height! + 100 } : {}),
+      ...(branch ? { consensusBranchId: branch } : {}),
     });
     return {
       unsigned,
@@ -334,7 +365,7 @@ export async function prepareBtcFork(
         warnings: [
           {
             kind: 'other',
-            message: `Local funding validation only; no network simulation. ${selected.length} input(s), flat ${f.feePerKb} sats/kB fee estimate, ${change} sats change to the sender.${f.v4 ? ` Expires at height ${unsigned.expiryHeight}.` : ''}`,
+            message: `Local funding validation only; no network simulation. ${selected.length} input(s), flat ${f.feePerKb} sats/kB fee estimate, ${change} sats change to the sender.${f.v4 ? ` Expires at height ${unsigned.expiryHeight}.` : ''}${branch ? ` Signs under consensus branch ${branch} as the node reports it.` : ''}`,
           },
         ],
         error: 'Network simulation is unavailable',
@@ -349,7 +380,7 @@ export async function btcForkApprovalValid(
   tx: BtcForkTx,
 ): Promise<boolean> {
   const f = forkParams(tx.chainId);
-  if (f.driver === null || (f.driver !== 'insight' && f.driver !== 'verus-rpc')) return false;
+  if (!canSelectInputs(f.driver)) return false;
   return adapter.withNode(tx.chainId, async (client) => {
     const coins = await readCoins(client, f.driver!, tx.from);
     const unspent = new Set(coins.map((c) => `${c.txid}:${c.vout}`));
@@ -384,7 +415,8 @@ export async function broadcastBtcFork(
         );
         return res.txid;
       }
-      case 'verus-rpc': {
+      case 'verus-rpc':
+      case 'zcash-rpc': {
         return client.rpc('sendrawtransaction', [raw], Hash);
       }
       case 'blockchair': {
@@ -413,7 +445,7 @@ export async function btcForkTransferStatus(
   const status = await adapter.status(hash, tx.chainId);
   if (status.state !== 'unknown' || tx.expiryHeight === undefined) return status;
   const f = forkParams(tx.chainId);
-  if (f.driver === null || (f.driver !== 'insight' && f.driver !== 'verus-rpc')) return status;
+  if (!canSelectInputs(f.driver)) return status;
   const expired = await adapter.withNode(tx.chainId, async (client) => {
     const height = await tipHeight(client, f.driver!);
     return height !== null && height >= tx.expiryHeight!;

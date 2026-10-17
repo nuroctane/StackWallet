@@ -3174,6 +3174,7 @@ mod tests {
                     previous_tx_hex: funding,
                 }],
                 expiry_height: None,
+                consensus_branch_id: None,
             })
         };
         let tx = |from: &str| tx_funded_by(from, &from_pub);

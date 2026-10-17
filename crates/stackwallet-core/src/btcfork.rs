@@ -24,12 +24,15 @@ const MAX_EXPIRY: u32 = 500_000_000;
 /// Zcash v4 header: overwintered bit set, transaction version 4.
 const ZCASH_V4_HEADER: u32 = 0x8000_0004;
 const ZCASH_V4_GROUP: u32 = 0x892f_2085;
-/// Consensus branch id used in the ZIP-143 personalization. NU6.3 is the
-/// current Zcash network upgrade (mainnet activation 2026-07-28); the branch
-/// id rotates at every network upgrade and must be bumped when Zcash ships
-/// the next one. Verified against a live mainnet v4 transparent transaction.
-const ZCASH_BRANCH_NU6_3: u32 = 0x37a5_165b;
-/// Verus signs v4 transactions with the Sapling branch id.
+/// Zcash rotates the ZIP-143 consensus branch id at every network upgrade,
+/// so the adapter reads the live value from its node
+/// (`getblockchaininfo.consensus.nextblock`) and carries it in the
+/// transaction; this is only the fallback when no node reported one (NU6.3,
+/// verified against a live mainnet v4 transparent transaction). A stale or
+/// wrong id yields a transaction the network rejects, never a spend of other
+/// funds: the digest is still computed here over the core's own serialization.
+const ZCASH_BRANCH_FALLBACK: u32 = 0x37a5_165b;
+/// Verus signs v4 transactions with the Sapling branch id, permanently.
 const VERUS_BRANCH_SAPLING: u32 = 0x76b8_09bb;
 const SIGHASH_ALL: u8 = 0x01;
 const SIGHASH_FORKID: u8 = 0x41;
@@ -42,7 +45,7 @@ enum Sighash {
     /// BIP-143 digest with SIGHASH_FORKID (Bitcoin Cash replay protection).
     ForkId,
     /// ZIP-143 BLAKE2b-256 digest for Zcash v4 transactions. Zcash, Verus.
-    Zip143 { branch: u32 },
+    Zip143,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +54,17 @@ enum Format {
     Plain { version: u32 },
     /// Zcash v4: overwintered header, version group id, expiry height and
     /// empty shielded sections appended after the outputs.
-    ZcashV4 { branch: u32 },
+    ZcashV4,
+}
+
+/// Where a v4 fork's consensus branch id comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Branch {
+    /// Pinned by the fork forever.
+    Fixed(u32),
+    /// Rotates with network upgrades: the transaction carries the id its
+    /// node reported, falling back to the last one known here.
+    Live { fallback: u32 },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -62,6 +75,7 @@ struct Fork {
     cashaddr_hrp: Option<&'static str>,
     sighash: Sighash,
     format: Format,
+    branch: Option<Branch>,
     max_money: u64,
 }
 
@@ -73,6 +87,7 @@ const FORKS: &[Fork] = &[
         cashaddr_hrp: Some("bchtest"),
         sighash: Sighash::ForkId,
         format: Format::Plain { version: 2 },
+        branch: None,
         max_money: 2_100_000_000_000_000,
     },
     Fork {
@@ -82,6 +97,7 @@ const FORKS: &[Fork] = &[
         cashaddr_hrp: None,
         sighash: Sighash::Legacy,
         format: Format::Plain { version: 3 },
+        branch: None,
         max_money: 2_100_000_000_000_000,
     },
     Fork {
@@ -89,12 +105,11 @@ const FORKS: &[Fork] = &[
         p2pkh: &[0x1d, 0x25],
         p2sh: &[0x1c, 0xba],
         cashaddr_hrp: None,
-        sighash: Sighash::Zip143 {
-            branch: ZCASH_BRANCH_NU6_3,
-        },
-        format: Format::ZcashV4 {
-            branch: ZCASH_BRANCH_NU6_3,
-        },
+        sighash: Sighash::Zip143,
+        format: Format::ZcashV4,
+        branch: Some(Branch::Live {
+            fallback: ZCASH_BRANCH_FALLBACK,
+        }),
         max_money: 2_100_000_000_000_000,
     },
     Fork {
@@ -104,6 +119,7 @@ const FORKS: &[Fork] = &[
         cashaddr_hrp: None,
         sighash: Sighash::Legacy,
         format: Format::Plain { version: 1 },
+        branch: None,
         max_money: 120_000_000_000_000_000,
     },
     Fork {
@@ -111,15 +127,44 @@ const FORKS: &[Fork] = &[
         p2pkh: &[0x3c],
         p2sh: &[0x55],
         cashaddr_hrp: None,
-        sighash: Sighash::Zip143 {
-            branch: VERUS_BRANCH_SAPLING,
-        },
-        format: Format::ZcashV4 {
-            branch: VERUS_BRANCH_SAPLING,
-        },
+        sighash: Sighash::Zip143,
+        format: Format::ZcashV4,
+        branch: Some(Branch::Fixed(VERUS_BRANCH_SAPLING)),
         max_money: 2_100_000_000_000_000,
     },
 ];
+
+/// The branch id a transaction signs under. Only a `Live` fork may carry one,
+/// and never another v4 fork's pinned id: a Zcash-shaped transaction hashed
+/// under Verus's Sapling id would be a valid Verus spend from the same key.
+fn branch_for(net: &Fork, declared: Option<&str>) -> Result<Option<u32>> {
+    match (net.branch, declared) {
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err(invalid("consensus branch id is not valid on this fork")),
+        (Some(Branch::Fixed(b)), None) => Ok(Some(b)),
+        (Some(Branch::Fixed(_)), Some(_)) => {
+            Err(invalid("this fork's consensus branch id is fixed"))
+        }
+        (Some(Branch::Live { fallback }), None) => Ok(Some(fallback)),
+        (Some(Branch::Live { .. }), Some(hex)) => {
+            if hex.len() != 8
+                || !hex
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            {
+                return Err(invalid(
+                    "consensus branch id must be 8 lowercase hex digits",
+                ));
+            }
+            let branch =
+                u32::from_str_radix(hex, 16).map_err(|_| invalid("invalid consensus branch id"))?;
+            if branch == 0 || branch == VERUS_BRANCH_SAPLING {
+                return Err(invalid("consensus branch id belongs to another fork"));
+            }
+            Ok(Some(branch))
+        }
+    }
+}
 
 fn fork(chain: &str) -> Result<&'static Fork> {
     FORKS
@@ -478,6 +523,10 @@ pub struct BtcForkTx {
     /// Zcash/Verus v4 expiry height; forbidden on the other forks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expiry_height: Option<u32>,
+    /// Zcash only: the consensus branch id the node reports for the next
+    /// block, as 8 lowercase hex digits. Absent means the compiled fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consensus_branch_id: Option<String>,
 }
 
 struct Cursor<'a> {
@@ -623,6 +672,7 @@ struct Plan {
     inputs: Vec<(String, u32)>,
     locktime: u32,
     expiry: Option<u32>,
+    branch: Option<u32>,
 }
 
 impl BtcForkTx {
@@ -645,13 +695,14 @@ impl BtcForkTx {
             return Err(invalid("dust amount or excessive fee"));
         }
         let expiry = match (net.format, self.expiry_height) {
-            (Format::ZcashV4 { .. }, Some(h)) if (1..=MAX_EXPIRY).contains(&h) => Some(h),
-            (Format::ZcashV4 { .. }, _) => return Err(invalid("expiry height required")),
+            (Format::ZcashV4, Some(h)) if (1..=MAX_EXPIRY).contains(&h) => Some(h),
+            (Format::ZcashV4, _) => return Err(invalid("expiry height required")),
             (Format::Plain { .. }, Some(_)) => {
                 return Err(invalid("expiry height is not valid on this fork"))
             }
             (Format::Plain { .. }, None) => None,
         };
+        let branch = branch_for(net, self.consensus_branch_id.as_deref())?;
         if self.inputs.is_empty() || self.inputs.len() > 8 {
             return Err(invalid("expected one to eight inputs"));
         }
@@ -707,7 +758,7 @@ impl BtcForkTx {
         let mut unsigned_prefix = Vec::new();
         match net.format {
             Format::Plain { version } => unsigned_prefix.extend_from_slice(&version.to_le_bytes()),
-            Format::ZcashV4 { .. } => {
+            Format::ZcashV4 => {
                 unsigned_prefix.extend_from_slice(&ZCASH_V4_HEADER.to_le_bytes());
                 unsigned_prefix.extend_from_slice(&ZCASH_V4_GROUP.to_le_bytes());
             }
@@ -724,6 +775,7 @@ impl BtcForkTx {
                 .collect(),
             locktime: 0,
             expiry,
+            branch,
         })
     }
 
@@ -749,7 +801,7 @@ impl BtcForkTx {
             buf.extend_from_slice(&vout.to_le_bytes());
         }
         match plan.net.sighash {
-            Sighash::Zip143 { .. } => zip143_hash(b"ZcashPrevoutHash", &buf),
+            Sighash::Zip143 => zip143_hash(b"ZcashPrevoutHash", &buf),
             _ => sha256d(&buf),
         }
     }
@@ -757,7 +809,7 @@ impl BtcForkTx {
     fn hash_sequence(&self, plan: &Plan) -> [u8; 32] {
         let buf = vec![0xffu8; 4 * plan.inputs.len()];
         match plan.net.sighash {
-            Sighash::Zip143 { .. } => zip143_hash(b"ZcashSequencHash", &buf),
+            Sighash::Zip143 => zip143_hash(b"ZcashSequencHash", &buf),
             _ => sha256d(&buf),
         }
     }
@@ -771,7 +823,7 @@ impl BtcForkTx {
             buf.extend_from_slice(&script);
         }
         match plan.net.sighash {
-            Sighash::Zip143 { .. } => zip143_hash(b"ZcashOutputsHash", &buf),
+            Sighash::Zip143 => zip143_hash(b"ZcashOutputsHash", &buf),
             _ => sha256d(&buf),
         }
     }
@@ -823,7 +875,10 @@ impl BtcForkTx {
                 buf.extend_from_slice(&u32::from(SIGHASH_FORKID).to_le_bytes());
                 Ok(sha256d(&buf))
             }
-            Sighash::Zip143 { branch } => {
+            Sighash::Zip143 => {
+                let branch = plan
+                    .branch
+                    .ok_or_else(|| invalid("consensus branch id required"))?;
                 let mut buf = Vec::with_capacity(300);
                 buf.extend_from_slice(&ZCASH_V4_HEADER.to_le_bytes());
                 buf.extend_from_slice(&ZCASH_V4_GROUP.to_le_bytes());
@@ -874,7 +929,7 @@ impl BtcForkTx {
             buf.extend_from_slice(&s);
         }
         buf.extend_from_slice(&plan.locktime.to_le_bytes());
-        if let Format::ZcashV4 { .. } = plan.net.format {
+        if let Format::ZcashV4 = plan.net.format {
             buf.extend_from_slice(&plan.expiry.expect("v4 expiry").to_le_bytes());
             buf.extend_from_slice(&0u64.to_le_bytes()); // valueBalance
             buf.push(0); // nShieldedSpend
@@ -1009,10 +1064,61 @@ mod tests {
                 previous_tx_hex: v.funding_hex.into(),
             }],
             expiry_height: match fork(v.chain).unwrap().format {
-                Format::ZcashV4 { .. } => Some(2_999_999),
+                Format::ZcashV4 => Some(2_999_999),
                 Format::Plain { .. } => None,
             },
+            consensus_branch_id: None,
         }
+    }
+
+    #[test]
+    fn zcash_signs_under_the_branch_id_its_node_reports() {
+        let base = fixture(&ZCASH);
+        let plan = base.plan().unwrap();
+        let fallback = base.sighash(&plan, 0).unwrap();
+        // Declaring the fallback explicitly is a no-op.
+        let mut t = base.clone();
+        t.consensus_branch_id = Some("37a5165b".into());
+        let plan = t.plan().unwrap();
+        assert_eq!(t.sighash(&plan, 0).unwrap(), fallback);
+        assert_eq!(t.sign(&SECRET).unwrap().0, format!("0x{}", ZCASH.signed));
+        // A rotated id (NU6 here) changes the digest: the signature only
+        // verifies under the upgrade the node actually enforces.
+        let mut t = base.clone();
+        t.consensus_branch_id = Some("c8e71055".into());
+        let plan = t.plan().unwrap();
+        assert_ne!(t.sighash(&plan, 0).unwrap(), fallback);
+        assert!(t.sign(&SECRET).is_ok());
+        // Malformed, zero, or another fork's pinned id are refused.
+        for bad in [
+            "37A5165B",
+            "37a5165",
+            "37a5165b0",
+            "00000000",
+            "76b809bb",
+            "zz",
+        ] {
+            let mut t = base.clone();
+            t.consensus_branch_id = Some(bad.into());
+            assert!(t.plan().is_err(), "branch {bad}");
+        }
+        // Verus's id is pinned and the plain forks have none.
+        let mut t = fixture(&VERUS);
+        t.consensus_branch_id = Some("c8e71055".into());
+        assert!(t.plan().is_err());
+        let mut t = fixture(&DASH);
+        t.consensus_branch_id = Some("c8e71055".into());
+        assert!(t.plan().is_err());
+        // The field round-trips through JSON only when set.
+        assert!(!serde_json::to_string(&base)
+            .unwrap()
+            .contains("consensusBranchId"));
+        let json = serde_json::to_string(&BtcForkTx {
+            consensus_branch_id: Some("c8e71055".into()),
+            ..base.clone()
+        })
+        .unwrap();
+        assert!(json.contains("\"consensusBranchId\":\"c8e71055\""));
     }
 
     fn public_key() -> Vec<u8> {

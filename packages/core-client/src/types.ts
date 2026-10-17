@@ -1410,6 +1410,11 @@ export const BtcForkTx = z.strictObject({
   fee: Amount,
   inputs: z.array(BtcForkInput).min(1).max(8),
   expiryHeight: z.number().int().min(1).max(500_000_000).optional(),
+  /** Zcash only: the ZIP-143 consensus branch id the node reports for the next block. */
+  consensusBranchId: z
+    .string()
+    .regex(/^[0-9a-f]{8}$/)
+    .optional(),
 });
 export type BtcForkTx = z.infer<typeof BtcForkTx>;
 const GalaEthRef = z.string().regex(/^eth\|[0-9a-fA-F]{40}$/);

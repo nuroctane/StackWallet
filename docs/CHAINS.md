@@ -550,12 +550,20 @@ valid mainnet spend from the same script; like Bitcoin, the core refuses fork tr
 any path that does not start with `m/44'/1'/`. BCH derives CashAddr and accepts legacy base58.
 Signing is enabled on the five testnets, but only Dash testnet has a live public endpoint
 (insight), so new wallets receive only that one; the other four carry empty RPC lists, throw
-honestly and can be added by hand. Mainnet reads come from Blockchair
-(BCH/Dash/ZEC — the keyless tier degrades to HTTP 430 under load), ocean (DefiChain balance only;
-it has no UTXO listing, so DFI sends cannot be prepared), and a Verus JSON-RPC proxy with an
-address index. Zcash and Verus v4 carry a real `expiryHeight` (tip + 100) and can report
-`Expired`; the other forks never expire. Zcash's ZIP-143 branch id (NU6.3) must be bumped at
-every network upgrade — a standing operational duty.
+honestly and can be added by hand. Zcash testnet speaks the `zcash-rpc` driver (a zcashd or
+zebrad node with the address index: `getaddressutxos`, `getrawtransaction`,
+`sendrawtransaction`, `getblockchaininfo`), so one user-added node makes reads and sends work.
+Mainnet reads come from Blockchair (BCH/Dash/ZEC — the keyless tier degrades to HTTP 430 under
+load), ocean (DefiChain balance only; it has no UTXO listing, so DFI sends cannot be prepared),
+and a Verus JSON-RPC proxy with an address index. Zcash and Verus v4 carry a real `expiryHeight`
+(tip + 100) and can report `Expired`; the other forks never expire. Zcash rotates its ZIP-143
+consensus branch id at every network upgrade, so the adapter reads
+`getblockchaininfo.consensus.nextblock` at prepare time and carries it as `consensusBranchId`;
+the core accepts it only on Zcash, refuses zero and Verus's pinned Sapling id (a Zcash-shaped
+transaction hashed under it would be a Verus spend from the same key), and falls back to its last
+known id (NU6.3) when no node reported one. A stale id only yields a transaction the network
+rejects — the digest is always computed by the core over its own serialization — so a Zcash
+upgrade needs no wallet release.
 
 **Gala (`gala:mainnet|testnet`, `chains-gala`).** GalaChain uses Ethereum keys verbatim, so
 secp256k1 at the plain EVM path `m/44'/60'/0'/0/i`; addresses are `eth|<EIP-55>` and the checksum

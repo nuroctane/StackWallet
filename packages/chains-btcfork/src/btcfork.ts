@@ -58,8 +58,18 @@ export const SIGNING_CHAINS = [
 ] as const;
 export type SigningChainId = (typeof SIGNING_CHAINS)[number];
 
-/** Which public API shape serves a network; null when none is reachable. */
-export type ForkDriver = 'blockchair' | 'insight' | 'ocean' | 'verus-rpc' | null;
+/**
+ * Which API shape serves a network; null when none is reachable. `zcash-rpc`
+ * is a zcashd/zebrad node with the address index (`getaddressutxos`), the
+ * only source that also reports the live ZIP-143 consensus branch id.
+ */
+export type ForkDriver = 'blockchair' | 'insight' | 'ocean' | 'verus-rpc' | 'zcash-rpc' | null;
+
+/** Drivers that speak the Bitcore address-index JSON-RPC (UTXOs, raw txs, broadcast). */
+export const RPC_DRIVERS = new Set<ForkDriver>(['verus-rpc', 'zcash-rpc']);
+export function isRpcDriver(driver: ForkDriver): driver is 'verus-rpc' | 'zcash-rpc' {
+  return RPC_DRIVERS.has(driver);
+}
 
 export interface ForkParams {
   chainId: string;
@@ -172,7 +182,9 @@ export const FORKS: Record<string, ForkParams> = {
     wifVersion: 0xef,
     p2pkh: [0x1d, 0x25],
     p2sh: [0x1c, 0xba],
-    driver: null,
+    // No public testnet node with CORS is known; a user-added zcashd/zebrad
+    // endpoint makes reads, sends and the live branch id work.
+    driver: 'zcash-rpc',
     feePerKb: 2500,
     v4: true,
   },
@@ -437,6 +449,18 @@ export const VerusInfo = z.object({
   blocks: SafeUint,
   name: z.string().max(32).optional(),
 });
+/**
+ * zcashd/zebrad `getblockchaininfo`: `chain` names the network and
+ * `consensus.nextblock` is the branch id a new transaction must sign under.
+ */
+export const ZcashChainInfo = z.looseObject({
+  chain: z.enum(['main', 'test', 'regtest']),
+  blocks: SafeUint,
+  consensus: z.object({
+    chaintip: z.string().regex(/^[0-9a-f]{8}$/),
+    nextblock: z.string().regex(/^[0-9a-f]{8}$/),
+  }),
+});
 export const BlockchairDashboard = z.object({
   data: z.record(z.string(), z.looseObject({ address: z.looseObject({ balance: SafeUint }) })),
 });
@@ -518,6 +542,14 @@ export class BtcForkAdapter extends BaseAdapter<'btcfork'> {
             throw new Error('Endpoint serves another Verus network');
           return;
         }
+        case 'zcash-rpc': {
+          const info = ZcashChainInfo.parse(
+            await fetchJsonRpc(url, 'getblockchaininfo', [], this.fetchOptions()),
+          );
+          if (info.chain !== (f.testnet ? 'test' : 'main'))
+            throw new Error('Endpoint serves another Zcash network');
+          return;
+        }
         case null:
           throw new Error(`No public endpoint is known for ${f.name}`);
       }
@@ -596,7 +628,8 @@ export class BtcForkAdapter extends BaseAdapter<'btcfork'> {
             const sats = BigInt(whole) * 100_000_000n + BigInt((frac + '00000000').slice(0, 8));
             return sats.toString();
           }
-          case 'verus-rpc': {
+          case 'verus-rpc':
+          case 'zcash-rpc': {
             const res = await client.rpc(
               'getaddressbalance',
               [{ addresses: [addr] }],
@@ -641,7 +674,8 @@ export class BtcForkAdapter extends BaseAdapter<'btcfork'> {
             return { state: 'confirmed', blockNumber: tx.blockheight ?? 0 };
           return { state: 'pending' };
         }
-        case 'verus-rpc': {
+        case 'verus-rpc':
+        case 'zcash-rpc': {
           try {
             const tx = await client.rpc('getrawtransaction', [hash, 1], VerusTx);
             if ((tx.confirmations ?? 0) >= 1) return { state: 'confirmed', blockNumber: 0 };
