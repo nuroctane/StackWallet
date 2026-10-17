@@ -6,7 +6,7 @@ import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
 import { findChain } from '../lib/chains.js';
 import { standardPath } from '../lib/keys.js';
-import { formatPrivateKey } from '../lib/secretFormat.js';
+import { formatPrivateKey, privateKeyFormat } from '../lib/secretFormat.js';
 import { useDirectory } from '../store/persist.js';
 import { useRegistry } from '../store/RegistryContext.js';
 import { accountsOf } from '../store/selectors.js';
@@ -51,7 +51,7 @@ function RevealForm({ walletId, onClose }: { walletId: string; onClose: () => vo
   const [channel, setChannel] = useState<ExposureChannel>('screen');
   const [ack, setAck] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [shown, setShown] = useState<string | null>(null);
+  const [shown, setShown] = useState<{ text: string; format: string | null } | null>(null);
 
   // A shown secret disappears with the dialog; nothing keeps it around.
   useEffect(() => () => setShown(null), []);
@@ -100,8 +100,9 @@ function RevealForm({ walletId, onClose }: { walletId: string; onClose: () => vo
       what.kind === 'mnemonic' || !chain
         ? r.value.secret
         : formatPrivateKey(chain, r.value.secret, r.value.publicHex ?? '');
+    const format = what.kind === 'mnemonic' || !chain ? null : privateKeyFormat(chain);
     if (channel === 'screen') {
-      setShown(text);
+      setShown({ text, format });
     } else if (channel === 'clipboard') {
       try {
         await navigator.clipboard.writeText(text);
@@ -115,7 +116,7 @@ function RevealForm({ walletId, onClose }: { walletId: string; onClose: () => vo
         onClose();
       } catch {
         // The exposure is already recorded; fall back to showing it.
-        setShown(text);
+        setShown({ text, format });
       }
     } else {
       const blob = new Blob([`${text}\n`], { type: 'text/plain' });
@@ -136,8 +137,9 @@ function RevealForm({ walletId, onClose }: { walletId: string; onClose: () => vo
           This wallet is now permanently tagged exposed. Anyone who sees this can move its funds.
         </p>
         <pre className="rounded-sw-sm border border-danger/60 bg-paper p-3 font-mono text-[13px] break-words whitespace-pre-wrap text-ink select-all">
-          {shown}
+          {shown.text}
         </pre>
+        {shown.format && <p className="text-[11px] text-faint">{shown.format}</p>}
         <div className="flex justify-end">
           <Button variant="primary" onClick={onClose}>
             Done
@@ -163,6 +165,14 @@ function RevealForm({ walletId, onClose }: { walletId: string; onClose: () => vo
             </option>
           ))}
         </Select>
+        {account && (
+          <p className="mt-1 text-[11px] text-faint">
+            {(() => {
+              const c = findChain(registry, account.chainId);
+              return c ? privateKeyFormat(c) : null;
+            })()}
+          </p>
+        )}
       </Field>
       <Field label="Where" htmlFor={ids.channel}>
         <Select

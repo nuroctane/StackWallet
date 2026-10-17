@@ -674,6 +674,12 @@ pub fn address_from_secret(secret: &[u8; 32]) -> Result<String> {
     address(&stark_public_key(secret)?)
 }
 
+/// The ground Stark private key (big-endian), which is what Argent X and
+/// Braavos import; the core's secp256k1 secret on its own controls nothing.
+pub fn stark_private_key(secret: &[u8; 32]) -> Result<[u8; 32]> {
+    Ok(StarkKey::from_core_secret(secret)?.secret.to_be())
+}
+
 /// Canonical form: `0x` and 64 lowercase hex digits, inside the contract address range.
 fn parse_address(value: &str) -> Result<U256> {
     let digits = value

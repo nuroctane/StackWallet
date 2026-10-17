@@ -398,51 +398,73 @@ pub fn public_key(
             cardano_keys(vault, wallet_id, account)?.public(),
         ));
     }
-    if path.starts_with("m/44'/9004'/") {
-        // Starknet: the account key is the Stark public key (EIP-2645 grindKey
-        // of the secp256k1 secret); the SEC1 point cannot derive the address.
-        return with_mnemonic(vault, wallet_id, |m| {
-            let key = hd::derive(m.to_seed("").as_ref(), Curve::Secp256k1, path)?;
-            Ok(hex::encode(crate::starknet::stark_public_key(
-                key.secret(),
-            )?))
-        });
-    }
+    with_mnemonic(vault, wallet_id, |m| {
+        Ok(hex::encode(family_key(m, curve, path)?.public))
+    })
+}
+
+/// The secret a wallet for that family imports, plus the public key the
+/// account shows. Both halves zeroize on drop.
+struct FamilyKey {
+    secret: zeroize::Zeroizing<Vec<u8>>,
+    public: Vec<u8>,
+}
+
+/// One place that knows which paths are not plain SLIP-10/BIP32 accounts, so
+/// address derivation and key export can never disagree about what the key is.
+fn family_key(m: &Mnemonic, curve: Curve, path: &str) -> Result<FamilyKey> {
+    let seed = m.to_seed("");
+    let secret = |bytes: &[u8]| zeroize::Zeroizing::new(bytes.to_vec());
     if let Some(account) = chia_account(path) {
         // Chia: the account key is the 48-byte compressed G1 of the EIP-2333
         // wallet scalar, not any HD curve's public key.
-        return with_mnemonic(vault, wallet_id, |m| {
-            let master = crate::chia::master_sk_from_seed(m.to_seed("").as_ref())?;
-            let sk = crate::chia::wallet_sk(&master, account)?;
-            Ok(hex::encode(crate::chia::public_key(&sk)?))
+        let master = crate::chia::master_sk_from_seed(seed.as_ref())?;
+        let sk = crate::chia::wallet_sk(&master, account)?;
+        return Ok(FamilyKey {
+            public: crate::chia::public_key(&sk)?.to_vec(),
+            secret: secret(&sk),
+        });
+    }
+    if path.starts_with("m/44'/9004'/") {
+        // Starknet: the account key is the Stark key pair (EIP-2645 grindKey of
+        // the secp256k1 secret); neither half of the SEC1 pair is usable as is.
+        let key = hd::derive(seed.as_ref(), Curve::Secp256k1, path)?;
+        return Ok(FamilyKey {
+            secret: secret(&crate::starknet::stark_private_key(key.secret())?),
+            public: crate::starknet::stark_public_key(key.secret())?.to_vec(),
         });
     }
     if path.starts_with("m/44'/5741564'/") {
-        // Waves: the account key is the axolotl Curve25519 key derived from the
-        // SLIP-10 seed, not the ed25519 verifying key.
-        return with_mnemonic(vault, wallet_id, |m| {
-            let key = hd::derive(m.to_seed("").as_ref(), Curve::Ed25519, path)?;
-            Ok(hex::encode(crate::waves::public_key(key.secret())))
+        // Waves: the account key is the axolotl Curve25519 pair derived from the
+        // SLIP-10 seed, not the ed25519 pair.
+        let key = hd::derive(seed.as_ref(), Curve::Ed25519, path)?;
+        return Ok(FamilyKey {
+            secret: secret(&crate::waves::private_key(key.secret())),
+            public: crate::waves::public_key(key.secret()).to_vec(),
         });
     }
     if path.starts_with("m/44'/2365'/") {
-        // Mixin: the account key is the 64-byte spend || view public key the
-        // kernel derives from the SLIP-10 seed, not the ed25519 point.
-        return with_mnemonic(vault, wallet_id, |m| {
-            let key = hd::derive(m.to_seed("").as_ref(), Curve::Ed25519, path)?;
-            Ok(hex::encode(crate::mixin::public_from_secret(key.secret())))
+        // Mixin: the kernel derives spend || view from a 64-byte seed, which is
+        // what its SDKs import; the public key is spendPub || viewPub.
+        let key = hd::derive(seed.as_ref(), Curve::Ed25519, path)?;
+        return Ok(FamilyKey {
+            secret: secret(&crate::mixin::seed_from_secret(key.secret())),
+            public: crate::mixin::public_from_secret(key.secret()).to_vec(),
         });
     }
     if path.starts_with("m/44'/83293'/") {
-        // Qubic: the account key is the FourQ point; the SLIP-10 seed is the
-        // SchnorrQ subseed directly, so the ed25519 point is meaningless.
-        return with_mnemonic(vault, wallet_id, |m| {
-            let key = hd::derive(m.to_seed("").as_ref(), Curve::Ed25519, path)?;
-            Ok(hex::encode(crate::qubic::public_key(key.secret())?))
+        // Qubic: the SLIP-10 secret is the SchnorrQ subseed directly and the
+        // account key is its FourQ point, so the ed25519 pair is meaningless.
+        let key = hd::derive(seed.as_ref(), Curve::Ed25519, path)?;
+        return Ok(FamilyKey {
+            secret: secret(key.secret()),
+            public: crate::qubic::public_key(key.secret())?.to_vec(),
         });
     }
-    with_mnemonic(vault, wallet_id, |m| {
-        Ok(hd::derive(m.to_seed("").as_ref(), curve, path)?.public_hex())
+    let key = hd::derive(seed.as_ref(), curve, path)?;
+    Ok(FamilyKey {
+        secret: secret(key.secret()),
+        public: key.public.clone(),
     })
 }
 
@@ -488,10 +510,10 @@ pub fn reveal(
             )
         }
         Revealed::PrivateKey { curve, path } => with_mnemonic(vault, wallet_id, |m| {
-            let k = hd::derive(m.to_seed("").as_ref(), *curve, path)?;
+            let k = family_key(m, *curve, path)?;
             Ok((
-                zeroize::Zeroizing::new(hex::encode(k.secret())),
-                Some(k.public_hex()),
+                zeroize::Zeroizing::new(hex::encode(&*k.secret)),
+                Some(hex::encode(&k.public)),
             ))
         })?,
     };
@@ -682,6 +704,63 @@ mod tests {
             create_single(&mut v, "w2", 7).is_err(),
             "a wallet holds one key"
         );
+    }
+
+    #[test]
+    fn reveal_exports_the_key_the_account_was_derived_from() {
+        let mut v = vault();
+        import_phrase(
+            &mut v,
+            "w3",
+            "test test test test test test test test test test test junk",
+            1,
+        )
+        .unwrap();
+        let k = testing::keys(&mut v, "pw", &["w3"]);
+        let cases = [
+            (Curve::Ed25519, "m/12381'/8444'/2'/0'", 64, 96),
+            (Curve::Secp256k1, "m/44'/9004'/0'/0/0", 64, 64),
+            (Curve::Ed25519, "m/44'/5741564'/0'/0'/0'", 64, 64),
+            (Curve::Ed25519, "m/44'/2365'/0'/0'/0'", 128, 128),
+            (Curve::Ed25519, "m/44'/83293'/0'/0'/0'", 64, 64),
+            (Curve::Ed25519, "m/44'/501'/0'/0'", 64, 64),
+        ];
+        for (curve, path, secret_len, public_len) in cases {
+            let shown = public_key(&v, "w3", curve, path).unwrap();
+            let r = reveal(
+                &mut v,
+                "w3",
+                &k.gate(),
+                Revealed::PrivateKey {
+                    curve,
+                    path: path.into(),
+                },
+                Channel::Screen,
+                2,
+            )
+            .unwrap();
+            assert_eq!(r.secret.len(), secret_len, "{path}");
+            assert_eq!(shown.len(), public_len, "{path}");
+            assert_eq!(r.public_hex.as_deref(), Some(shown.as_str()), "{path}");
+            // The plain SLIP-10 secret is only the right export when the family
+            // signs with it directly.
+            let plain = hd::derive(
+                Mnemonic::parse("test test test test test test test test test test test junk")
+                    .unwrap()
+                    .to_seed("")
+                    .as_ref(),
+                curve,
+                path,
+            );
+            let plain_hex = plain.ok().map(|k| hex::encode(k.secret()));
+            let signs_with_plain =
+                path.starts_with("m/44'/501'/") || path.starts_with("m/44'/83293'/");
+            assert_eq!(
+                plain_hex.as_deref() == Some(r.secret.as_str()),
+                signs_with_plain,
+                "{path}"
+            );
+        }
     }
 
     #[test]

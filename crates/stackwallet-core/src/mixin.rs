@@ -92,6 +92,12 @@ fn keys_from_seed64(seed: &[u8; 64]) -> (Scalar, Scalar) {
     (spend, scalar_wide(&view_seed))
 }
 
+/// The 64-byte seed the Mixin SDKs import (`NewAddressFromSeed`); the SLIP-10
+/// secret it is hashed from is not a Mixin key on its own.
+pub fn seed_from_secret(secret: &[u8; 32]) -> [u8; 64] {
+    Sha512::digest(secret).into()
+}
+
 /// The 64-byte account public key: spendPub || viewPub.
 pub fn public_from_secret(secret: &[u8; 32]) -> [u8; 64] {
     let seed = Sha512::digest(secret);
