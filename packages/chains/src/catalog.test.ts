@@ -40,7 +40,28 @@ describe('CHAIN_CATALOG', () => {
   });
 
   it('keeps an explorer for every curated chain', () => {
-    for (const entry of CURATED_CATALOG) expect(entry.explorerTxUrl, entry.chainId).toBeTruthy();
+    // No public explorer for these looks extrinsics up by hash (Subscan dropped them).
+    const noHashExplorer = new Set([
+      'polkadot:2f0555cc76fc2840a25a6ea3b9637146',
+      'polkadot:fc41b9bd8ef8fe53d58c7ea67c794c7e',
+      'polkadot:baf5aabe40646d11f0ee8abbdc64f4a4',
+      'polkadot:7e4e32d0feafd4f9c9414b0be86373f9',
+      'polkadot:8b8c140b0af9db70686583e3f6bf2a59',
+      // No public explorer indexes these Bitcoin-fork testnets at all.
+      'btcfork:bch-testnet',
+      'btcfork:zcash-testnet',
+      'btcfork:defichain-testnet',
+      'btcfork:verus-testnet',
+      // GalaChain's explorer API has no by-hash route; Mixin has no verified explorer.
+      'gala:mainnet',
+      'gala:testnet',
+      'mixin:74c6cdb7d51af570',
+      // Canton's only explorer is Cloudflare-challenged and its update route is unverified.
+      'canton:mainnet',
+      'canton:testnet',
+    ]);
+    for (const entry of CURATED_CATALOG)
+      expect(Boolean(entry.explorerTxUrl), entry.chainId).toBe(!noHashExplorer.has(entry.chainId));
   });
 
   it('lets curated entries win over generated ones', () => {

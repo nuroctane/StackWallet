@@ -44,11 +44,57 @@ bitcoin = { version = "=0.32.11", default-features = false, features = ["std"] }
 # which does not build for wasm32.
 snow = { version = "0.10", default-features = false, features = ["default-resolver", "use-curve25519", "use-chacha20poly1305", "use-blake2", "use-sha2", "use-getrandom"] }
 x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
+# Blake2b for Substrate, Sui, Cardano and Algorand-style hashing; digest 0.10 like sha2.
+blake2 = "0.10"
+crc = "3"
+data-encoding = "2"
+curve25519-dalek = "5"
+blake3 = { version = "1", default-features = false, features = ["pure"] }
 
 [features]
 default = ["store"]
 # SQLite via rusqlite is native-only; the wasm build leaves it off.
 store = ["dep:rusqlite"]
+# Families under construction; each compiles only with its feature until it is wired in.
+fam-substrate = []
+fam-sui = []
+fam-aptos = []
+fam-stellar = []
+fam-near = []
+fam-ton = []
+fam-xrpl = []
+fam-cardano = []
+fam-hyperliquid = []
+fam-algorand = []
+fam-vechain = []
+fam-multiversx = []
+fam-antelope = []
+fam-stacks = []
+fam-tezos = []
+fam-starknet = []
+fam-icp = []
+fam-waves = []
+fam-neo = []
+fam-ergo = []
+fam-icon = []
+fam-alephium = []
+fam-chia = []
+fam-everscale = []
+fam-radix = []
+fam-aeternity = []
+fam-fuel = []
+fam-aelf = []
+fam-starcoin = []
+fam-obyte = []
+fam-chromia = []
+fam-keeta = []
+fam-namada = []
+fam-btcfork = []
+fam-gala = []
+# curve25519-dalek 5 is already in the lock (via ed25519-dalek 3); Mixin's ghost-key
+# scheme is raw edwards25519 arithmetic, not standard ed25519. blake3 (CC0/Apache-2.0)
+# is the kernel's transaction hash; the pure-Rust backend avoids a C toolchain.
+fam-mixin = []
 
 # Browser builds need the JS entropy backends; getrandom 0.4 also needs the
 # getrandom_backend="wasm_js" cfg set in .cargo/config.toml.

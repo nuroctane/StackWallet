@@ -7,6 +7,44 @@
  * mempool.space-compatible REST bases for bitcoin, LCD (REST) bases for cosmos.
  */
 import type { ChainInfo } from './types.js';
+import { ALGORAND } from './catalog-algorand.js';
+import { APTOS, SUI } from './catalog-move.js';
+import { NEAR } from './catalog-near.js';
+import { STELLAR } from './catalog-stellar.js';
+import { SUBSTRATE } from './catalog-substrate.js';
+import { TON } from './catalog-ton.js';
+import { CARDANO } from './catalog-cardano.js';
+import { ANTELOPE } from './catalog-antelope.js';
+import { MULTIVERSX } from './catalog-multiversx.js';
+import { TEZOS } from './catalog-tezos.js';
+import { STACKS } from './catalog-stacks.js';
+import { VECHAIN } from './catalog-vechain.js';
+import { HYPERLIQUID } from './catalog-hyperliquid.js';
+import { STARKNET } from './catalog-starknet.js';
+import { ICON } from './catalog-icon.js';
+import { EVERSCALE } from './catalog-everscale.js';
+import { WAVES } from './catalog-waves.js';
+import { RADIX } from './catalog-radix.js';
+import { ICP } from './catalog-icp.js';
+import { ERGO } from './catalog-ergo.js';
+import { ALEPHIUM } from './catalog-alephium.js';
+import { NEO } from './catalog-neo.js';
+import { AETERNITY } from './catalog-aeternity.js';
+import { CHIA } from './catalog-chia.js';
+import { FUEL } from './catalog-fuel.js';
+import { AELF } from './catalog-aelf.js';
+import { STARCOIN } from './catalog-starcoin.js';
+import { OBYTE } from './catalog-obyte.js';
+import { CHROMIA } from './catalog-chromia.js';
+import { KEETA } from './catalog-keeta.js';
+import { NAMADA } from './catalog-namada.js';
+import { BTCFORK } from './catalog-btcfork.js';
+import { GALA } from './catalog-gala.js';
+import { MIXIN } from './catalog-mixin.js';
+import { QUBIC } from './catalog-qubic.js';
+import { ALEO } from './catalog-aleo.js';
+import { CANTON } from './catalog-canton.js';
+import { XRPL } from './catalog-xrpl.js';
 
 type EvmSpec = {
   id: number;
@@ -280,6 +318,21 @@ const EVM: ChainInfo[] = [
     explorer: 'https://monadscan.com',
     rpcs: ['https://rpc.monad.xyz', 'https://monad.drpc.org'],
   }),
+  // Cabal is a minievm Minitia with no chainid.network entry; gas is INIT bridged
+  // from Initia L1 and the EVM chain id was read live from the endpoint.
+  {
+    chainId: 'eip155:2630341494499703',
+    family: 'evm',
+    name: 'Cabal',
+    nativeAsset: { ref: 'eip155:2630341494499703:native', symbol: 'INIT', decimals: 18 },
+    testnet: false,
+    explorerTxUrl: 'https://scan.initia.xyz/cabal-1/txs/{hash}',
+    defaultRpcs: ['https://jsonrpc-cabal-1.anvil.asia-southeast.initia.xyz'],
+    extra: { coinType: 60 },
+    layer: 'L2',
+    parent: 'Initia',
+    priceId: 'initia',
+  },
 ];
 
 type BitcoinSpec = {
@@ -747,4 +800,43 @@ export const CURATED_CATALOG: readonly ChainInfo[] = Object.freeze([
   ...SOLANA,
   ...COSMOS,
   ...TRON,
+  ...SUBSTRATE,
+  ...STELLAR,
+  ...APTOS,
+  ...SUI,
+  ...XRPL,
+  ...NEAR,
+  ...ALGORAND,
+  ...TON,
+  ...CARDANO,
+  ...ANTELOPE,
+  ...MULTIVERSX,
+  ...TEZOS,
+  ...STACKS,
+  ...VECHAIN,
+  ...HYPERLIQUID,
+  ...STARKNET,
+  ...ICON,
+  ...EVERSCALE,
+  ...WAVES,
+  ...RADIX,
+  ...ICP,
+  ...ERGO,
+  ...ALEPHIUM,
+  ...NEO,
+  ...AETERNITY,
+  ...CHIA,
+  ...FUEL,
+  ...AELF,
+  ...STARCOIN,
+  ...OBYTE,
+  ...CHROMIA,
+  ...KEETA,
+  ...NAMADA,
+  ...BTCFORK,
+  ...GALA,
+  ...MIXIN,
+  ...QUBIC,
+  ...ALEO,
+  ...CANTON,
 ]);

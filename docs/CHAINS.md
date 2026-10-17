@@ -276,6 +276,333 @@ ledger's own bytes plus one 65-byte signature, through `/wallet/broadcasthex`. S
 passes the expiration and the id is still absent. TRC-20 transfers, staking, resources,
 mainnet and threshold sends are not enabled. Threshold Tron needs CGGMP21.
 
+### Signing families
+
+**Substrate (`polkadot:<first 32 hex of the genesis hash>`, `chains-substrate`).** Sixteen chains:
+Polkadot, Kusama, their asset hubs, Bittensor, Hydration, Bifrost, Acala, Karura, Vara, SORA and
+Chainflip, plus the Westend and Paseo test networks. Ed25519 SLIP-10 at `m/44'/354'/0'/0'/i'` on
+every chain (one key, one account everywhere; sr25519 wallets such as Polkadot.js derive
+differently and cannot be imported). The address is the raw 32-byte key, SS58-encoded under the
+chain's prefix. Reads are storage queries against genesis-proven HTTPS JSON-RPC endpoints,
+cross-checked where two operators exist (Acala, Karura, SORA and Chainflip have one); Asset Hubs
+also read USDt/USDC asset balances. There is no history: nodes do not index by account and
+Subscan needs an API key. Sends are native `transfer_keep_alive` on Westend and Westend Asset Hub
+only, with a mortal era of 256 blocks (about 25 minutes) as real on-chain expiry. A runtime
+upgrade that bumps `transactionVersion` refuses signing until the layout is re-verified and
+re-pinned. A funded Westend broadcast has not been verified.
+
+**Stellar (`stellar:pubnet|testnet`, `chains-stellar`).** Ed25519 SEP-0005 at `m/44'/148'/i'`
+(Lobstr, Freighter, Solar, Ledger); StrKey `G…` addresses, muxed `M…` refused. Horizon endpoints
+prove their network through the root document's `network_passphrase`; mainnet XLM and USDC are
+cross-checked across SDF and Lobstr. Sends are native XLM payments on testnet only, becoming
+`CreateAccount` for unfunded recipients; `maxTime` (30 minutes) is a network-enforced expiry, and
+a stuck transfer expires because there is no fee bump. Confirmed end to end on testnet.
+
+**Aptos (`aptos:<ledger chain_id>`, plus `movement:126` and `supra:8`, `chains-aptos`).** Ed25519
+at `m/44'/637'/i'/0'/0'` (Petra, Pontem, Martian); the address is sha3-256 of the key with the
+single-sig scheme byte. Each endpoint proves its ledger chain id before use. Mainnet USDC is read
+as a fungible asset; Movement reads balances and history; Supra is balances-only (its REST fork
+wraps view results differently). Sends are native APT on `aptos:2` (testnet) only, with
+`expirationTimestampSecs` (30 minutes) as real expiry. A noble-signed testnet broadcast was
+accepted by the validator up to the unfunded fee; a confirmed transfer was not exercised (the
+faucet needs a browser login).
+
+**Sui (`sui:mainnet|testnet|devnet`, `iota:*` read-only, `chains-sui`).** Ed25519 at
+`m/44'/<coin>'/0'/0'/i'` (784 Sui, 4218 IOTA); blake2b-256 addresses, with a flag byte on Sui and
+without on IOTA. Public Sui fullnodes dropped JSON-RPC, so the adapter reads, dry-runs and
+broadcasts through the Mysten GraphQL service (protocol chosen by namespace, not URL); IOTA still
+serves JSON-RPC and is read-only here. Mainnet USDC is read-only. Sends are native SUI on testnet
+as a one-command programmable transaction paying gas from the sender's coin objects. There is no
+time expiry; the transaction dies once any gas coin's version moves, which is reported as
+`expired`. A funded broadcast was not verified (the faucet refuses scripted requests).
+
+**XRPL (`xrpl:0|1|2` network ids, `chains-xrpl`).** Secp256k1 at `m/44'/144'/0'/0/i` (Xaman, Trust,
+Ledger); classic `r…` base58check addresses, X-addresses refused. rippled's public JSON-RPC ports
+send no CORS headers, so `:51234` endpoints are rewritten to WebSocket; every endpoint proves its
+`network_id`. No issued-currency balances are read (decimal-string trustlines, skipped as not
+cheap). Sends are XRP payments on testnet (`xrpl:1`) with an optional destination tag — the tag is
+not bound by the intent, so the approval dialog shows it. `lastLedgerSequence` (open ledger + 300,
+about 15-20 minutes) is real on-chain expiry. Confirmed end to end on testnet, including a tagged
+account activation.
+
+**NEAR (`near:mainnet|testnet`, `chains-near`).** Ed25519 at `m/44'/397'/i'` (the
+MyNearWallet/Meteor layout; Ledger's app nests two more levels). The address is the implicit
+account id, the 64 lowercase hex of the key. Endpoints prove their genesis hash; history comes
+from the keyless FastNEAR indexer (NearBlocks loses precision to JSON floats). Mainnet USDC
+(NEP-141) is read-only. Sends are native NEAR on testnet from the implicit account; the referenced
+block hash keeps the transaction valid for 86,400 blocks (about a day), a real expiry. A funded
+end-to-end transfer was not exercised (no keyless faucet).
+
+**Algorand (`algorand:<32 base64url chars of the genesis hash>` per CAIP-2, `chains-algorand`).**
+Mainnet, testnet and Voi. Ed25519 SLIP-10 at `m/44'/283'/i'/0'/0'` — Pera/Defly 25-word phrases
+are not BIP39 and Ledger's Algorand app uses BIP32-Ed25519, so neither imports. Reads pair algod
+with the indexer (every indexer answer must carry the expected genesis hash); mainnet USDC (ASA 31566704) and Voi are read-only. Sends are native ALGO on testnet, deliberately without a note
+field (the intent cannot bind one); `lastValid` (1000 rounds, about 45 minutes) is real expiry. A
+rekeyed sender is refused. No confirmed testnet transfer yet (faucets need a login).
+
+**TON (`tvm:-239` mainnet, `tvm:-3` testnet, `chains-ton`).** Ed25519 at `m/44'/607'/i'` (Trust
+Wallet/Ledger; Tonkeeper-style TON mnemonics derive differently). The address is the v4r2 wallet's
+StateInit hash. Reads use toncenter v2/v3 and tonapi, proven by the masterchain zerostate root
+hash and rate-limited to about 1 request per second keyless; the stored hash is the TEP-467
+normalized message hash. Sends are native TON on testnet; the first transfer deploys the wallet
+contract, and `validUntil` (30 minutes) is enforced by the wallet itself (exit code 36). There is
+no comment field, so exchange deposits that need one cannot be paid. Confirmed end to end on
+testnet. Jettons are not decoded.
+
+**Cardano (CIP-34 `cip34:<networkId>-<networkMagic>`, `chains-cardano`).** Ed25519, but not
+SLIP-10: CIP-1852 with the CIP-3 Icarus master and BIP32-Ed25519 children, payment
+`m/1852'/1815'/i'/0/0` plus stake `…/2/0`, yielding a bech32 base address. Each chain needs one
+Yoroi indexer endpoint (UTxOs, balances, history) and one Koios Ogmios endpoint (tip, parameters,
+submit), each proven by an anchor block or the network magic; each kind has a single operator, so
+there is no cross-provider check. Sends are native ADA on preprod, spending ADA-only UTxOs
+(token-bearing ones are never spent), with a ledger-enforced `ttl` (2 hours) as expiry. Confirmed
+end to end on preprod. Preview is not catalogued (no keyless indexer exists for it).
+
+**Antelope (`antelope:<first 32 hex of the chain id>`, `chains-antelope`).** Vaulta, Jungle4, XPR
+Network and its testnet, WAX and its testnet, and Telos and its testnet (the EVM sidechains stay
+EVM entries). Secp256k1 at `m/44'/194'/0'/0/i`; the account is an on-chain name and the derived
+identity is the `PUB_K1_` key. Reads use the chain API; history and status fallback use Hyperion
+v2 from per-network tables. Sends are native WAX on WAX testnet only, with an optional memo that
+the intent does not bind (the approval dialog shows it). TaPoS plus `expiration` is real on-chain
+expiry; there is no nonce or fee market, so a stuck transaction expires and is rebuilt.
+
+**MultiversX (`mvx:1` mainnet, `mvx:D` devnet, `chains-multiversx`).** Ed25519 at
+`m/44'/508'/0'/0'/i'` (xPortal, web wallet, sdk-core); bech32 `erd1` addresses. The API and
+gateway dialects are classified by hostname and both are probed for `erd_chain_id`; they share
+one operator, so provenance is `single` — no independent keyless endpoint was found. Mainnet
+USDC (ESDT `USDC-c76f1f`) is read-only. Sends are native EGLD on devnet. Transactions carry no
+expiry field and stay valid until the nonce is consumed, at which point the transfer can never
+land and is reported as `expired`.
+
+**Tezos (`tezos:<base58 chain id>`, `chains-tezos`).** Mainnet `NetXdQprcVkpaWU` and Shadownet
+`NetXsqzbfFenSTS` — Ghostnet no longer resolves, so Shadownet is the signing network. Ed25519 at
+`m/44'/1729'/i'/0'` (Temple, Kukai, Umami); `tz1` addresses. Reads pair Octez node RPCs with the
+TzKT indexer, both checked by chain id; mainnet is read-only and there are no FA1.2/FA2 token
+reads. Sends are native tez on Shadownet to implicit (`tz*`) accounts only, never KT1 contracts.
+The branch stays valid for 600 blocks, a real expiry.
+
+**Stacks (`stacks:<network_id>`, `chains-stacks`).** Mainnet `stacks:1`, testnet
+`stacks:2147483648`. Secp256k1 at `m/44'/5757'/0'/0/i` (Leather, Xverse); c32check addresses.
+Hiro is the only keyless operator, so provenance is `single`. Sends are native STX on testnet.
+There is no time-based expiry: a transaction dies when another one consumes its nonce (reported
+as `expired`), and a same-nonce higher-fee replacement is valid RBF (reported as `replaced`).
+
+**VeChain (`vechain:<last 32 hex of the genesis block id>`, `chains-vechain`).** Secp256k1 at
+`m/44'/818'/0'/0/i` (VeWorld, Sync2). Endpoints prove the full genesis id via `/blocks/0`; the
+signed chain tag is its last byte. Sends are native VET on testnet, with VTHO as the fee token.
+The transaction is includable until `blockRef + expiration` (180 blocks, about 30 minutes), a
+real expiry reported as `Expired`.
+
+**Hyperliquid (`hl:mainnet|testnet`, `chains-hyperliquid`).** Secp256k1 at `m/44'/60'/0'/0/i` —
+standard Ethereum accounts, canonical lowercase because the address characters enter the EIP-712
+digest. Each network has an API endpoint (`/info`, `/exchange`) and an explorer RPC on one
+operator, so provenance is `single`. The native holding is the HyperCore perp account's
+withdrawable USDC; spot USDC and HYPE are read-only. Sends are testnet USDC via `usdSend`. There
+is no expiry field, but the nonce must sit within block time −2 days/+1 day, so a stale transfer
+is effectively dead and reported as `expired`.
+
+**Starknet (`starknet:SN_MAIN`, `starknet:SN_SEPOLIA`, `chains-starknet`).** The account secret is
+secp256k1 at `m/44'/9004'/0'/0/i` (Braavos/Argent X prefix), ground into the Stark key (EIP-2645);
+the address is the Pedersen contract address of the OpenZeppelin account class. JSON-RPC endpoints
+prove `starknet_chainId`; drpc's free tier lacks `starknet_simulateTransactions`. Sends are
+native STRK on Sepolia, bundling DEPLOY_ACCOUNT v3 with the first INVOKE v3 in one approval.
+v3 transactions have no expiry — the ledger never reports `Expired` for Starknet. Mainnet is
+read-only.
+
+**Icon (`icon:<decimal nid>`, `chains-icon`).** Mainnet `icon:1`, Lisbon testnet `icon:2`.
+Secp256k1 at `m/44'/4801368'/0'/0'/i'` (IIP-48; the ecosystem uses 4801368, not SLIP-44's 74).
+The address is `hx` + sha3-256 (not keccak) of the uncompressed key. Each network is pinned by
+its block-1,000,000 hash. Mainnet reads include bnUSD; history comes from the tracker REST API.
+Sends are native ICX on Lisbon at a fixed step fee. There is no expiry field, but nodes reject
+timestamps outside about ±2 hours, so the built-in 1-hour window can surface `Expired`. Lisbon
+has exactly one known public endpoint (the solidwallet zone is dead), which is the family's main
+risk.
+
+**Everscale/Venom (`ever:42`, `venom:1`, `venom:1002`, `chains-everscale`).** Ed25519 at
+`m/44'/396'/0'/0'/i'` (both networks share SLIP-44 396, nekoton-style). The EverWallet contract
+runs on both networks (same code hash, confirmed live). Everscale reads over EverCloud GraphQL,
+Venom over JRPC; the dialect is picked from the namespace. `ever:42` and `venom:1` are read-only.
+Sends are native VENOM on Venom testnet only; the first transfer deploys the wallet, and the
+wallet refuses the message after `expireAt`, a real expiry. The Venom testnet endpoint was down
+at build time; its global id (1002) comes from secondary sources.
+
+**Waves (`waves:87` mainnet, `waves:84` testnet, `chains-waves`).** Ed25519 SLIP-10 at
+`m/44'/5741564'/0'/0'/i'`, but the signing key is derived from that secret by Waves's own
+hash-and-clamp ("axolotl") scheme, so the account key is a Curve25519 key and threshold wallets
+cannot sign Waves. Each network is pinned by its height-1 block signature. Testnet has exactly
+one usable endpoint, so provenance is `single`. Sends are native WAVES on testnet (v3 protobuf
+body, JSON broadcast) at a fixed 0.001 WAVES fee; nodes reject timestamps more than 2 hours
+stale, which is reported as `expired`. Mainnet is read-only (balances, history, status, one
+issued token).
+
+**Radix (`radix:mainnet`, `radix:stokenet`, `chains-radix`).** Ed25519 CAP-26 at
+`m/44'/1022'/2'/525'/1460'/i'` (network 2 = Stokenet is baked into the path). Babylon transfers
+are `NotarizedTransactionV1`s, byte-exact against the Radix Engine Toolkit. The Gateway API
+(balances, history, status, submit) is run by RDX Works only, so provenance is `single` until
+community gateways are configured. Sends are native XRD on Stokenet; 5 XRD is locked as a fee
+deposit and the unused part is refunded. A transaction is permanently rejected once the epoch
+passes `end_epoch_exclusive`, reported as `expired`. Mainnet is read-only.
+
+**ICP (`icp:00000000000000000000`, the Rosetta network id, `chains-icp`).** There is no public
+testnet ledger, so mainnet is the signing network, accepted with strict amount and expiry bounds.
+Secp256k1 at `m/44'/223'/0'/0/i` (Plug convention); the address is the 64-hex account identifier
+derived from the self-authenticating principal. Boundary nodes (`icp-api.io`, `ic0.app`,
+`icp0.io`) are pinned by the mainnet root key. Sends are native ICP on mainnet;
+`ingressExpiryNanos` (at most 10 minutes) makes the replica refuse late submissions, a real
+expiry, and the fixed fee is deducted from the amount's remainder.
+
+**Ergo (`ergo:mainnet|testnet`, `chains-ergo`).** Secp256k1 at `m/44'/429'/0'/0/i` (EIP-3);
+P2PK base58 addresses. Reads come from the explorer API over HTTPS; the public broadcast nodes
+are HTTP-only, so sends from the HTTPS web bundle are mixed-content blocked and work from the
+desktop shell. Sends are native ERG on testnet with the protocol fee contract and change to the
+sender. UTxO transactions cannot expire — a spent input kills the transfer, and the ledger never
+reports `Expired` for Ergo. No funded end-to-end send yet (the faucet is captcha-gated).
+
+**Alephium (`alephium:0` mainnet, `alephium:1` testnet, `chains-alephium`).** Secp256k1 at
+`m/44'/1234'/0'/0/i` (the third level is the key type, not an account index). Addresses are
+checksum-less base58, so validation is shape-only. Node REST serves balances, UTxOs, build and
+submit; history lives on the explorer backend. Sends are native ALPH on testnet and were
+confirmed end to end against the live node. UTxO transactions never expire. Faucet coins arrive
+timelocked for about a day, and prepare skips locked UTXOs.
+
+**Aeternity (`aet:ae_mainnet`, `aet:ae_uat`, `chains-aeternity`).** Ed25519 at
+`m/44'/457'/0'/0'/i'` (aepp-sdk, AirGap, Ledger); `ak_` base58check addresses. Node `/v3` plus
+the middleware serve reads and history; account balances are bare JSON numbers past 2^53, so
+responses are parsed as text. Sends are native AE on testnet (`ae_uat`), confirmed end to end
+with a live faucet and a mined transaction. The `ttl` height bound is real on-chain expiry;
+there is no replace-by-fee.
+
+**Chia (`chia:<first 8 hex of the genesis challenge>`, `chains-chia`).** BLS12-381 wallet keys by
+EIP-2333 at `m/12381'/8444'/2'/i'` through a provenance route, not SLIP-10; the address is the
+bech32m puzzle hash of the synthetic-key standard puzzle. The coinset.org full-node RPC is
+keyless and CORS-clean; Spacescan is Cloudflare-blocked from some networks and not depended on.
+Sends are native XCH on testnet11 as single-coin spends (no joins or splits), fee "0" acceptable
+on an empty mempool. Coin spends never expire. The core-client `Curve` enum has no `bls12-381`
+variant, so the adapter checks the key by length; no funded broadcast yet (captcha faucet).
+
+**Fuel (`fuel:9889` Ignition, `fuel:0` Sepolia, `chains-fuel`).** Secp256k1 at
+`m/44'/1179993420'/i'/0/0` (fuels HDWallet default); sha256-based `0x` addresses. Both networks
+are GraphQL with CORS `*`; reads and history (`transactionsByOwner`) work on both, but mainnet
+signing is refused. Sends are native ETH (9 decimals) on Sepolia with adapter-prepared gas;
+`expiration` is a block height (head + 600, about 10 minutes), a real `Expired` state, and the
+unused fee returns as change. Wire validity was proven by node error discrimination; a funded
+send was not exercised (captcha faucet).
+
+**aelf (`aelf:AELF`, `aelf:tDVV`, `chains-aelf`).** Secp256k1 at `m/44'/1616'/0'/0/i` (aelf-sdk,
+NightELF, Portkey); base58check of the double-sha256 of the uncompressed key. aelf nodes have no
+keyless view endpoint, so `GetBalance` calls are signed with a well-known throwaway key and the
+balance carries a provenance notice; there is no keyless history indexer, so history is
+unavailable. Sends are native ELF on tDVV. The reference-block validity window (a conservative
+512 blocks, a few minutes) is real expiry; the exact fee cannot be quoted keylessly, so a 0.01
+ELF allowance is reserved.
+
+**Starcoin (`starcoin:1` mainnet, `starcoin:251` Barnard, `chains-starcoin`).** Ed25519 at
+`m/44'/101010'/0'/0'/i'` (StarMask); the address is the sha3-256 auth-key tail. The seed nodes
+omit CORS headers entirely, so the web bundle cannot reach them and sends require the desktop
+shell; Barnard itself was unreachable at wiring time (kept so a revival needs no code change).
+Sends are native STC on Barnard only, expiring 30 minutes after preparation (real
+`expiration_timestamp_secs` expiry). History is unavailable (the stcscan API errors); no
+end-to-end broadcast has been possible.
+
+**Obyte (`obyte:mainnet|testnet`, `chains-obyte`).** Secp256k1 at `m/44'/0'/0'/0/i` — the
+reference wallet predates SLIP-44 592 and derives at Bitcoin's coin type. Addresses are base32
+chash160 of the signature definition. Obyte is a DAG: reads are hub REST calls proven against
+the genesis unit, and broadcast is websocket-only (`wss://…/bb`, one connection per post). Sends
+are native GBYTE on testnet; the fee equals the unit's storage size in bytes. Units never expire
+on-chain — staleness is an approval check and the ledger refuses `Expired` for Obyte. The public
+testnet faucets are dead, so no funded send was exercised.
+
+**Chromia (`chromia:0x<first 8 bytes of the BRID>`, `chains-chromia`).** Postchain: the family
+serves the FT4 economy chain, found through the directory chain. Secp256k1 at the plain EVM path
+`m/44'/60'/0'/0/i`, deliberately — Chromia has no SLIP-44 coin type and its official wallet is
+EVM-key-centric. The account id is `gtvHash(pubkey)` as 64 hex. Endpoints prove themselves with
+the merkle-hash-version feature probe. Sends are native CHR on testnet; a GTX has no deadline,
+so there is no `Expired` state. A brand-new account id needs a one-time registration transaction,
+which the ledger and package support but the web send form does not offer yet. No accepted
+on-chain send yet (the faucet is social-gated).
+
+**Keeta (`keeta:main`, `keeta:test`, `chains-keeta`).** Secp256k1 at `m/44'/9797'/0'/0/i` — 9797
+is unregistered and documented as ours, because Keeta's own scheme (HKDF-SHA3) is not BIP-32.
+Addresses are `keeta_` base32 with a sha3-256 checksum. Representative REST nodes serve ledger
+reads (hex-bigint strings); broadcast goes through the publish-aid, which collects votes
+server-side. Sends are native KTA (18 decimals) on the test network. Blocks never expire; if the
+sender's head moves first, the transfer is reported `dropped`, never `Expired`. The faucet is
+social-gated, so no funded send was exercised.
+
+**Namada (`namada:<chain-id hash suffix>`, `chains-namada`).** The full native id
+(`namada.5f5de2dd…` / `housefire-alpaca.cc0d3e0c…`) is pinned in the core because CAIP-2
+references forbid dots. Ed25519 at `m/44'/877'/0'/0'/i'`; bech32m `tnam` addresses. Mainnet reads
+pair CometBFT `abci_query` storage proofs with the official indexer (both CORS `*`). Signing is
+gated to Housefire (`namada:cc0d3e0c033be`), but every documented Housefire RPC was dead at
+wiring time — the dead entries are kept so a revival needs no code change. Wrapper transactions
+carry no expiration, so Namada never reports `Expired`.
+
+**Bitcoin forks (`btcfork:<name>-mainnet|testnet`, `chains-btcfork`).** Bitcoin Cash (145), Dash
+(5), Zcash (133), DefiChain (1129) and Verus (141) share one module: secp256k1 at
+`m/44'/<coin>'/0'/0/i` (no segwit on any fork), transparent addresses only, P2PKH sends of one to
+eight inputs with change to the sender. BCH derives CashAddr and accepts legacy base58. Signing
+is enabled on the five testnets, but only Dash testnet has a live public endpoint (insight); the
+other four carry empty RPC lists and throw honestly. Mainnet reads come from Blockchair
+(BCH/Dash/ZEC — the keyless tier degrades to HTTP 430 under load), ocean (DefiChain balance only;
+it has no UTXO listing, so DFI sends cannot be prepared), and a Verus JSON-RPC proxy with an
+address index. Zcash and Verus v4 carry a real `expiryHeight` (tip + 100) and can report
+`Expired`; the other forks never expire. Zcash's ZIP-143 branch id (NU6.3) must be bumped at
+every network upgrade — a standing operational duty.
+
+**Gala (`gala:mainnet|testnet`, `chains-gala`).** GalaChain uses Ethereum keys verbatim, so
+secp256k1 at the plain EVM path `m/44'/60'/0'/0/i`; addresses are `eth|<EIP-55>` and the checksum
+case is part of what the chaincode recovers. The gateway APIs are CORS-clean but rate-limited
+(about 20 requests per minute); the explorer API has no by-hash or by-address route, so status is
+a bounded latest-page scan and history is unavailable. Sends are native GALA on testnet, burning
+a fixed 1 GALA fee; `dtoExpiresAt` (30 minutes) is a real chaincode-enforced expiry, and the
+gateway assigns the real transaction id synchronously at broadcast. Both gateways recovered the
+expected signer from local signatures live; a funded broadcast was not exercised.
+
+**Mixin (`mixin:<first 16 hex of the kernel network id>`, `chains-mixin`).** Self-custodial Mixin
+Kernel only — the Messenger/Safe APIs are app-custodial and unused. The account secret is ed25519
+SLIP-10 at `m/44'/2365'/0'/0'/i'`, but kernel signatures are raw edwards25519 scalars with a
+custom Schnorr-like scheme over spend/view keys, so threshold wallets cannot sign Mixin. The
+single HTTPS kernel endpoint means `single` provenance. Signing is gated to the main network
+deliberately — no public test kernel exists — and the send form says plainly that real XIN moves.
+Transfers are fee-free, spend one to eight ghost-key inputs and return change; they never expire
+(approval re-verifies every input instead). The honest gap: the kernel indexes outputs by ghost
+key, not address, so balances and prepare need an injected `utxos` provider until a core-side
+view-key UTXO scanner lands; without it those calls throw and history is an empty page with a
+coverage note.
+
+**Qubic (`qubic:mainnet`, `chains-qubic`).** No testnet exists, so mainnet is the signing network
+deliberately. The derivation is ed25519 SLIP-10 at `m/44'/83293'/0'/0'/i'`, but the signing curve
+is hand-rolled FourQ/SchnorrQ over KangarooTwelve — a FROST group key is not a SchnorrQ key, so
+threshold wallets cannot sign Qubic. Identities are 60 uppercase letters with a K12 checksum.
+`rpc.qubic.org` is the only keyless endpoint (`single` provenance), and the archiver was
+unreachable, so history reports its gap. Sends are fee-free whole-unit QU that execute at a target
+tick about a minute after preparation; a passed tick is a real expiry. A core-signed transaction
+was accepted and relayed by the live mainnet (rejection-level proof only; no funded execution).
+Qubic has no mempool view, so a broadcast transfer is `unknown` until its tick.
+
+### Read-only families
+
+**NEO N3 (`neo3:mainnet|testnet3`, `chains-neo`).** Signing is out: NEO uses P-256, the core has
+no secp256r1 curve or vendored p256 crate, and D1 would need threshold P-256 that does not exist
+in the vendored set — so only the address codec (verification script to base58check) lives in the
+core. Reads are NEO/GAS balances via `getnep17balances` cross-checked across two operators and
+status via `getrawtransaction`; no keyless history indexer is alive (Dora and NeoTube serve only
+SPA shells), so history reports the gap.
+
+**Aleo (`aleo:mainnet|testnet`, `chains-aleo`).** Every Aleo execution is a client-side SNARK
+proof (snarkVM), and even key derivation runs through Poseidon, so `deriveAddress` throws and no
+keyed accounts exist yet; the bech32m address codec and oracle vectors are pinned for a future
+proving slice. Read-only public-credit balances come from the Provable explorer API with a pinned
+genesis hash; record-held (private) balances are invisible to any API by design, and there is no
+keyless history endpoint.
+
+**Canton (`canton:mainnet|testnet`, `chains-canton`).** Self-custody needs validator-node
+credentials (topology onboarding) plus a reimplementation of Canton's `signTransactionHash`
+wrapping and DAML encoding, and every public SV scan route answers 403 RBAC without CORS, so
+Canton ships as a read-only scaffold with the ed25519 party-id codec
+(`hint::1220<sha256 fingerprint>`) ready. The adapter implements the official scan OpenAPI shapes
+and reports the 403 gap until a keyless scan answers.
+
 ## Names and collectibles
 
 Both live outside the adapters (`packages/names`, `packages/collectibles`) and reuse the

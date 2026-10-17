@@ -40,9 +40,59 @@ export const FAMILY_LABEL: Record<ChainFamily, string> = {
   solana: 'SOL',
   cosmos: 'COSMOS',
   tron: 'TRON',
+  substrate: 'SUBSTRATE',
+  sui: 'SUI',
+  aptos: 'APTOS',
+  stellar: 'STELLAR',
+  near: 'NEAR',
+  ton: 'TON',
+  xrpl: 'XRPL',
+  cardano: 'CARDANO',
+  algorand: 'ALGORAND',
+  tezos: 'TEZOS',
+  multiversx: 'MVX',
+  antelope: 'ANTELOPE',
+  hyperliquid: 'HYPERCORE',
+  stacks: 'STACKS',
+  vechain: 'VECHAIN',
+  starknet: 'STARKNET',
+  icp: 'ICP',
+  waves: 'WAVES',
+  neo: 'NEO',
+  ergo: 'ERGO',
+  icon: 'ICON',
+  alephium: 'ALPH',
+  chia: 'CHIA',
+  everscale: 'EVER',
+  radix: 'RADIX',
+  aeternity: 'AE',
+  fuel: 'FUEL',
+  aelf: 'AELF',
+  starcoin: 'STC',
+  obyte: 'OBYTE',
+  chromia: 'CHR',
+  keeta: 'KEETA',
+  namada: 'NAMADA',
+  btcfork: 'BTCFORK',
+  gala: 'GALA',
+  mixin: 'MIXIN',
+  qubic: 'QUBIC',
+  aleo: 'ALEO',
+  canton: 'CANTON',
 };
 
-export const FAMILY_ORDER: ChainFamily[] = ['evm', 'bitcoin', 'solana', 'cosmos', 'tron'];
+export const FAMILY_ORDER: ChainFamily[] = Object.keys(FAMILY_LABEL) as ChainFamily[];
+
+const ACCOUNT_SEGMENT = new Set<ChainFamily>(['solana', 'substrate', 'stellar', 'sui']);
+const TX_ROUTES: readonly [string, string][] = [
+  ['/extrinsic/', 'account'],
+  ['/txn/', 'account'],
+  ['/txblock/', 'address'],
+  ['/transactions/', 'accounts'],
+  ['/txns/', 'address'],
+  ['/txid/', 'address'],
+  ['/transaction/', 'account'],
+];
 
 /**
  * Explorers publish a tx URL; the address page almost always lives next to it
@@ -51,7 +101,65 @@ export const FAMILY_ORDER: ChainFamily[] = ['evm', 'bitcoin', 'solana', 'cosmos'
  */
 export function explorerAddressUrl(info: ChainInfo, address: string): string | undefined {
   const tpl = info.explorerTxUrl;
-  if (!tpl) return undefined;
+  // An Antelope identity is a key, while explorers page by account name.
+  if (!tpl || info.family === 'antelope') return undefined;
+  // tonviewer serves accounts at the root: /transaction/<h> -> /<addr>.
+  if (info.family === 'ton' && tpl.includes('/transaction/')) {
+    const root = tpl.slice(0, tpl.indexOf('/transaction/'));
+    return /^https:\/\/[^/]+$/.test(root) ? `${root}/${encodeURIComponent(address)}` : undefined;
+  }
+  // TzKT serves operations and accounts at the root: /<op> -> /<addr>.
+  if (info.family === 'tezos' && tpl.endsWith('/{hash}')) {
+    const root = tpl.slice(0, -'/{hash}'.length);
+    return /^https:\/\/[^/]+$/.test(root) ? `${root}/${encodeURIComponent(address)}` : undefined;
+  }
+  // VeChain testnet insight routes in the fragment: /#/test/txs/<h> -> /#/test/accounts/<a>.
+  if (info.family === 'vechain' && tpl.includes('/#/test/txs/')) {
+    const root = tpl.slice(0, tpl.indexOf('/#/test/txs/'));
+    return /^https:\/\/[^/]+$/.test(root)
+      ? `${root}/#/test/accounts/${encodeURIComponent(address)}`
+      : undefined;
+  }
+  // Voyager pages accounts as contracts: /tx/<h> -> /contract/<a>.
+  if (info.family === 'starknet' && tpl.includes('/tx/')) {
+    const root = tpl.slice(0, tpl.indexOf('/tx/'));
+    return /^https:\/\/[^/]+$/.test(root)
+      ? `${root}/contract/${encodeURIComponent(address)}`
+      : undefined;
+  }
+  // Blockchair and defiscan page addresses at /address/.
+  if (
+    info.family === 'btcfork' &&
+    (tpl.includes('blockchair.com') || tpl.includes('defiscan.live'))
+  ) {
+    const root = tpl.slice(0, tpl.indexOf('/', 'https://'.length));
+    return `${root}/address/${encodeURIComponent(address)}`;
+  }
+  // explorer.obyte.org routes the bare unit id at / and addresses at /address/.
+  if (info.family === 'obyte') {
+    const slash = tpl.indexOf('/', 'https://'.length);
+    return slash > 0 ? `${tpl.slice(0, slash)}/address/${encodeURIComponent(address)}` : undefined;
+  }
+  // aelfscan pairs /tx/ with /address/ under the same chain segment.
+  if (info.family === 'aelf') {
+    return tpl.includes('/tx/')
+      ? tpl.replace(/\/tx\/\{hash\}.*$/, `/address/${encodeURIComponent(address)}`)
+      : undefined;
+  }
+  // explorer.ergoplatform pairs /en/transactions/ with /en/addresses/.
+  if (info.family === 'ergo' && tpl.includes('/en/transactions/')) {
+    const root = tpl.slice(0, tpl.indexOf('/en/transactions/'));
+    return /^https:\/\/[^/]+$/.test(root)
+      ? `${root}/en/addresses/${encodeURIComponent(address)}`
+      : undefined;
+  }
+  // icpexplorer routes in the fragment: /#/tx/<h> -> /#/account/<a>.
+  if (info.family === 'icp' && tpl.includes('/#/tx/')) {
+    const root = tpl.slice(0, tpl.indexOf('/#/tx/'));
+    return /^https:\/\/[^/]+$/.test(root)
+      ? `${root}/#/account/${encodeURIComponent(address)}`
+      : undefined;
+  }
   // Tronscan routes in the fragment: /#/transaction/<id> -> /#/address/<addr>.
   const hashRoute = tpl.indexOf('/#/transaction/');
   if (hashRoute >= 0) {
@@ -60,9 +168,17 @@ export function explorerAddressUrl(info: ChainInfo, address: string): string | u
       ? `${root}/#/address/${encodeURIComponent(address)}`
       : undefined;
   }
-  const idx = tpl.indexOf('/tx/');
+  // Subscan (/extrinsic/), the Aptos explorer (/txn/), IOTA (/txblock/) and the XRPL
+  // explorer (/transactions/ -> /accounts/) name their routes differently.
+  const named = TX_ROUTES.find(([r]) => tpl.includes(r));
+  const route = named?.[0] ?? '/tx/';
+  const idx = tpl.indexOf(route);
   if (idx < 0) return undefined;
-  const segment = info.family === 'solana' ? 'account' : 'address';
+  // Cardanoscan pairs /transaction/ with /address/, unlike the other /transaction/ explorers.
+  const segment =
+    info.family === 'cardano' || info.family === 'icon'
+      ? 'address'
+      : (named?.[1] ?? (ACCOUNT_SEGMENT.has(info.family) ? 'account' : 'address'));
   const base = tpl.slice(0, idx);
   if (!/^https:\/\/[^/]+/.test(base)) return undefined;
   let url: URL;
@@ -84,7 +200,10 @@ export function explorerAddressUrl(info: ChainInfo, address: string): string | u
 
 /** The chain's explorer page for a transaction hash, https only. */
 export function explorerTxUrl(info: ChainInfo, hash: string): string | undefined {
-  if (!info.explorerTxUrl || !/^(0x)?[0-9a-fA-F]{64}$|^[1-9A-HJ-NP-Za-km-z]{43,90}$/.test(hash)) {
+  if (
+    !info.explorerTxUrl ||
+    !/^(0x)?[0-9a-fA-F]{64}$|^[1-9A-HJ-NP-Za-km-z]{43,90}$|^[A-Z2-7]{52}$/.test(hash)
+  ) {
     return undefined;
   }
   const url = info.explorerTxUrl.replace('{hash}', encodeURIComponent(hash));

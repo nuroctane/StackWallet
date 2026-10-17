@@ -199,6 +199,15 @@ impl std::fmt::Debug for DerivedKey {
 }
 
 impl DerivedKey {
+    /// A key produced outside the HD routes (Chia's EIP-2333 scalar).
+    pub(crate) fn from_parts(curve: Curve, secret: [u8; 32], public: Vec<u8>) -> Self {
+        Self {
+            curve,
+            secret: Zeroizing::new(secret),
+            public,
+        }
+    }
+
     pub fn secret(&self) -> &[u8; 32] {
         &self.secret
     }

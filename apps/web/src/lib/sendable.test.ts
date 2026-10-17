@@ -3,11 +3,12 @@ import { BITCOIN_SIGNET } from '@stackwallet/chains-bitcoin';
 import { COSMOS_TESTNET } from '@stackwallet/chains-cosmos';
 import { SOLANA_DEVNET } from '@stackwallet/chains-solana';
 import { TRON_NILE } from '@stackwallet/chains-tron';
+import { chainFamilyOf, type ChainFamily } from '@stackwallet/core-client';
 
 import { canSendFrom, SENDABLE_TESTNETS } from './sendable.js';
 
 const single = { kind: 'single' as const };
-const acct = (chainId: string, family: 'evm' | 'bitcoin' | 'solana' | 'cosmos' | 'tron') => ({
+const acct = (chainId: string, family: ChainFamily) => ({
   chainId,
   family,
   derivationPath: "m/44'/60'/0'/0/0",
@@ -26,6 +27,10 @@ describe('canSendFrom', () => {
     expect(canSendFrom(acct('eip155:1', 'evm'), single)).toBe(false);
     expect(canSendFrom(acct('cosmos:cosmoshub-4', 'cosmos'), single)).toBe(false);
     expect(canSendFrom(acct('tron:0x2b6653dc', 'tron'), single)).toBe(false);
+    expect(canSendFrom(acct('stellar:pubnet', 'stellar'), single)).toBe(false);
+    expect(
+      canSendFrom(acct('polkadot:91b171bb158e2d3848fa23a9f1c25182', 'substrate'), single),
+    ).toBe(false);
     expect(canSendFrom(acct('eip155:11155111', 'evm'), { kind: 'watch' })).toBe(false);
     expect(
       canSendFrom({ ...acct('eip155:11155111', 'evm'), derivationPath: undefined }, single),
@@ -40,16 +45,9 @@ describe('canSendFrom', () => {
 
   it('defaults new wallets to one sendable testnet per family', () => {
     for (const chainId of SENDABLE_TESTNETS) {
-      const family = chainId.startsWith('eip155:')
-        ? 'evm'
-        : chainId.startsWith('bip122:')
-          ? 'bitcoin'
-          : chainId.startsWith('solana:')
-            ? 'solana'
-            : chainId.startsWith('tron:')
-              ? 'tron'
-              : 'cosmos';
-      expect(canSendFrom(acct(chainId, family), single)).toBe(true);
+      const family = chainFamilyOf(chainId);
+      expect(family, chainId).toBeDefined();
+      expect(canSendFrom(acct(chainId, family!), single), chainId).toBe(true);
     }
   });
 });

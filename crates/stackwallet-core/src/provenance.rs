@@ -349,13 +349,98 @@ fn with_mnemonic<T>(
     })?
 }
 
-/// Public key at `path`; the private key never leaves this call.
+/// The account index of a CIP-1852 payment path `m/1852'/1815'/{i}'/0/0`.
+/// Cardano wallets derive with Icarus BIP32-Ed25519, which SLIP-10 cannot
+/// reproduce, so these paths take their own route.
+pub(crate) fn cardano_account(path: &str) -> Option<u32> {
+    let rest = path.strip_prefix("m/1852'/1815'/")?;
+    let account = rest.strip_suffix("'/0/0")?;
+    if account.is_empty() || (account.len() > 1 && account.starts_with('0')) {
+        return None;
+    }
+    account.parse::<u32>().ok().filter(|i| *i < 0x8000_0000)
+}
+
+/// The account index of a Chia wallet path `m/12381'/8444'/2'/{i}'` (EIP-2334).
+/// Chia keys are BLS12-381 scalars derived by EIP-2333, which SLIP-10 cannot
+/// reproduce, so these paths take their own route.
+pub(crate) fn chia_account(path: &str) -> Option<u32> {
+    let rest = path.strip_prefix("m/12381'/8444'/2'/")?;
+    let account = rest.strip_suffix("'")?;
+    if account.is_empty() || (account.len() > 1 && account.starts_with('0')) {
+        return None;
+    }
+    account.parse::<u32>().ok()
+}
+
+/// Payment and stake keys of a Cardano account. Never leaves the core.
+pub(crate) fn cardano_keys(
+    vault: &EncryptedVault,
+    wallet_id: &str,
+    account: u32,
+) -> Result<crate::cardano::AccountKeys> {
+    with_mnemonic(vault, wallet_id, |m| {
+        crate::cardano::account_keys(m, "", account)
+    })
+}
+
+/// Public key at `path`; the private key never leaves this call. For a
+/// Cardano payment path this is payment key || stake key (64 bytes), which is
+/// what a base address is built from.
 pub fn public_key(
     vault: &EncryptedVault,
     wallet_id: &str,
     curve: Curve,
     path: &str,
 ) -> Result<String> {
+    if let Some(account) = cardano_account(path) {
+        return Ok(hex::encode(
+            cardano_keys(vault, wallet_id, account)?.public(),
+        ));
+    }
+    if path.starts_with("m/44'/9004'/") {
+        // Starknet: the account key is the Stark public key (EIP-2645 grindKey
+        // of the secp256k1 secret); the SEC1 point cannot derive the address.
+        return with_mnemonic(vault, wallet_id, |m| {
+            let key = hd::derive(m.to_seed("").as_ref(), Curve::Secp256k1, path)?;
+            Ok(hex::encode(crate::starknet::stark_public_key(
+                key.secret(),
+            )?))
+        });
+    }
+    if let Some(account) = chia_account(path) {
+        // Chia: the account key is the 48-byte compressed G1 of the EIP-2333
+        // wallet scalar, not any HD curve's public key.
+        return with_mnemonic(vault, wallet_id, |m| {
+            let master = crate::chia::master_sk_from_seed(m.to_seed("").as_ref())?;
+            let sk = crate::chia::wallet_sk(&master, account)?;
+            Ok(hex::encode(crate::chia::public_key(&sk)?))
+        });
+    }
+    if path.starts_with("m/44'/5741564'/") {
+        // Waves: the account key is the axolotl Curve25519 key derived from the
+        // SLIP-10 seed, not the ed25519 verifying key.
+        return with_mnemonic(vault, wallet_id, |m| {
+            let key = hd::derive(m.to_seed("").as_ref(), Curve::Ed25519, path)?;
+            Ok(hex::encode(crate::waves::public_key(key.secret())))
+        });
+    }
+    if path.starts_with("m/44'/2365'/") {
+        // Mixin: the account key is the 64-byte spend || view public key the
+        // kernel derives from the SLIP-10 seed, not the ed25519 point.
+        return with_mnemonic(vault, wallet_id, |m| {
+            let key = hd::derive(m.to_seed("").as_ref(), Curve::Ed25519, path)?;
+            Ok(hex::encode(crate::mixin::public_from_secret(key.secret())))
+        });
+    }
+    if path.starts_with("m/44'/83293'/") {
+        // Qubic: the account key is the FourQ point; the SLIP-10 seed is the
+        // SchnorrQ subseed directly, so the ed25519 point is meaningless.
+        return with_mnemonic(vault, wallet_id, |m| {
+            let key = hd::derive(m.to_seed("").as_ref(), Curve::Ed25519, path)?;
+            Ok(hex::encode(crate::qubic::public_key(key.secret())?))
+        });
+    }
     with_mnemonic(vault, wallet_id, |m| {
         Ok(hd::derive(m.to_seed("").as_ref(), curve, path)?.public_hex())
     })
@@ -394,6 +479,14 @@ pub fn reveal(
             })?,
             None,
         ),
+        Revealed::PrivateKey { path, .. } if cardano_account(path).is_some() => {
+            let account = cardano_account(path).unwrap_or_default();
+            let keys = cardano_keys(vault, wallet_id, account)?;
+            (
+                zeroize::Zeroizing::new(hex::encode(keys.payment.secret())),
+                Some(hex::encode(keys.public())),
+            )
+        }
         Revealed::PrivateKey { curve, path } => with_mnemonic(vault, wallet_id, |m| {
             let k = hd::derive(m.to_seed("").as_ref(), *curve, path)?;
             Ok((
@@ -426,6 +519,15 @@ pub(crate) fn signing_key(
     curve: Curve,
     path: &str,
 ) -> Result<hd::DerivedKey> {
+    if let Some(account) = chia_account(path) {
+        // Chia: sign with the EIP-2333 scalar; the public half is its G1 point.
+        return with_mnemonic(vault, wallet_id, |m| {
+            let master = crate::chia::master_sk_from_seed(m.to_seed("").as_ref())?;
+            let sk = crate::chia::wallet_sk(&master, account)?;
+            let public = crate::chia::public_key(&sk)?.to_vec();
+            Ok(hd::DerivedKey::from_parts(curve, sk, public))
+        });
+    }
     with_mnemonic(vault, wallet_id, |m| {
         hd::derive(m.to_seed("").as_ref(), curve, path)
     })

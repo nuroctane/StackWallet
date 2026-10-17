@@ -1,0 +1,26 @@
+{
+  "name": "@stackwallet/chains-obyte",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit --pretty false",
+    "build": "pnpm check",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@scure/base": "2.4.0",
+    "@stackwallet/chains": "workspace:*",
+    "@stackwallet/core-client": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vitest": "3.2.6"
+  }
+}

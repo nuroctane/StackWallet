@@ -20,6 +20,7 @@ import { formatUnits, parseUnits } from '../lib/format.js';
 import { useBalances } from '../store/balances.js';
 import { useDirectory } from '../store/persist.js';
 import { useRegistry } from '../store/RegistryContext.js';
+import { familySendFor } from '../store/families.js';
 import { proposeSend } from '../store/txs.js';
 import { tokenStore } from '../store/tokens.js';
 import { AddressLabel } from './AddressLabel.js';
@@ -82,7 +83,14 @@ function SendForm({
   const state = useDirectory();
   const registry = useRegistry();
   const view = useVaultView(vault);
-  const ids = { from: useId(), to: useId(), asset: useId(), token: useId(), amount: useId() };
+  const ids = {
+    from: useId(),
+    to: useId(),
+    asset: useId(),
+    token: useId(),
+    amount: useId(),
+    tag: useId(),
+  };
 
   const accounts = useMemo(() => {
     const wallets = new Map(state.wallets.map((w) => [w.id, w]));
@@ -106,6 +114,7 @@ function SendForm({
       : undefined;
 
   const [to, setTo] = useState('');
+  const [tag, setTag] = useState('');
   const [assetKind, setAssetKind] = useState<'native' | 'token'>('native');
   const [token, setToken] = useState('');
   const [tokenMeta, setTokenMeta] = useState<{ symbol: string; decimals: number } | null>(null);
@@ -126,8 +135,8 @@ function SendForm({
       <div className="flex flex-col gap-3 p-4 text-[12px] text-faint">
         <p>
           This build signs on testnets only: Sepolia and the other EVM test networks, Bitcoin
-          Signet, Solana Devnet, Osmosis Testnet and Tron Nile. Mainnet accounts receive and show
-          balances, but cannot send yet.
+          Signet, Solana Devnet, Osmosis Testnet, Tron Nile, Westend, and the Stellar, Aptos, Sui
+          and XRP Ledger testnets. Mainnet accounts receive and show balances, but cannot send yet.
         </p>
         <p>
           {keyed
@@ -159,8 +168,11 @@ function SendForm({
   const decimals =
     assetKind === 'native' ? (chain?.nativeAsset.decimals ?? 18) : tokenMeta?.decimals;
   const symbol = assetKind === 'native' ? (chain?.nativeAsset.symbol ?? '') : tokenMeta?.symbol;
-  const toValid =
-    account?.family === 'bitcoin'
+  const familyForm = account ? familySendFor(account)?.form : undefined;
+  const tagValid = !familyForm?.tag || tag.trim() === '' || familyForm.tag.validate(tag.trim());
+  const toValid = familyForm
+    ? familyForm.validate(to.trim(), account!.chainId)
+    : account?.family === 'bitcoin'
       ? isSignetRecipient(to.trim())
       : account?.family === 'solana'
         ? isValidSolanaAddress(to.trim())
@@ -171,9 +183,10 @@ function SendForm({
             : isValidEvmAddress(to.trim());
   const units = decimals === undefined ? null : parseUnits(amount, decimals);
   const exceedsLamports =
-    (account?.family === 'solana' || account?.family === 'cosmos' || account?.family === 'tron') &&
-    units !== null &&
-    BigInt(units) > (account.family === 'tron' ? 0x7fffffffffffffffn : 0xffffffffffffffffn);
+    (familyForm !== undefined && units !== null && BigInt(units) > familyForm.maxUnits) ||
+    ((account?.family === 'solana' || account?.family === 'cosmos' || account?.family === 'tron') &&
+      units !== null &&
+      BigInt(units) > (account.family === 'tron' ? 0x7fffffffffffffffn : 0xffffffffffffffffn));
   // Advisory only: the read may be stale, and the core's simulation is what decides.
   const overBalance =
     assetKind === 'native' &&
@@ -184,6 +197,7 @@ function SendForm({
     !working &&
     (account?.family !== 'bitcoin' || bitcoinReady) &&
     toValid &&
+    tagValid &&
     units !== null &&
     units !== '0' &&
     !exceedsLamports &&
@@ -214,9 +228,11 @@ function SendForm({
       assetKind === 'native'
         ? `${account.chainId}:native`
         : `${account.chainId}:erc20:${token.trim()}`;
+    const dest = familyForm?.normalize && toValid ? familyForm.normalize(to.trim()) : to.trim();
     const r = await proposeSend(registry, {
       account,
-      to: to.trim(),
+      to: dest,
+      ...(familyForm?.tag && tag.trim() !== '' ? { tag: tag.trim() } : {}),
       asset,
       amount: units,
       ...(account.family === 'bitcoin' ? { bitcoin } : {}),
@@ -274,6 +290,7 @@ function SendForm({
             setBitcoin({});
             setBitcoinReady(true);
             setMessageVersion('legacy');
+            setTag('');
             setAccountId(e.target.value);
           }}
         >
@@ -302,13 +319,15 @@ function SendForm({
         htmlFor={ids.to}
         error={
           to.trim() !== '' && !toValid
-            ? account?.family === 'solana'
-              ? 'Not a valid Solana public key'
-              : account?.family === 'cosmos'
-                ? 'Not a lowercase osmo address'
-                : account?.family === 'tron'
-                  ? 'Not a valid Tron address (T…, checksum included)'
-                  : 'Not a valid EVM address (checksum included)'
+            ? familyForm
+              ? familyForm.invalid
+              : account?.family === 'solana'
+                ? 'Not a valid Solana public key'
+                : account?.family === 'cosmos'
+                  ? 'Not a lowercase osmo address'
+                  : account?.family === 'tron'
+                    ? 'Not a valid Tron address (T…, checksum included)'
+                    : 'Not a valid EVM address (checksum included)'
             : null
         }
       >
@@ -318,13 +337,15 @@ function SendForm({
           disabled={working}
           onChange={(e) => setTo(e.target.value)}
           placeholder={
-            account?.family === 'solana'
-              ? 'Solana public key…'
-              : account?.family === 'cosmos'
-                ? 'osmo1…'
-                : account?.family === 'tron'
-                  ? 'T…'
-                  : '0x…'
+            familyForm
+              ? familyForm.placeholder
+              : account?.family === 'solana'
+                ? 'Solana public key…'
+                : account?.family === 'cosmos'
+                  ? 'osmo1…'
+                  : account?.family === 'tron'
+                    ? 'T…'
+                    : '0x…'
           }
           spellCheck={false}
           autoComplete="off"
@@ -369,6 +390,25 @@ function SendForm({
           onChange={setMessageVersion}
         />
       )}
+      {familyForm?.tag && (
+        <Field
+          label={familyForm.tag.label}
+          htmlFor={ids.tag}
+          error={!tagValid ? familyForm.tag.invalid : null}
+        >
+          <Input
+            id={ids.tag}
+            value={tag}
+            disabled={working}
+            onChange={(e) => setTag(e.target.value)}
+            placeholder={familyForm.tag.placeholder}
+            inputMode="numeric"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </Field>
+      )}
+      {familyForm && <p className="text-[11px] text-faint">{familyForm.note}</p>}
       {account?.family === 'cosmos' && (
         <p className="text-[11px] text-faint">
           Osmosis Testnet native transfers only. A changed account sequence or expired timeout needs

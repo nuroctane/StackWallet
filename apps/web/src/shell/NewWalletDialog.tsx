@@ -240,7 +240,8 @@ function NewWalletForm({
         </label>
         <p className="text-[11px] text-faint">
           Sending works on testnets in this build (Sepolia and other EVM test networks, Bitcoin
-          Signet, Solana Devnet, Osmosis Testnet, Tron Nile). Mainnet accounts receive and show balances.
+          Signet, Solana Devnet, Osmosis Testnet, Tron Nile). Mainnet accounts receive and show
+          balances.
         </p>
       </fieldset>
 

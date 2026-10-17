@@ -39,6 +39,7 @@ import {
 } from '@stackwallet/chains-tron';
 
 import { vault } from '../core/bridge.js';
+import { familyAdapter, familySendFor, familySendOf } from './families.js';
 import type { ProposedBy } from '../core/vault.js';
 import type { SessionProof } from '@stackwallet/core-client';
 
@@ -73,6 +74,8 @@ export interface SendRequest {
   amount: string;
   bitcoin?: BitcoinPrepareOptions;
   solana?: SolanaPrepareOptions;
+  /** Families with a `form.tag` field: the routing tag the user entered, if any. */
+  tag?: string;
 }
 function cosmosAdapter(registry: ChainRegistry, chainId: string): CosmosAdapter {
   const a = registry.adapterFor(chainId);
@@ -194,7 +197,7 @@ async function proposeIntent(
   registry: ChainRegistry,
   req: Pick<
     SendRequest,
-    'account' | 'bitcoin' | 'solana' | 'replace' | 'by' | 'untrustedDestinations'
+    'account' | 'bitcoin' | 'solana' | 'replace' | 'by' | 'untrustedDestinations' | 'tag'
   >,
   kind: IntentShape,
 ): Promise<Result<TxRecord>> {
@@ -213,9 +216,16 @@ async function proposeIntent(
   const proposed = await vault.txPropose(intent, req.by);
   if (!proposed.ok) return proposed;
   let prepared;
+  const family = familySendFor(account);
   try {
-    prepared =
-      account.family === 'bitcoin'
+    prepared = family
+      ? await family.prepare(
+          familyAdapter(registry, family, account.chainId),
+          proposed.value.intent,
+          account,
+          req.tag === undefined ? {} : { tag: req.tag },
+        )
+      : account.family === 'bitcoin'
         ? await prepareBitcoin(
             bitcoinAdapter(registry, account.chainId),
             proposed.value.intent,
@@ -360,7 +370,32 @@ async function approveAndBroadcast(
   const solana = tx.unsigned && 'recentBlockhash' in tx.unsigned ? tx.unsigned : null;
   const cosmos = tx.unsigned && 'timeoutHeight' in tx.unsigned ? tx.unsigned : null;
   const tron = tx.unsigned && 'refBlockHash' in tx.unsigned ? tx.unsigned : null;
-  const bitcoin = tx.unsigned && 'inputs' in tx.unsigned ? tx.unsigned : null;
+  const bitcoin =
+    tx.unsigned &&
+    'inputs' in tx.unsigned &&
+    !('lovelace' in tx.unsigned) &&
+    !('nanoerg' in tx.unsigned) &&
+    !('attoalph' in tx.unsigned) &&
+    !('base' in tx.unsigned) &&
+    !('bytes' in tx.unsigned) &&
+    !('satoshis' in tx.unsigned) &&
+    !('xinat' in tx.unsigned)
+      ? tx.unsigned
+      : null;
+  const family = familySendOf(tx.unsigned);
+  if (family?.approvalValid && tx.unsigned) {
+    try {
+      if (
+        !(await family.approvalValid(
+          familyAdapter(registry, family, tx.intent.chainId),
+          tx.unsigned,
+        ))
+      )
+        return vault.txReport(tx.id, 'expired', family.expiredReason);
+    } catch (err) {
+      return { ok: false, error: `Could not check the prepared transfer: ${nodeMessage(err)}` };
+    }
+  }
   if (bitcoin) {
     try {
       if (!(await bitcoinInputsUnspent(bitcoinAdapter(registry, tx.intent.chainId), bitcoin)))
@@ -447,23 +482,46 @@ async function broadcastSaved(
   const solana = tx.unsigned && 'recentBlockhash' in tx.unsigned ? tx.unsigned : null;
   const cosmos = tx.unsigned && 'timeoutHeight' in tx.unsigned ? tx.unsigned : null;
   const tron = tx.unsigned && 'refBlockHash' in tx.unsigned ? tx.unsigned : null;
-  const bitcoin = tx.unsigned && 'inputs' in tx.unsigned ? tx.unsigned : null;
+  const bitcoin =
+    tx.unsigned &&
+    'inputs' in tx.unsigned &&
+    !('lovelace' in tx.unsigned) &&
+    !('nanoerg' in tx.unsigned) &&
+    !('attoalph' in tx.unsigned) &&
+    !('base' in tx.unsigned) &&
+    !('bytes' in tx.unsigned) &&
+    !('satoshis' in tx.unsigned) &&
+    !('xinat' in tx.unsigned)
+      ? tx.unsigned
+      : null;
   const raw = signed.rawSignedHex;
+  const family = familySendOf(tx.unsigned);
   if (signed.state === 'signed') {
     const b = await vault.txReport(tx.id, 'broadcast', null);
     if (!b.ok) return b;
   }
   try {
-    const hash = bitcoin
-      ? await broadcastBitcoin(bitcoinAdapter(registry, tx.intent.chainId), bitcoin, raw)
-      : solana
-        ? await broadcastSolana(solanaAdapter(registry, tx.intent.chainId), tx.intent.chainId, raw)
-        : cosmos
-          ? await broadcastCosmos(cosmosAdapter(registry, tx.intent.chainId), cosmos, raw)
-          : tron
-            ? await broadcastTron(tronAdapter(registry, tx.intent.chainId), tron, raw)
-            : await broadcastEvm(evmAdapter(registry, tx.intent.chainId), tx.intent.chainId, raw);
-    const note = (solana ? hash === signed.hash : hash.toLowerCase() === signed.hash?.toLowerCase())
+    const hash = family
+      ? await family.broadcast(
+          familyAdapter(registry, family, tx.intent.chainId),
+          signed.unsigned,
+          raw,
+        )
+      : bitcoin
+        ? await broadcastBitcoin(bitcoinAdapter(registry, tx.intent.chainId), bitcoin, raw)
+        : solana
+          ? await broadcastSolana(
+              solanaAdapter(registry, tx.intent.chainId),
+              tx.intent.chainId,
+              raw,
+            )
+          : cosmos
+            ? await broadcastCosmos(cosmosAdapter(registry, tx.intent.chainId), cosmos, raw)
+            : tron
+              ? await broadcastTron(tronAdapter(registry, tx.intent.chainId), tron, raw)
+              : await broadcastEvm(evmAdapter(registry, tx.intent.chainId), tx.intent.chainId, raw);
+    const exact = solana || family?.hashCaseSensitive === true;
+    const note = (exact ? hash === signed.hash : hash.toLowerCase() === signed.hash?.toLowerCase())
       ? null
       : `node reported ${hash}; tracking the core signature`;
     if (signed.state === 'pending')
@@ -582,7 +640,19 @@ export async function pollPending(
         const solana = t.unsigned && 'recentBlockhash' in t.unsigned ? t.unsigned : null;
         const cosmos = t.unsigned && 'timeoutHeight' in t.unsigned ? t.unsigned : null;
         const tron = t.unsigned && 'refBlockHash' in t.unsigned ? t.unsigned : null;
-        const bitcoin = t.unsigned && 'inputs' in t.unsigned ? t.unsigned : null;
+        const bitcoin =
+          t.unsigned &&
+          'inputs' in t.unsigned &&
+          !('lovelace' in t.unsigned) &&
+          !('nanoerg' in t.unsigned) &&
+          !('attoalph' in t.unsigned) &&
+          !('base' in t.unsigned) &&
+          !('bytes' in t.unsigned) &&
+          !('satoshis' in t.unsigned) &&
+          !('xinat' in t.unsigned)
+            ? t.unsigned
+            : null;
+        const family = familySendOf(t.unsigned);
         // Resume tracking after a crash between signing, broadcast and the saved response.
         if (t.state !== 'pending') {
           if (t.state === 'signed') {
@@ -600,19 +670,33 @@ export async function pollPending(
           );
           if (!resumed.ok) continue;
         }
-        const status = bitcoin
-          ? await bitcoinTransferStatus(bitcoinAdapter(registry, t.intent.chainId), bitcoin, t.hash)
-          : solana
-            ? await solanaTransferStatus(solanaAdapter(registry, t.intent.chainId), solana, t.hash)
-            : cosmos
-              ? await cosmosTransferStatus(
-                  cosmosAdapter(registry, t.intent.chainId),
-                  cosmos,
+        const status = family
+          ? await family.status(
+              familyAdapter(registry, family, t.intent.chainId),
+              t.unsigned as object,
+              t.hash,
+            )
+          : bitcoin
+            ? await bitcoinTransferStatus(
+                bitcoinAdapter(registry, t.intent.chainId),
+                bitcoin,
+                t.hash,
+              )
+            : solana
+              ? await solanaTransferStatus(
+                  solanaAdapter(registry, t.intent.chainId),
+                  solana,
                   t.hash,
                 )
-              : tron
-                ? await tronTransferStatus(tronAdapter(registry, t.intent.chainId), tron, t.hash)
-                : await registry.adapterFor(t.intent.chainId).status(t.hash, t.intent.chainId);
+              : cosmos
+                ? await cosmosTransferStatus(
+                    cosmosAdapter(registry, t.intent.chainId),
+                    cosmos,
+                    t.hash,
+                  )
+                : tron
+                  ? await tronTransferStatus(tronAdapter(registry, t.intent.chainId), tron, t.hash)
+                  : await registry.adapterFor(t.intent.chainId).status(t.hash, t.intent.chainId);
         if (status.state === 'confirmed') {
           const done = await vault.txReport(t.id, 'confirmed', `block ${status.blockNumber}`);
           if (done.ok) await settleNonceSiblings(done.value, txs);
@@ -622,11 +706,13 @@ export async function pollPending(
           await vault.txReport(
             t.id,
             'expired',
-            cosmos
-              ? 'Timeout passed without a transfer; propose again'
-              : tron
-                ? 'Expiration passed without a transfer; propose again'
-                : 'Blockhash expired without a finalized transfer; propose again',
+            family
+              ? family.expiredReason
+              : cosmos
+                ? 'Timeout passed without a transfer; propose again'
+                : tron
+                  ? 'Expiration passed without a transfer; propose again'
+                  : 'Blockhash expired without a finalized transfer; propose again',
           );
         }
       } catch {

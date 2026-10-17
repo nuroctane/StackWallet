@@ -14,21 +14,57 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 
+use crate::aelf::{self, AelfTx};
+use crate::aeternity::{self, AeternityTx};
+use crate::alephium::{self, AlephiumTx};
+use crate::algorand::{self, AlgorandTx};
+use crate::antelope::{self, AntelopeTx};
+use crate::aptos::{self, AptosTx};
 use crate::audit::{Actor, AuditChain, AuditEntry, AuditEvent};
 use crate::bitcoin::{self, BitcoinTx};
+use crate::btcfork::{self, BtcForkTx};
+use crate::cardano::{self, CardanoTx};
+use crate::chia::{self, ChiaTx};
+use crate::chromia::{self, ChromiaRegisterTx, ChromiaTx};
 use crate::cosmos::{self, CosmosTx};
+use crate::ergo::{self, ErgoTx};
+use crate::everscale::{self, EverscaleTx};
 use crate::evm::{self, EvmTx};
+use crate::fuel::{self, FuelTx};
+use crate::gala::{self, GalaTx};
 use crate::hardware;
+use crate::hyperliquid::{self, HyperliquidTx};
+use crate::icon::{self, IconTx};
+use crate::icp::{self, IcpTx};
 use crate::intent::{SignRequest, TxIntent};
+use crate::keeta::{self, KeetaTx};
 use crate::lifecycle::TxState;
+use crate::mixin::{self, MixinTx};
 use crate::model::Curve;
+use crate::multiversx::{self, MultiversxTx};
+use crate::namada::{self, NamadaTx};
+use crate::near::{self, NearTx};
+use crate::obyte::{self, ObyteTx};
 use crate::policy::{self, Decision, Policy, PolicyContext, Window};
 use crate::provenance;
+use crate::qubic::{self, QubicTx};
+use crate::radix::{self, RadixTx};
 use crate::solana::{self, SolanaTx};
+use crate::stacks::{self, StacksTx};
+use crate::starcoin::{self, StarcoinTx};
+use crate::starknet::{self, StarknetTx};
+use crate::stellar::{self, StellarTx};
+use crate::substrate::{self, SubstrateTx};
+use crate::sui::{self, SuiTx};
+use crate::tezos::{self, TezosTx};
 use crate::threshold;
+use crate::ton::{self, TonTx};
 use crate::tron::{self, TronTx};
 use crate::vault::SessionProof;
 use crate::vault::{EncryptedVault, Secret, Vault};
+use crate::vechain::{self, VechainTx};
+use crate::waves::{self, WavesTx};
+use crate::xrpl::{self, XrplTx};
 use crate::{CoreError, Result};
 
 pub const LEDGER_LABEL: &str = "tx-ledger";
@@ -61,9 +97,226 @@ pub enum UnsignedTx {
     Solana(SolanaTx),
     Cosmos(CosmosTx),
     Bitcoin(BitcoinTx),
+    BtcFork(BtcForkTx),
     Tron(TronTx),
+    Substrate(SubstrateTx),
+    Stellar(StellarTx),
+    Aptos(AptosTx),
+    Xrpl(XrplTx),
+    Sui(SuiTx),
+    Near(NearTx),
+    Algorand(AlgorandTx),
+    Ton(TonTx),
+    Cardano(CardanoTx),
+    Antelope(AntelopeTx),
+    Mixin(MixinTx),
+    Multiversx(MultiversxTx),
+    Namada(NamadaTx),
+    Qubic(QubicTx),
+    Tezos(TezosTx),
+    Stacks(StacksTx),
+    Vechain(VechainTx),
+    Hyperliquid(HyperliquidTx),
+    Starknet(StarknetTx),
+    Icon(IconTx),
+    Everscale(EverscaleTx),
+    Waves(WavesTx),
+    Radix(RadixTx),
+    Icp(IcpTx),
+    Keeta(KeetaTx),
+    Ergo(ErgoTx),
+    Alephium(AlephiumTx),
+    Aeternity(AeternityTx),
+    Aelf(AelfTx),
+    Chia(ChiaTx),
+    Chromia(ChromiaTx),
+    ChromiaRegister(ChromiaRegisterTx),
+    Starcoin(StarcoinTx),
+    Fuel(FuelTx),
+    Gala(GalaTx),
+    Obyte(ObyteTx),
 }
 
+impl From<ObyteTx> for UnsignedTx {
+    fn from(tx: ObyteTx) -> Self {
+        Self::Obyte(tx)
+    }
+}
+impl From<GalaTx> for UnsignedTx {
+    fn from(tx: GalaTx) -> Self {
+        Self::Gala(tx)
+    }
+}
+impl From<FuelTx> for UnsignedTx {
+    fn from(tx: FuelTx) -> Self {
+        Self::Fuel(tx)
+    }
+}
+impl From<StarcoinTx> for UnsignedTx {
+    fn from(tx: StarcoinTx) -> Self {
+        Self::Starcoin(tx)
+    }
+}
+impl From<ChromiaTx> for UnsignedTx {
+    fn from(tx: ChromiaTx) -> Self {
+        Self::Chromia(tx)
+    }
+}
+impl From<ChromiaRegisterTx> for UnsignedTx {
+    fn from(tx: ChromiaRegisterTx) -> Self {
+        Self::ChromiaRegister(tx)
+    }
+}
+impl From<ChiaTx> for UnsignedTx {
+    fn from(tx: ChiaTx) -> Self {
+        Self::Chia(tx)
+    }
+}
+impl From<AelfTx> for UnsignedTx {
+    fn from(tx: AelfTx) -> Self {
+        Self::Aelf(tx)
+    }
+}
+impl From<AeternityTx> for UnsignedTx {
+    fn from(tx: AeternityTx) -> Self {
+        Self::Aeternity(tx)
+    }
+}
+impl From<AlephiumTx> for UnsignedTx {
+    fn from(tx: AlephiumTx) -> Self {
+        Self::Alephium(tx)
+    }
+}
+impl From<ErgoTx> for UnsignedTx {
+    fn from(tx: ErgoTx) -> Self {
+        Self::Ergo(tx)
+    }
+}
+impl From<KeetaTx> for UnsignedTx {
+    fn from(tx: KeetaTx) -> Self {
+        Self::Keeta(tx)
+    }
+}
+impl From<IcpTx> for UnsignedTx {
+    fn from(tx: IcpTx) -> Self {
+        Self::Icp(tx)
+    }
+}
+impl From<RadixTx> for UnsignedTx {
+    fn from(tx: RadixTx) -> Self {
+        Self::Radix(tx)
+    }
+}
+impl From<WavesTx> for UnsignedTx {
+    fn from(tx: WavesTx) -> Self {
+        Self::Waves(tx)
+    }
+}
+impl From<EverscaleTx> for UnsignedTx {
+    fn from(tx: EverscaleTx) -> Self {
+        Self::Everscale(tx)
+    }
+}
+impl From<IconTx> for UnsignedTx {
+    fn from(tx: IconTx) -> Self {
+        Self::Icon(tx)
+    }
+}
+impl From<StarknetTx> for UnsignedTx {
+    fn from(tx: StarknetTx) -> Self {
+        Self::Starknet(tx)
+    }
+}
+impl From<HyperliquidTx> for UnsignedTx {
+    fn from(tx: HyperliquidTx) -> Self {
+        Self::Hyperliquid(tx)
+    }
+}
+impl From<VechainTx> for UnsignedTx {
+    fn from(tx: VechainTx) -> Self {
+        Self::Vechain(tx)
+    }
+}
+impl From<StacksTx> for UnsignedTx {
+    fn from(tx: StacksTx) -> Self {
+        Self::Stacks(tx)
+    }
+}
+impl From<TezosTx> for UnsignedTx {
+    fn from(tx: TezosTx) -> Self {
+        Self::Tezos(tx)
+    }
+}
+impl From<NamadaTx> for UnsignedTx {
+    fn from(tx: NamadaTx) -> Self {
+        Self::Namada(tx)
+    }
+}
+impl From<MixinTx> for UnsignedTx {
+    fn from(tx: MixinTx) -> Self {
+        Self::Mixin(tx)
+    }
+}
+impl From<QubicTx> for UnsignedTx {
+    fn from(tx: QubicTx) -> Self {
+        Self::Qubic(tx)
+    }
+}
+impl From<MultiversxTx> for UnsignedTx {
+    fn from(tx: MultiversxTx) -> Self {
+        Self::Multiversx(tx)
+    }
+}
+impl From<AntelopeTx> for UnsignedTx {
+    fn from(tx: AntelopeTx) -> Self {
+        Self::Antelope(tx)
+    }
+}
+impl From<CardanoTx> for UnsignedTx {
+    fn from(tx: CardanoTx) -> Self {
+        Self::Cardano(tx)
+    }
+}
+impl From<TonTx> for UnsignedTx {
+    fn from(tx: TonTx) -> Self {
+        Self::Ton(tx)
+    }
+}
+impl From<AlgorandTx> for UnsignedTx {
+    fn from(tx: AlgorandTx) -> Self {
+        Self::Algorand(tx)
+    }
+}
+impl From<NearTx> for UnsignedTx {
+    fn from(tx: NearTx) -> Self {
+        Self::Near(tx)
+    }
+}
+impl From<SuiTx> for UnsignedTx {
+    fn from(tx: SuiTx) -> Self {
+        Self::Sui(tx)
+    }
+}
+impl From<XrplTx> for UnsignedTx {
+    fn from(tx: XrplTx) -> Self {
+        Self::Xrpl(tx)
+    }
+}
+impl From<AptosTx> for UnsignedTx {
+    fn from(tx: AptosTx) -> Self {
+        Self::Aptos(tx)
+    }
+}
+impl From<SubstrateTx> for UnsignedTx {
+    fn from(tx: SubstrateTx) -> Self {
+        Self::Substrate(tx)
+    }
+}
+impl From<StellarTx> for UnsignedTx {
+    fn from(tx: StellarTx) -> Self {
+        Self::Stellar(tx)
+    }
+}
 impl From<TronTx> for UnsignedTx {
     fn from(tx: TronTx) -> Self {
         Self::Tron(tx)
@@ -91,14 +344,96 @@ impl UnsignedTx {
             Self::Solana(tx) => tx.check_matches_intent(intent),
             Self::Cosmos(tx) => tx.check_matches_intent(intent),
             Self::Bitcoin(tx) => tx.check_matches_intent(intent),
+            Self::BtcFork(tx) => tx.check_matches_intent(intent),
             Self::Tron(tx) => tx.check_matches_intent(intent),
+            Self::Substrate(tx) => tx.check_matches_intent(intent),
+            Self::Stellar(tx) => tx.check_matches_intent(intent),
+            Self::Aptos(tx) => tx.check_matches_intent(intent),
+            Self::Xrpl(tx) => tx.check_matches_intent(intent),
+            Self::Sui(tx) => tx.check_matches_intent(intent),
+            Self::Near(tx) => tx.check_matches_intent(intent),
+            Self::Algorand(tx) => tx.check_matches_intent(intent),
+            Self::Ton(tx) => tx.check_matches_intent(intent),
+            Self::Cardano(tx) => tx.check_matches_intent(intent),
+            Self::Antelope(tx) => tx.check_matches_intent(intent),
+            Self::Mixin(tx) => tx.check_matches_intent(intent),
+            Self::Multiversx(tx) => tx.check_matches_intent(intent),
+            Self::Namada(tx) => tx.check_matches_intent(intent),
+            Self::Qubic(tx) => tx.check_matches_intent(intent),
+            Self::Tezos(tx) => tx.check_matches_intent(intent),
+            Self::Stacks(tx) => tx.check_matches_intent(intent),
+            Self::Vechain(tx) => tx.check_matches_intent(intent),
+            Self::Hyperliquid(tx) => tx.check_matches_intent(intent),
+            Self::Starknet(tx) => tx.check_matches_intent(intent),
+            Self::Icon(tx) => tx.check_matches_intent(intent),
+            Self::Everscale(tx) => tx.check_matches_intent(intent),
+            Self::Waves(tx) => tx.check_matches_intent(intent),
+            Self::Radix(tx) => tx.check_matches_intent(intent),
+            Self::Icp(tx) => tx.check_matches_intent(intent),
+            Self::Keeta(tx) => tx.check_matches_intent(intent),
+            Self::Ergo(tx) => tx.check_matches_intent(intent),
+            Self::Alephium(tx) => tx.check_matches_intent(intent),
+            Self::Aeternity(tx) => tx.check_matches_intent(intent),
+            Self::Aelf(tx) => tx.check_matches_intent(intent),
+            Self::Chia(tx) => tx.check_matches_intent(intent),
+            Self::Chromia(tx) => tx.check_matches_intent(intent),
+            Self::ChromiaRegister(tx) => tx.check_matches_intent(intent),
+            Self::Starcoin(tx) => tx.check_matches_intent(intent),
+            Self::Fuel(tx) => tx.check_matches_intent(intent),
+            Self::Gala(tx) => tx.check_matches_intent(intent),
+            Self::Obyte(tx) => tx.check_matches_intent(intent),
         }
     }
     fn curve(&self) -> Curve {
         match self {
-            Self::Evm(_) | Self::Cosmos(_) | Self::Bitcoin(_) | Self::Tron(_) => Curve::Secp256k1,
-            Self::Solana(_) => Curve::Ed25519,
+            Self::Evm(_)
+            | Self::Cosmos(_)
+            | Self::Bitcoin(_)
+            | Self::Tron(_)
+            | Self::Xrpl(_)
+            | Self::Antelope(_)
+            | Self::Stacks(_)
+            | Self::Vechain(_)
+            | Self::Hyperliquid(_)
+            | Self::Starknet(_)
+            | Self::Icon(_)
+            | Self::Icp(_)
+            | Self::Ergo(_)
+            | Self::Alephium(_)
+            | Self::Fuel(_)
+            | Self::Aelf(_)
+            | Self::Obyte(_)
+            | Self::Chromia(_)
+            | Self::ChromiaRegister(_)
+            | Self::Keeta(_)
+            | Self::BtcFork(_)
+            | Self::Gala(_) => Curve::Secp256k1,
+            Self::Solana(_)
+            | Self::Substrate(_)
+            | Self::Stellar(_)
+            | Self::Aptos(_)
+            | Self::Sui(_)
+            | Self::Near(_)
+            | Self::Algorand(_)
+            | Self::Ton(_)
+            | Self::Cardano(_)
+            | Self::Multiversx(_)
+            | Self::Everscale(_)
+            | Self::Waves(_)
+            | Self::Radix(_)
+            | Self::Aeternity(_)
+            | Self::Chia(_)
+            | Self::Starcoin(_)
+            | Self::Namada(_)
+            | Self::Mixin(_)
+            | Self::Qubic(_)
+            | Self::Tezos(_) => Curve::Ed25519,
         }
+    }
+}
+impl From<BtcForkTx> for UnsignedTx {
+    fn from(tx: BtcForkTx) -> Self {
+        Self::BtcFork(tx)
     }
 }
 impl From<BitcoinTx> for UnsignedTx {
@@ -338,6 +673,78 @@ pub fn propose(
         bitcoin::check_chain(&intent.chain_id.0)?;
     } else if intent.chain_id.0.starts_with("tron:") {
         tron::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("polkadot:") {
+        substrate::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("stellar:") {
+        stellar::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("aptos:") {
+        aptos::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("xrpl:") {
+        xrpl::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("sui:") {
+        sui::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("near:") {
+        near::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("algorand:") {
+        algorand::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("tvm:") {
+        ton::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("cip34:") {
+        cardano::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("antelope:") {
+        antelope::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("mvx:") {
+        multiversx::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("tezos:") {
+        tezos::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("stacks:") {
+        stacks::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("vechain:") {
+        vechain::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("hype:") {
+        hyperliquid::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("starknet:") {
+        starknet::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("icon:") {
+        icon::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("ever:") || intent.chain_id.0.starts_with("venom:") {
+        everscale::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("waves:") {
+        waves::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("radix:") {
+        radix::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("icp:") {
+        icp::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("ergo:") {
+        ergo::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("alephium:") {
+        alephium::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("aet:") {
+        aeternity::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("chia:") {
+        chia::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("fuel:") {
+        fuel::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("aelf:") {
+        aelf::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("starcoin:") {
+        starcoin::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("obyte:") {
+        obyte::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("chromia:") {
+        chromia::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("keeta:") {
+        keeta::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("namada:") {
+        namada::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("btcfork:") {
+        btcfork::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("gala:") {
+        gala::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("mixin:") {
+        mixin::check_chain(&intent.chain_id.0)?;
+    } else if intent.chain_id.0.starts_with("qubic:") {
+        qubic::check_chain(&intent.chain_id.0)?;
     } else {
         evm::check_chain(&intent.chain_id.0)?;
     }
@@ -387,12 +794,56 @@ fn signer_address(
             "Signet signing requires a testnet BIP84 derivation path",
         ));
     }
+    if matches!(unsigned, UnsignedTx::Cardano(_)) {
+        let account = provenance::cardano_account(&signer.path)
+            .ok_or_else(|| invalid("Cardano signs from a CIP-1852 payment path"))?;
+        let keys = provenance::cardano_keys(vault, &signer.wallet_id, account)?;
+        return cardano::address(&keys.public());
+    }
     let key = provenance::signing_key(vault, &signer.wallet_id, unsigned.curve(), &signer.path)?;
     match unsigned {
         UnsignedTx::Solana(_) => Ok(bs58::encode(&key.public).into_string()),
         UnsignedTx::Cosmos(_) => cosmos::address(&key.public),
         UnsignedTx::Bitcoin(_) => bitcoin::address(&key.public),
         UnsignedTx::Tron(_) => tron::address(&key.public),
+        UnsignedTx::Substrate(_) => substrate::address(&key.public),
+        UnsignedTx::Stellar(_) => stellar::address(&key.public),
+        UnsignedTx::Aptos(_) => aptos::address(&key.public),
+        UnsignedTx::Xrpl(_) => xrpl::address(&key.public),
+        UnsignedTx::Sui(_) => sui::address(&key.public),
+        UnsignedTx::Near(_) => near::address(&key.public),
+        UnsignedTx::Algorand(_) => algorand::address(&key.public),
+        UnsignedTx::Ton(_) => ton::address(&key.public),
+        UnsignedTx::Antelope(_) => antelope::address(&key.public),
+        UnsignedTx::Multiversx(_) => multiversx::address(&key.public),
+        UnsignedTx::Tezos(_) => tezos::address(&key.public),
+        UnsignedTx::Stacks(_) => stacks::address(&key.public),
+        UnsignedTx::Vechain(_) => vechain::address(&key.public),
+        UnsignedTx::Hyperliquid(_) => hyperliquid::address(&key.public),
+        // The account address comes from the ground Stark key, not the SEC1 point.
+        UnsignedTx::Starknet(_) => starknet::address_from_secret(key.secret()),
+        UnsignedTx::Icon(_) => icon::address(&key.public),
+        UnsignedTx::Everscale(_) => everscale::address(&key.public),
+        // The Waves address comes from the axolotl key, not the ed25519 point.
+        UnsignedTx::Waves(_) => waves::address_from_secret(key.secret()),
+        UnsignedTx::Radix(_) => radix::address(&key.public),
+        UnsignedTx::Icp(_) => icp::address(&key.public),
+        UnsignedTx::Ergo(_) => ergo::address(&key.public),
+        UnsignedTx::Alephium(_) => alephium::address(&key.public),
+        UnsignedTx::Fuel(_) => fuel::address(&key.public),
+        UnsignedTx::Aelf(_) => aelf::address(&key.public),
+        UnsignedTx::Obyte(_) => obyte::address(&key.public),
+        UnsignedTx::Chromia(_) | UnsignedTx::ChromiaRegister(_) => chromia::address(&key.public),
+        UnsignedTx::Keeta(_) => Ok(keeta::address(&key.public)?),
+        UnsignedTx::Namada(_) => Ok(namada::address(&key.public)?),
+        UnsignedTx::BtcFork(tx) => Ok(btcfork::address(&tx.chain_id, &key.public)?),
+        UnsignedTx::Gala(_) => Ok(gala::address(&key.public)?),
+        UnsignedTx::Mixin(_) => Ok(mixin::address(&mixin::public_from_secret(key.secret()))?),
+        UnsignedTx::Qubic(_) => Ok(qubic::address(&qubic::public_key(key.secret())?)?),
+        UnsignedTx::Aeternity(_) => aeternity::address(&key.public),
+        UnsignedTx::Chia(_) => chia::address(&key.public),
+        UnsignedTx::Starcoin(_) => starcoin::address(&key.public),
+        UnsignedTx::Cardano(_) => Err(invalid("Cardano keys take the CIP-1852 route")),
         UnsignedTx::Evm(_) => Ok(evm::checksum_address(&evm::address_from_public(
             &key.public,
         )?)),
@@ -448,6 +899,45 @@ pub fn attach(
         UnsignedTx::Cosmos(tx) => derived == signer.address && tx.from == derived,
         UnsignedTx::Bitcoin(tx) => derived == signer.address && tx.from == derived,
         UnsignedTx::Tron(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Substrate(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Stellar(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Aptos(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Xrpl(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Sui(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Near(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Algorand(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Ton(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Cardano(tx) => derived == signer.address && tx.from == derived,
+        // An Antelope account is an on-chain name a key controls through its permission; the
+        // chain enforces that link, the core binds the key.
+        UnsignedTx::Antelope(tx) => derived == signer.address && tx.public_key == derived,
+        UnsignedTx::Multiversx(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Tezos(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Stacks(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Vechain(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Hyperliquid(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Starknet(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Icon(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Everscale(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Waves(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Radix(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Icp(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Ergo(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Alephium(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Fuel(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Aelf(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Obyte(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Chromia(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::ChromiaRegister(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Keeta(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Namada(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::BtcFork(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Gala(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Mixin(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Qubic(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Aeternity(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Chia(tx) => derived == signer.address && tx.from == derived,
+        UnsignedTx::Starcoin(tx) => derived == signer.address && tx.from == derived,
     };
     if !matches {
         return Err(invalid(format!(
@@ -569,6 +1059,15 @@ pub fn approve(
             .ok_or_else(|| invalid("no unsigned transaction"))?;
         let signer = t.signer.as_ref().ok_or_else(|| invalid("no signer"))?;
         unsigned.check_matches_intent(&t.intent)?;
+        if let UnsignedTx::Cardano(tx) = unsigned {
+            if signer_address(vault, signer, unsigned)? != signer.address {
+                return Err(invalid("signer key changed since the proposal"));
+            }
+            let account = provenance::cardano_account(&signer.path)
+                .ok_or_else(|| invalid("Cardano signs from a CIP-1852 payment path"))?;
+            let keys = provenance::cardano_keys(vault, &signer.wallet_id, account)?;
+            return tx.sign(keys.payment.secret());
+        }
         let key =
             provenance::signing_key(vault, &signer.wallet_id, unsigned.curve(), &signer.path)?;
         let addr = signer_address(vault, signer, unsigned)?;
@@ -588,6 +1087,43 @@ pub fn approve(
             UnsignedTx::Cosmos(tx) => tx.sign(key.secret()),
             UnsignedTx::Bitcoin(tx) => tx.sign(key.secret()),
             UnsignedTx::Tron(tx) => tx.sign(key.secret()),
+            UnsignedTx::Substrate(tx) => tx.sign(key.secret()),
+            UnsignedTx::Stellar(tx) => tx.sign(key.secret()),
+            UnsignedTx::Aptos(tx) => tx.sign(key.secret()),
+            UnsignedTx::Xrpl(tx) => tx.sign(key.secret()),
+            UnsignedTx::Sui(tx) => tx.sign(key.secret()),
+            UnsignedTx::Near(tx) => tx.sign(key.secret()),
+            UnsignedTx::Algorand(tx) => tx.sign(key.secret()),
+            UnsignedTx::Ton(tx) => tx.sign(key.secret()),
+            UnsignedTx::Antelope(tx) => tx.sign(key.secret()),
+            UnsignedTx::Multiversx(tx) => tx.sign(key.secret()),
+            UnsignedTx::Tezos(tx) => tx.sign(key.secret()),
+            UnsignedTx::Stacks(tx) => tx.sign(key.secret()),
+            UnsignedTx::Vechain(tx) => tx.sign(key.secret()),
+            UnsignedTx::Hyperliquid(tx) => tx.sign(key.secret()),
+            UnsignedTx::Starknet(tx) => tx.sign(key.secret()),
+            UnsignedTx::Icon(tx) => tx.sign(key.secret()),
+            UnsignedTx::Everscale(tx) => tx.sign(key.secret()),
+            UnsignedTx::Waves(tx) => tx.sign(key.secret()),
+            UnsignedTx::Radix(tx) => tx.sign(key.secret()),
+            UnsignedTx::Icp(tx) => tx.sign(key.secret()),
+            UnsignedTx::Ergo(tx) => tx.sign(key.secret()),
+            UnsignedTx::Alephium(tx) => tx.sign(key.secret()),
+            UnsignedTx::Fuel(tx) => tx.sign(key.secret()),
+            UnsignedTx::Aelf(tx) => tx.sign(key.secret()),
+            UnsignedTx::Obyte(tx) => tx.sign(key.secret()),
+            UnsignedTx::Chromia(tx) => tx.sign(key.secret()),
+            UnsignedTx::ChromiaRegister(tx) => tx.sign(key.secret()),
+            UnsignedTx::Keeta(tx) => tx.sign(key.secret()),
+            UnsignedTx::Namada(tx) => tx.sign(key.secret()),
+            UnsignedTx::BtcFork(tx) => tx.sign(key.secret()),
+            UnsignedTx::Gala(tx) => tx.sign(key.secret()),
+            UnsignedTx::Mixin(tx) => tx.sign(key.secret()),
+            UnsignedTx::Qubic(tx) => tx.sign(key.secret()),
+            UnsignedTx::Aeternity(tx) => tx.sign(key.secret()),
+            UnsignedTx::Chia(tx) => tx.sign(key.secret()),
+            UnsignedTx::Starcoin(tx) => tx.sign(key.secret()),
+            UnsignedTx::Cardano(_) => Err(invalid("Cardano keys take the CIP-1852 route")),
         }
     })();
     match signed {
@@ -992,7 +1528,38 @@ pub fn report(
     if to == TxState::Expired
         && !matches!(
             ledger.txs[i].unsigned,
-            Some(UnsignedTx::Solana(_) | UnsignedTx::Cosmos(_) | UnsignedTx::Tron(_))
+            Some(
+                UnsignedTx::Solana(_)
+                    | UnsignedTx::Cosmos(_)
+                    | UnsignedTx::Tron(_)
+                    | UnsignedTx::Substrate(_)
+                    | UnsignedTx::Stellar(_)
+                    | UnsignedTx::Aptos(_)
+                    | UnsignedTx::Xrpl(_)
+                    | UnsignedTx::Sui(_)
+                    | UnsignedTx::Near(_)
+                    | UnsignedTx::Algorand(_)
+                    | UnsignedTx::Ton(_)
+                    | UnsignedTx::Cardano(_)
+                    | UnsignedTx::Antelope(_)
+                    | UnsignedTx::Multiversx(_)
+                    | UnsignedTx::Tezos(_)
+                    | UnsignedTx::Stacks(_)
+                    | UnsignedTx::Vechain(_)
+                    | UnsignedTx::Hyperliquid(_)
+                    | UnsignedTx::Icon(_)
+                    | UnsignedTx::Everscale(_)
+                    | UnsignedTx::Waves(_)
+                    | UnsignedTx::Radix(_)
+                    | UnsignedTx::Icp(_)
+                    | UnsignedTx::Aeternity(_)
+                    | UnsignedTx::Fuel(_)
+                    | UnsignedTx::BtcFork(_)
+                    | UnsignedTx::Gala(_)
+                    | UnsignedTx::Qubic(_)
+                    | UnsignedTx::Aelf(_)
+                    | UnsignedTx::Starcoin(_)
+            )
         )
     {
         return Err(invalid(
@@ -1792,6 +2359,1844 @@ mod tests {
         assert!(propose(&mut v, mainnet, "d", 9).is_err());
     }
 
+    /// Propose, attach, sign and expire one native transfer for a family the core signs
+    /// through the plain `sign(secret)` path; the mainnet intent must be refused.
+    #[allow(clippy::too_many_arguments)]
+    fn family_transfer_flow(
+        id: &str,
+        chain: &str,
+        mainnet: &str,
+        curve: Curve,
+        paths: [&str; 2],
+        address: fn(&[u8]) -> Result<String>,
+        amount: &str,
+        make: impl Fn(String, String) -> UnsignedTx,
+    ) {
+        let mut v = vault();
+        let public = |path: &str| {
+            hex::decode(provenance::public_key(&v, "w", curve, path).unwrap()).unwrap()
+        };
+        let from = address(&public(paths[0])).unwrap();
+        let to = address(&public(paths[1])).unwrap();
+        let unsigned = make(from.clone(), to.clone());
+        let mut i = intent(id, &to, amount);
+        i.chain_id = ChainId(chain.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{chain}:native")),
+            amount: Amount(amount.into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: paths[0].into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(&unsigned).unwrap()).unwrap();
+        assert_eq!(
+            std::mem::discriminant(&parsed),
+            std::mem::discriminant(&unsigned)
+        );
+        assert!(attach(
+            &mut v,
+            id,
+            signer(&to),
+            parsed.clone(),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            id,
+            signer(&from),
+            parsed,
+            serde_json::json!({"ok":true}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, id, "d", 4).unwrap();
+        let rec = approve(&mut v, id, &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        assert!(rec.raw_signed_hex.is_some() && rec.hash.is_some());
+        report(&mut v, id, TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, id, TxState::Pending, None, "d", 7).unwrap();
+        assert_eq!(
+            report(&mut v, id, TxState::Expired, None, "d", 8)
+                .unwrap()
+                .state,
+            TxState::Expired
+        );
+        load_ledger(&v).unwrap().validate().unwrap();
+        let mut main = intent(&format!("{id}-main"), &to, "1");
+        main.chain_id = ChainId(mainnet.into());
+        assert!(propose(&mut v, main, "d", 9).is_err());
+    }
+
+    #[test]
+    fn substrate_westend_transfer_signs_as_the_derived_address() {
+        family_transfer_flow(
+            "dot",
+            substrate::WESTEND,
+            "polkadot:91b171bb158e2d3848fa23a9f1c25182",
+            Curve::Ed25519,
+            ["m/44'/354'/0'/0'/0'", "m/44'/354'/0'/0'/1'"],
+            substrate::address,
+            "1500000000000",
+            |from, to| {
+                UnsignedTx::Substrate(SubstrateTx {
+                    chain_id: substrate::WESTEND.into(),
+                    from,
+                    to,
+                    planck: "1500000000000".into(),
+                    tip: "0".into(),
+                    nonce: 5,
+                    spec_version: 1_025_002,
+                    transaction_version: 27,
+                    genesis_hash:
+                        "0xe143f23803ac50e8f6f8e62695d1ce9e4e1d68aa36c1cd2cfd15340213f3423e".into(),
+                    block_hash: format!("0x{}", "ab".repeat(32)),
+                    block_number: 1_000_000,
+                    era_period: 256,
+                    metadata_hash_mode: 0,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn stellar_testnet_transfer_signs_as_the_derived_address() {
+        family_transfer_flow(
+            "xlm",
+            stellar::TESTNET,
+            "stellar:pubnet",
+            Curve::Ed25519,
+            ["m/44'/148'/0'", "m/44'/148'/1'"],
+            stellar::address,
+            "15000000",
+            |from, to| {
+                UnsignedTx::Stellar(StellarTx {
+                    chain_id: stellar::TESTNET.into(),
+                    from,
+                    to,
+                    stroops: "15000000".into(),
+                    fee: 1000,
+                    seq_num: "12000340488487103".into(),
+                    max_time: 1_760_001_800,
+                    built_at: 1_760_000_000,
+                    create_account: false,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn aptos_testnet_transfer_signs_as_the_derived_address() {
+        family_transfer_flow(
+            "apt",
+            aptos::TESTNET,
+            "aptos:1",
+            Curve::Ed25519,
+            ["m/44'/637'/0'/0'/0'", "m/44'/637'/0'/0'/1'"],
+            aptos::address,
+            "150000000",
+            |from, to| {
+                UnsignedTx::Aptos(AptosTx {
+                    chain_id: aptos::TESTNET.into(),
+                    from,
+                    to,
+                    octas: "150000000".into(),
+                    sequence_number: "3".into(),
+                    max_gas_amount: 2_000,
+                    gas_unit_price: 100,
+                    expiration_timestamp_secs: 1_800,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn xrpl_testnet_payment_signs_as_the_derived_address() {
+        use k256::elliptic_curve::sec1::ToEncodedPoint;
+        let path = "m/44'/144'/0'/0/0";
+        let public = provenance::signing_key(&vault(), "w", Curve::Secp256k1, path)
+            .unwrap()
+            .public;
+        let compressed = k256::PublicKey::from_sec1_bytes(&public)
+            .unwrap()
+            .to_encoded_point(true);
+        let public_key_hex = hex::encode(compressed.as_bytes());
+        family_transfer_flow(
+            "xrp",
+            xrpl::TESTNET,
+            xrpl::MAINNET,
+            Curve::Secp256k1,
+            [path, "m/44'/144'/0'/0/1"],
+            xrpl::address,
+            "1500000",
+            |from, to| {
+                UnsignedTx::Xrpl(XrplTx {
+                    chain_id: xrpl::TESTNET.into(),
+                    from,
+                    to,
+                    drops: "1500000".into(),
+                    fee: 12,
+                    sequence: 7,
+                    last_ledger_sequence: 1_300,
+                    built_at_ledger: 1_000,
+                    destination_tag: Some(42),
+                    public_key_hex: public_key_hex.clone(),
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn sui_testnet_transfer_signs_as_the_derived_address() {
+        family_transfer_flow(
+            "sui",
+            sui::TESTNET,
+            "sui:mainnet",
+            Curve::Ed25519,
+            ["m/44'/784'/0'/0'/0'", "m/44'/784'/0'/0'/1'"],
+            sui::address,
+            "1500000000",
+            |from, to| {
+                UnsignedTx::Sui(SuiTx {
+                    chain_id: sui::TESTNET.into(),
+                    from,
+                    to,
+                    mist: "1500000000".into(),
+                    gas_payment: vec![sui::SuiObjectRef {
+                        object_id: format!("0x{}", "11".repeat(32)),
+                        version: 42,
+                        digest: bs58::encode([7u8; 32]).into_string(),
+                    }],
+                    gas_price: 1_000,
+                    gas_budget: 5_000_000,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn near_testnet_transfer_signs_as_the_derived_address() {
+        family_transfer_flow(
+            "near",
+            near::TESTNET,
+            near::MAINNET,
+            Curve::Ed25519,
+            ["m/44'/397'/0'", "m/44'/397'/1'"],
+            near::address,
+            "1500000000000000000000000",
+            |from, to| {
+                UnsignedTx::Near(NearTx {
+                    chain_id: near::TESTNET.into(),
+                    from,
+                    to,
+                    yocto: "1500000000000000000000000".into(),
+                    nonce: "7".into(),
+                    block_hash: bs58::encode([9u8; 32]).into_string(),
+                    block_height: 190_000_000,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn algorand_testnet_payment_signs_as_the_derived_address() {
+        family_transfer_flow(
+            "algo",
+            algorand::TESTNET,
+            algorand::MAINNET,
+            Curve::Ed25519,
+            ["m/44'/283'/0'/0'/0'", "m/44'/283'/1'/0'/0'"],
+            algorand::address,
+            "1500000",
+            |from, to| {
+                UnsignedTx::Algorand(AlgorandTx {
+                    chain_id: algorand::TESTNET.into(),
+                    from,
+                    to,
+                    microalgos: "1500000".into(),
+                    fee: 1_000,
+                    first_valid: 50_000_000,
+                    last_valid: 50_001_000,
+                    genesis_id: algorand::TESTNET_GENESIS_ID.into(),
+                    genesis_hash: algorand::TESTNET_GENESIS_HASH.into(),
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn ton_testnet_transfer_signs_as_the_derived_address() {
+        family_transfer_flow(
+            "ton",
+            ton::TESTNET,
+            ton::MAINNET,
+            Curve::Ed25519,
+            ["m/44'/607'/0'", "m/44'/607'/1'"],
+            ton::address,
+            "10000000",
+            |from, to| {
+                UnsignedTx::Ton(TonTx {
+                    chain_id: ton::TESTNET.into(),
+                    from,
+                    to,
+                    nanoton: "10000000".into(),
+                    seqno: 0,
+                    valid_until: 1_800,
+                    built_at: 1,
+                    bounce: false,
+                    deploy: true,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn cardano_preprod_transfer_signs_from_the_cip1852_account() {
+        family_transfer_flow(
+            "ada",
+            cardano::PREPROD,
+            cardano::MAINNET,
+            Curve::Ed25519,
+            ["m/1852'/1815'/0'/0/0", "m/1852'/1815'/1'/0/0"],
+            cardano::address,
+            "2000000",
+            |from, to| {
+                UnsignedTx::Cardano(CardanoTx {
+                    chain_id: cardano::PREPROD.into(),
+                    from,
+                    to,
+                    lovelace: "2000000".into(),
+                    inputs: vec![cardano::CardanoInput {
+                        tx_hash: "ab".repeat(32),
+                        index: 0,
+                        lovelace: "10000000".into(),
+                    }],
+                    fee: 200_000,
+                    ttl: 1_000,
+                    built_slot: 100,
+                    min_fee_a: 44,
+                    min_fee_b: 155_381,
+                    coins_per_utxo_byte: 4_310,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn antelope_wax_testnet_transfer_binds_the_signing_key() {
+        let mut v = vault();
+        let path = "m/44'/194'/0'/0/0";
+        let public =
+            hex::decode(provenance::public_key(&v, "w", Curve::Secp256k1, path).unwrap()).unwrap();
+        let key = antelope::address(&public).unwrap();
+        let other = hex::decode(
+            provenance::public_key(&v, "w", Curve::Secp256k1, "m/44'/194'/0'/0/1").unwrap(),
+        )
+        .unwrap();
+        let other_key = antelope::address(&other).unwrap();
+        let to = "swt1d1faf1fv";
+        let mut i = intent("wax", to, "125000000");
+        i.chain_id = ChainId(antelope::TESTNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.into(),
+            asset: AssetRef(format!("{}:native", antelope::TESTNET)),
+            amount: Amount("125000000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let tx = |public_key: &str| {
+            UnsignedTx::Antelope(AntelopeTx {
+                chain_id: antelope::TESTNET.into(),
+                from: "swth2cwye1ww".into(),
+                permission: "active".into(),
+                to: to.into(),
+                antelope_units: "125000000".into(),
+                symbol: "WAX".into(),
+                precision: 8,
+                token_contract: "eosio.token".into(),
+                memo: String::new(),
+                expiration: 1_700_001_800,
+                ref_block_num: 1,
+                ref_block_prefix: 2,
+                built_at_secs: 1_700_000_000,
+                public_key: public_key.into(),
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&key)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Antelope(_)));
+        assert!(attach(
+            &mut v,
+            "wax",
+            signer(&key),
+            tx(&other_key),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "wax",
+            signer(&key),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "wax", "d", 4).unwrap();
+        let rec = approve(&mut v, "wax", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        assert!(rec.raw_signed_hex.unwrap().contains("SIG_K1_"));
+        report(&mut v, "wax", TxState::Broadcast, None, "d", 6).unwrap();
+        assert_eq!(
+            report(&mut v, "wax", TxState::Expired, None, "d", 7)
+                .unwrap()
+                .state,
+            TxState::Expired
+        );
+        let mut main = intent("wax-main", to, "1");
+        main.chain_id = ChainId(antelope::WAX_MAINNET.into());
+        assert!(propose(&mut v, main, "d", 8).is_err());
+    }
+    #[test]
+    fn multiversx_devnet_transfer_signs_as_the_derived_address() {
+        family_transfer_flow(
+            "egld",
+            multiversx::DEVNET,
+            "mvx:1",
+            Curve::Ed25519,
+            ["m/44'/508'/0'/0'/0'", "m/44'/508'/0'/0'/1'"],
+            multiversx::address,
+            "1500000000000000000",
+            |from, to| {
+                UnsignedTx::Multiversx(MultiversxTx {
+                    chain_id: multiversx::DEVNET.into(),
+                    from,
+                    to,
+                    attoegld: "1500000000000000000".into(),
+                    nonce: 0,
+                    gas_price: 1_000_000_000,
+                    gas_limit: 50_000,
+                })
+            },
+        );
+    }
+    #[test]
+    fn tezos_shadownet_transfer_reveals_and_signs_as_the_derived_address() {
+        family_transfer_flow(
+            "xtz",
+            tezos::SHADOWNET,
+            tezos::MAINNET,
+            Curve::Ed25519,
+            ["m/44'/1729'/0'/0'", "m/44'/1729'/1'/0'"],
+            tezos::address,
+            "1000000",
+            |from, to| {
+                UnsignedTx::Tezos(TezosTx {
+                    chain_id: tezos::SHADOWNET.into(),
+                    from,
+                    to,
+                    mutez: "1000000".into(),
+                    branch: "BLockGenesisGenesisGenesisGenesisGenesisf79b5d1CoW2".into(),
+                    counter: 7,
+                    fee: 550,
+                    gas_limit: 2_201,
+                    storage_limit: 257,
+                    reveal: Some(tezos::TezosReveal {
+                        fee: 128,
+                        gas_limit: 271,
+                    }),
+                })
+            },
+        );
+    }
+    #[test]
+    fn stacks_testnet_transfer_signs_as_the_derived_address() {
+        family_transfer_flow(
+            "stx",
+            stacks::TESTNET,
+            "stacks:1",
+            Curve::Secp256k1,
+            ["m/44'/5757'/0'/0/0", "m/44'/5757'/0'/0/1"],
+            stacks::address,
+            "1000000",
+            |from, to| {
+                UnsignedTx::Stacks(StacksTx {
+                    chain_id: stacks::TESTNET.into(),
+                    from,
+                    to,
+                    microstx: "1000000".into(),
+                    fee: 200,
+                    nonce: 0,
+                })
+            },
+        );
+    }
+    #[test]
+    fn vechain_testnet_transfer_signs_as_the_derived_address() {
+        family_transfer_flow(
+            "vet",
+            vechain::TESTNET,
+            vechain::MAINNET,
+            Curve::Secp256k1,
+            ["m/44'/818'/0'/0/0", "m/44'/818'/0'/0/1"],
+            vechain::address,
+            "1000000000000000000",
+            |from, to| {
+                UnsignedTx::Vechain(VechainTx {
+                    chain_id: vechain::TESTNET.into(),
+                    from,
+                    to,
+                    vet_wei: "1000000000000000000".into(),
+                    block_ref: "000000000a0b0c0d".into(),
+                    expiration: 180,
+                    gas_price_coef: 0,
+                    gas: 21_000,
+                    nonce: "0123456789abcdef".into(),
+                })
+            },
+        );
+    }
+    #[test]
+    fn hyperliquid_testnet_transfer_signs_as_the_derived_address() {
+        family_transfer_flow(
+            "hype",
+            hyperliquid::TESTNET,
+            "hype:mainnet",
+            Curve::Secp256k1,
+            ["m/44'/60'/0'/0/0", "m/44'/60'/0'/0/1"],
+            hyperliquid::address,
+            "1500000",
+            |from, to| {
+                UnsignedTx::Hyperliquid(HyperliquidTx {
+                    chain_id: hyperliquid::TESTNET.into(),
+                    from,
+                    to,
+                    hl_usd_micro: "1500000".into(),
+                    time: 1_760_000_000_000,
+                    built_at_ms: 1_760_000_000_000,
+                })
+            },
+        );
+    }
+    #[test]
+    fn gala_testnet_transfer_signs_as_the_derived_address() {
+        let mut v = vault();
+        let path = "m/44'/60'/0'/0/0";
+        let public_of = |p: &str| {
+            hex::decode(provenance::public_key(&v, "w", Curve::Secp256k1, p).unwrap()).unwrap()
+        };
+        let from = gala::address(&public_of(path)).unwrap();
+        let to = gala::address(&public_of("m/44'/60'/0'/0/1")).unwrap();
+        let mut i = intent("gala", &to, "150000000");
+        i.chain_id = ChainId(gala::TESTNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", gala::TESTNET)),
+            amount: Amount("150000000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let tx = |from: &str| {
+            UnsignedTx::Gala(GalaTx {
+                chain_id: gala::TESTNET.into(),
+                from: from.into(),
+                to: to.clone(),
+                gunits: "150000000".into(),
+                unique_key: "testkey1".into(),
+                dto_expires_at: 1_800_000_000_000,
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Gala(_)));
+        assert!(attach(
+            &mut v,
+            "gala",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "gala",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "gala", "d", 4).unwrap();
+        let rec = approve(&mut v, "gala", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "gala", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "gala", TxState::Pending, None, "d", 7).unwrap();
+        // dtoExpiresAt is a real on-chain expiry.
+        report(&mut v, "gala", TxState::Expired, None, "d", 8).unwrap();
+        let mut main = intent("gala-main", &to, "1");
+        main.chain_id = ChainId(gala::MAINNET.into());
+        assert!(propose(&mut v, main, "d", 9).is_err());
+    }
+
+    #[test]
+    fn mixin_kernel_transfer_signs_as_the_derived_address() {
+        let mut v = vault();
+        let path = "m/44'/2365'/0'/0'/0'";
+        let secret_of = |p: &str| {
+            *provenance::signing_key(&v, "w", Curve::Ed25519, p)
+                .unwrap()
+                .secret()
+        };
+        let from_pub = mixin::public_from_secret(&secret_of(path));
+        let from = mixin::address(&from_pub).unwrap();
+        let to = mixin::address(&mixin::public_from_secret(&secret_of(
+            "m/44'/2365'/0'/0'/1'",
+        )))
+        .unwrap();
+        let mut i = intent("xin", &to, "150000000");
+        i.chain_id = ChainId(mixin::MAINNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", mixin::MAINNET)),
+            amount: Amount("150000000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let (key, mask) = mixin::ghost_public_for_test(&[0x42u8; 64], &from_pub, 0);
+        let tx = |from: &str| {
+            UnsignedTx::Mixin(MixinTx {
+                chain_id: mixin::MAINNET.into(),
+                from: from.into(),
+                to: to.clone(),
+                xinat: "150000000".into(),
+                inputs: vec![crate::mixin::MixinInput {
+                    hash: "11".repeat(32),
+                    index: 0,
+                    key: hex::encode(key),
+                    mask: hex::encode(mask),
+                    xinat: "200000000".into(),
+                }],
+                to_seed: "ab".repeat(64),
+                change_seed: "cd".repeat(64),
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Mixin(_)));
+        assert!(attach(
+            &mut v,
+            "xin",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "xin",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "xin", "d", 4).unwrap();
+        let rec = approve(&mut v, "xin", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "xin", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "xin", TxState::Pending, None, "d", 7).unwrap();
+        // Kernel transactions never expire; reporting Expired must be refused.
+        assert!(report(&mut v, "xin", TxState::Expired, None, "d", 8).is_err());
+    }
+
+    #[test]
+    fn qubic_transfer_signs_as_the_derived_address() {
+        let mut v = vault();
+        let path = "m/44'/83293'/0'/0'/0'";
+        let secret_of = |p: &str| {
+            *provenance::signing_key(&v, "w", Curve::Ed25519, p)
+                .unwrap()
+                .secret()
+        };
+        let identity_of =
+            |p: &str| qubic::address(&qubic::public_key(&secret_of(p)).unwrap()).unwrap();
+        let from = identity_of(path);
+        let to = identity_of("m/44'/83293'/0'/0'/1'");
+        let mut i = intent("qu", &to, "25");
+        i.chain_id = ChainId(qubic::QUBIC_MAINNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", qubic::QUBIC_MAINNET)),
+            amount: Amount("25".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let tx = |from: &str| {
+            UnsignedTx::Qubic(QubicTx {
+                chain_id: qubic::QUBIC_MAINNET.into(),
+                from: from.into(),
+                to: to.clone(),
+                qu: "25".into(),
+                tick: 1_000_000,
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Qubic(_)));
+        assert!(attach(
+            &mut v,
+            "qu",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "qu",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "qu", "d", 4).unwrap();
+        let rec = approve(&mut v, "qu", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "qu", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "qu", TxState::Pending, None, "d", 7).unwrap();
+        // The target tick is a real on-chain expiry.
+        report(&mut v, "qu", TxState::Expired, None, "d", 8).unwrap();
+    }
+
+    #[test]
+    fn btcfork_dash_transfer_signs_as_the_derived_address() {
+        use sha2::Digest;
+        let mut v = vault();
+        let path = "m/44'/5'/0'/0/0";
+        let public_of = |p: &str| {
+            hex::decode(provenance::public_key(&v, "w", Curve::Secp256k1, p).unwrap()).unwrap()
+        };
+        let from_pub = public_of(path);
+        let from = btcfork::address(btcfork::DASH_TESTNET, &from_pub).unwrap();
+        let to = btcfork::address(btcfork::DASH_TESTNET, &public_of("m/44'/5'/0'/0/1")).unwrap();
+        let mut i = intent("tdash", &to, "50000");
+        i.chain_id = ChainId(btcfork::DASH_TESTNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", btcfork::DASH_TESTNET)),
+            amount: Amount("50000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        // A synthetic funding tx paying 100_000 sats to the sender; its txid is
+        // the reversed sha256d of its bytes, which sign() re-verifies.
+        let h160 = hex::encode(ripemd::Ripemd160::digest(sha2::Sha256::digest(&from_pub)));
+        let funding = format!(
+            "0300000001{}0100000003515151ffffffff02a0860100000000001976a914{}88ac01000000000000001976a914{}88ac00000000",
+            "02".repeat(32),
+            h160,
+            h160
+        );
+        let fb = hex::decode(&funding).unwrap();
+        let mut txid_bytes = sha2::Sha256::digest(sha2::Sha256::digest(&fb)).to_vec();
+        txid_bytes.reverse();
+        let txid = hex::encode(txid_bytes);
+        let tx = |from: &str| {
+            UnsignedTx::BtcFork(BtcForkTx {
+                chain_id: btcfork::DASH_TESTNET.into(),
+                from: from.into(),
+                to: to.clone(),
+                satoshis: "50000".into(),
+                fee: "500".into(),
+                inputs: vec![crate::btcfork::BtcForkInput {
+                    txid: txid.clone(),
+                    vout: 0,
+                    previous_tx_hex: funding.clone(),
+                }],
+                expiry_height: None,
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::BtcFork(_)));
+        // Signing as the recipient account must be refused.
+        assert!(attach(
+            &mut v,
+            "tdash",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "tdash",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "tdash", "d", 4).unwrap();
+        let rec = approve(&mut v, "tdash", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "tdash", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "tdash", TxState::Pending, None, "d", 7).unwrap();
+        // Zcash/Verus v4 transactions expire by height, so the family reports
+        // Expired for real (the spent-input case also lands here).
+        report(&mut v, "tdash", TxState::Expired, None, "d", 8).unwrap();
+        // Mainnet entries are read-only; signing stays testnet-gated.
+        let mut main = intent("bch-main", &to, "1");
+        main.chain_id = ChainId("btcfork:bch-mainnet".into());
+        assert!(propose(&mut v, main, "d", 9).is_err());
+    }
+
+    #[test]
+    fn namada_housefire_transfer_signs_as_the_derived_address() {
+        let mut v = vault();
+        let path = "m/44'/877'/0'/0'/0'";
+        let public_of = |p: &str| {
+            hex::decode(provenance::public_key(&v, "w", Curve::Ed25519, p).unwrap()).unwrap()
+        };
+        let from = namada::address(&public_of(path)).unwrap();
+        let to = namada::address(&public_of("m/44'/877'/0'/0'/1'")).unwrap();
+        let nam = "tnam1q9gr66cvu4hrzm0sd5kmlnjje82gs3xlfg3v6nu7";
+        let mut i = intent("nam", &to, "123456789");
+        i.chain_id = ChainId("namada:cc0d3e0c033be".into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef("namada:cc0d3e0c033be:native".into()),
+            amount: Amount("123456789".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let tx = |from: &str| {
+            UnsignedTx::Namada(NamadaTx {
+                chain_id: "namada:cc0d3e0c033be".into(),
+                from: from.into(),
+                to: to.clone(),
+                namnam: "123456789".into(),
+                token: nam.into(),
+                fee_token: nam.into(),
+                fee_per_gas: "1".into(),
+                gas_limit: 50_000,
+                wasm_code_hash: "ab".repeat(32),
+                timestamp: "2026-10-16T00:00:00.000000000+00:00".into(),
+                code_salt: "0123456789abcdef".into(),
+                data_salt: "0123456789abcdef".into(),
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Namada(_)));
+        // Signing as the recipient account must be refused.
+        assert!(attach(
+            &mut v,
+            "nam",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "nam",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "nam", "d", 4).unwrap();
+        let rec = approve(&mut v, "nam", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "nam", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "nam", TxState::Pending, None, "d", 7).unwrap();
+        // Wrapper txs carry no expiration; reporting Expired must be refused.
+        assert!(report(&mut v, "nam", TxState::Expired, None, "d", 8).is_err());
+        // Mainnet signing stays refused until a funded e2e flips the gate.
+        let mut main = intent("nam-main", &to, "1");
+        main.chain_id = ChainId("namada:5f5de2dd1b88cba30586420".into());
+        assert!(propose(&mut v, main, "d", 9).is_err());
+    }
+
+    #[test]
+    fn keeta_testnet_block_signs_as_the_derived_address() {
+        let mut v = vault();
+        let path = "m/44'/9797'/0'/0/0";
+        let public_of = |p: &str| {
+            hex::decode(provenance::public_key(&v, "w", Curve::Secp256k1, p).unwrap()).unwrap()
+        };
+        let from = keeta::address(&public_of(path)).unwrap();
+        let to = keeta::address(&public_of("m/44'/9797'/0'/0/1")).unwrap();
+        let mut i = intent("kta", &to, "1000000000000000000");
+        i.chain_id = ChainId(keeta::KEETA_TEST.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", keeta::KEETA_TEST)),
+            amount: Amount("1000000000000000000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let tx = |from: &str| {
+            UnsignedTx::Keeta(KeetaTx {
+                chain_id: keeta::KEETA_TEST.into(),
+                from: from.into(),
+                to: to.clone(),
+                atto_kta: "1000000000000000000".into(),
+                previous: "ab".repeat(32),
+                timestamp: 1_760_000_000,
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Keeta(_)));
+        // Signing as the recipient account must be refused.
+        assert!(attach(
+            &mut v,
+            "kta",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "kta",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "kta", "d", 4).unwrap();
+        let rec = approve(&mut v, "kta", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "kta", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "kta", TxState::Pending, None, "d", 7).unwrap();
+        // Keeta blocks never expire on-chain; reporting Expired must be refused.
+        assert!(report(&mut v, "kta", TxState::Expired, None, "d", 8).is_err());
+        // Mainnet signing stays refused (read-only there).
+        let mut main = intent("kta-main", &to, "1");
+        main.chain_id = ChainId("keeta:main".into());
+        assert!(propose(&mut v, main, "d", 9).is_err());
+    }
+
+    #[test]
+    fn chromia_testnet_transfer_and_register_sign() {
+        let mut v = vault();
+        let path = "m/44'/60'/0'/0/0";
+        let public_of = |p: &str| {
+            hex::decode(provenance::public_key(&v, "w", Curve::Secp256k1, p).unwrap()).unwrap()
+        };
+        let from_pub = public_of(path);
+        let to_pub = public_of("m/44'/60'/0'/0/1");
+        let from = chromia::address(&from_pub).unwrap();
+        let to = chromia::address(&to_pub).unwrap();
+        let signer_hex = hex::encode(&from_pub);
+        let mut i = intent("chr", &to, "1500000");
+        i.chain_id = ChainId(chromia::TESTNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", chromia::TESTNET)),
+            amount: Amount("1500000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let tx = |from: &str| {
+            UnsignedTx::Chromia(ChromiaTx {
+                chain_id: chromia::TESTNET.into(),
+                from: from.into(),
+                signer: signer_hex.clone(),
+                to: to.clone(),
+                uchr: "1500000".into(),
+                nonce: "ab".repeat(32),
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Chromia(_)));
+        // Signing as the recipient account must be refused.
+        assert!(attach(
+            &mut v,
+            "chr",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "chr",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "chr", "d", 4).unwrap();
+        let rec = approve(&mut v, "chr", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "chr", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "chr", TxState::Pending, None, "d", 7).unwrap();
+        // A GTX has no deadline; reporting Expired must be refused.
+        assert!(report(&mut v, "chr", TxState::Expired, None, "d", 8).is_err());
+        // The self-claim registration tx signs for the same account.
+        let reg = UnsignedTx::ChromiaRegister(ChromiaRegisterTx {
+            chain_id: chromia::TESTNET.into(),
+            from: from.clone(),
+            signer: signer_hex.clone(),
+            register: true,
+        });
+        let mut ri = intent("chr-reg", &from, "0");
+        ri.chain_id = ChainId(chromia::TESTNET.into());
+        ri.kind = TxIntentKind::Transfer {
+            to: from.clone(),
+            asset: AssetRef(format!("{}:native", chromia::TESTNET)),
+            amount: Amount("0".into()),
+        };
+        propose(&mut v, ri, "d", 9).unwrap();
+        attach(
+            &mut v,
+            "chr-reg",
+            signer(&from),
+            reg,
+            serde_json::json!({}),
+            true,
+            "d",
+            10,
+        )
+        .unwrap();
+        evaluate(&mut v, "chr-reg", "d", 11).unwrap();
+        let rec = approve(&mut v, "chr-reg", &pw(), "d", 12).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        let mut main = intent("chr-main", &to, "1");
+        main.chain_id = ChainId("chromia:0x15c0ca99bee60a3b".into());
+        assert!(propose(&mut v, main, "d", 13).is_err());
+    }
+
+    #[test]
+    fn obyte_testnet_unit_signs_as_the_derived_address() {
+        use base64::Engine;
+        let mut v = vault();
+        let path = "m/44'/0'/0'/0/0";
+        let public_of = |p: &str| {
+            hex::decode(provenance::public_key(&v, "w", Curve::Secp256k1, p).unwrap()).unwrap()
+        };
+        let from = obyte::address(&public_of(path)).unwrap();
+        let to = obyte::address(&public_of("m/44'/0'/0'/0/1")).unwrap();
+        let author = base64::engine::general_purpose::STANDARD.encode(public_of(path));
+        let mut i = intent("gbyte", &to, "1500000");
+        i.chain_id = ChainId(obyte::TESTNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", obyte::TESTNET)),
+            amount: Amount("1500000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let b64 = |byte: u8| base64::engine::general_purpose::STANDARD.encode([byte; 32]);
+        let tx = |from: &str| {
+            UnsignedTx::Obyte(ObyteTx {
+                chain_id: obyte::TESTNET.into(),
+                from: from.into(),
+                author_pubkey: author.clone(),
+                to: to.clone(),
+                bytes: "1500000".into(),
+                timestamp: 1_750_000_000,
+                tps_fee: 0,
+                parent_units: vec![b64(0x11)],
+                last_ball: b64(0x22),
+                last_ball_unit: b64(0x33),
+                inputs: vec![crate::obyte::ObyteInput {
+                    unit: b64(0x44),
+                    message_index: 0,
+                    output_index: 0,
+                    amount: "2000000".into(),
+                }],
+                first_unit: false,
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Obyte(_)));
+        // Signing as the recipient account must be refused.
+        assert!(attach(
+            &mut v,
+            "gbyte",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "gbyte",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "gbyte", "d", 4).unwrap();
+        let rec = approve(&mut v, "gbyte", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "gbyte", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "gbyte", TxState::Pending, None, "d", 7).unwrap();
+        // Units never expire on-chain; reporting Expired must be refused.
+        assert!(report(&mut v, "gbyte", TxState::Expired, None, "d", 8).is_err());
+        let mut main = intent("gbyte-main", &to, "1");
+        main.chain_id = ChainId("obyte:mainnet".into());
+        assert!(propose(&mut v, main, "d", 9).is_err());
+    }
+
+    #[test]
+    fn starcoin_barnard_transfer_flows_through_the_ledger() {
+        family_transfer_flow(
+            "stc",
+            starcoin::BARNARD,
+            "starcoin:1",
+            Curve::Ed25519,
+            ["m/44'/101010'/0'/0'/0'", "m/44'/101010'/0'/0'/1'"],
+            starcoin::address,
+            "123456789",
+            |from, to| {
+                UnsignedTx::Starcoin(StarcoinTx {
+                    chain_id: starcoin::BARNARD.into(),
+                    from,
+                    to,
+                    nano: "123456789".into(),
+                    sequence_number: 41,
+                    max_gas_amount: 10_000_000,
+                    gas_unit_price: 1,
+                    expiration_timestamp_secs: 1_750_000_000,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn aelf_tdvv_transfer_flows_through_the_ledger() {
+        family_transfer_flow(
+            "elf",
+            aelf::TDVV,
+            "aelf:AELF",
+            Curve::Secp256k1,
+            ["m/44'/1616'/0'/0/0", "m/44'/1616'/0'/0/1"],
+            aelf::address,
+            "150000000",
+            |from, to| {
+                UnsignedTx::Aelf(AelfTx {
+                    chain_id: aelf::TDVV.into(),
+                    from,
+                    to,
+                    elves: "150000000".into(),
+                    ref_block_number: 20_000_000,
+                    ref_block_prefix: "a1b2c3d4".into(),
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn fuel_sepolia_transfer_flows_through_the_ledger() {
+        family_transfer_flow(
+            "fuel",
+            fuel::SEPOLIA,
+            fuel::MAINNET,
+            Curve::Secp256k1,
+            ["m/44'/1179993420'/0'/0/0", "m/44'/1179993420'/1'/0/0"],
+            fuel::address,
+            "123456789",
+            |from, to| {
+                UnsignedTx::Fuel(FuelTx {
+                    chain_id: fuel::SEPOLIA.into(),
+                    from,
+                    to,
+                    base: "123456789".into(),
+                    inputs: vec![fuel::FuelCoinInput {
+                        tx_id: format!("0x{}", "11".repeat(32)),
+                        output_index: 0,
+                        amount: "10000000000".into(),
+                    }],
+                    gas_limit: 0,
+                    max_fee: "1000000".into(),
+                    expiration: 7_600_000,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn chia_testnet11_spend_signs_the_standard_puzzle() {
+        let mut v = vault();
+        let path = "m/12381'/8444'/2'/0'";
+        let address_of = |p: &str| {
+            let public =
+                hex::decode(provenance::public_key(&v, "w", Curve::Ed25519, p).unwrap()).unwrap();
+            chia::address(&public).unwrap()
+        };
+        let from = address_of(path);
+        let to = address_of("m/12381'/8444'/2'/1'");
+        let mut i = intent("xch", &to, "1500000");
+        i.chain_id = ChainId(chia::TESTNET11.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", chia::TESTNET11)),
+            amount: Amount("1500000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let tx = |from: &str| {
+            UnsignedTx::Chia(ChiaTx {
+                chain_id: chia::TESTNET11.into(),
+                from: from.into(),
+                to: to.clone(),
+                mojos: "1500000".into(),
+                fee: "100".into(),
+                parent_coin_id: "ab".repeat(32),
+                coin_mojos: "2000000".into(),
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Chia(_)));
+        // Signing as the recipient account must be refused.
+        assert!(attach(
+            &mut v,
+            "xch",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "xch",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "xch", "d", 4).unwrap();
+        let rec = approve(&mut v, "xch", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "xch", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "xch", TxState::Pending, None, "d", 7).unwrap();
+        // A Chia spend dies only when its coin is spent; Expired must be refused.
+        assert!(report(&mut v, "xch", TxState::Expired, None, "d", 8).is_err());
+        let mut main = intent("xch-main", &to, "1");
+        main.chain_id = ChainId(chia::MAINNET.into());
+        assert!(propose(&mut v, main, "d", 9).is_err());
+    }
+
+    #[test]
+    fn aeternity_testnet_transfer_flow() {
+        family_transfer_flow(
+            "aet",
+            aeternity::TESTNET,
+            "aet:ae_mainnet",
+            Curve::Ed25519,
+            ["m/44'/457'/0'/0'/0'", "m/44'/457'/0'/0'/1'"],
+            aeternity::address,
+            "1000000000000000",
+            |from, to| {
+                UnsignedTx::Aeternity(AeternityTx {
+                    chain_id: aeternity::TESTNET.into(),
+                    from,
+                    to,
+                    aettos: "1000000000000000".into(),
+                    fee: "20000000000000".into(),
+                    ttl: 1_400_000,
+                    nonce: 1,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn alephium_testnet_transfer_signs_grouped_p2pkh() {
+        let mut v = vault();
+        let path = "m/44'/1234'/0'/0/0";
+        let address_of = |p: &str| {
+            let public =
+                hex::decode(provenance::public_key(&v, "w", Curve::Secp256k1, p).unwrap()).unwrap();
+            alephium::address(&public).unwrap()
+        };
+        let from = address_of(path);
+        let to = address_of("m/44'/1234'/0'/0/1");
+        let from_pub = provenance::public_key(&v, "w", Curve::Secp256k1, path).unwrap();
+        let mut i = intent("alph", &to, "1000000000000000000");
+        i.chain_id = ChainId(alephium::TESTNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", alephium::TESTNET)),
+            amount: Amount("1000000000000000000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let tx = |from: &str| {
+            UnsignedTx::Alephium(AlephiumTx {
+                chain_id: alephium::TESTNET.into(),
+                from: from.into(),
+                public_key: from_pub.clone(),
+                to: to.clone(),
+                attoalph: "1000000000000000000".into(),
+                change: "23998000000000000000".into(),
+                inputs: vec![alephium::AlephiumInput {
+                    hint: 1_088_969_728,
+                    key: "ab".repeat(32),
+                }],
+                gas_amount: 20_000,
+                gas_price: "100000000000".into(),
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Alephium(_)));
+        // Signing as the recipient account must be refused.
+        assert!(attach(
+            &mut v,
+            "alph",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "alph",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "alph", "d", 4).unwrap();
+        let rec = approve(&mut v, "alph", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "alph", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "alph", TxState::Pending, None, "d", 7).unwrap();
+        // Alephium transactions never expire; reporting Expired must be refused.
+        assert!(report(&mut v, "alph", TxState::Expired, None, "d", 8).is_err());
+        let mut main = intent("alph-main", &to, "1");
+        main.chain_id = ChainId("alephium:0".into());
+        assert!(propose(&mut v, main, "d", 9).is_err());
+    }
+
+    #[test]
+    fn ergo_testnet_transfer_signs_p2pk_boxes() {
+        let mut v = vault();
+        let path = "m/44'/429'/0'/0/0";
+        let address_of = |p: &str| {
+            let public =
+                hex::decode(provenance::public_key(&v, "w", Curve::Secp256k1, p).unwrap()).unwrap();
+            ergo::address(&public).unwrap()
+        };
+        let from = address_of(path);
+        let to = address_of("m/44'/429'/0'/0/1");
+        let mut i = intent("erg", &to, "1000000000");
+        i.chain_id = ChainId(ergo::TESTNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", ergo::TESTNET)),
+            amount: Amount("1000000000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let tx = |from: &str| {
+            UnsignedTx::Ergo(ErgoTx {
+                chain_id: ergo::TESTNET.into(),
+                from: from.into(),
+                to: to.clone(),
+                nanoerg: "1000000000".into(),
+                inputs: vec!["ab".repeat(32)],
+                change: "10000000".into(),
+                fee: "1000000".into(),
+                height: 598_000,
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Ergo(_)));
+        // Signing as the recipient account must be refused.
+        assert!(attach(
+            &mut v,
+            "erg",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "erg",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "erg", "d", 4).unwrap();
+        let rec = approve(&mut v, "erg", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "erg", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "erg", TxState::Pending, None, "d", 7).unwrap();
+        // Ergo transactions never expire; reporting Expired must be refused.
+        assert!(report(&mut v, "erg", TxState::Expired, None, "d", 8).is_err());
+        let mut main = intent("erg-main", &to, "1");
+        main.chain_id = ChainId(ergo::MAINNET.into());
+        assert!(propose(&mut v, main, "d", 9).is_err());
+    }
+
+    #[test]
+    fn icp_mainnet_transfer_signs_with_strict_bounds() {
+        let mut v = vault();
+        let path = "m/44'/223'/0'/0/0";
+        let address_of = |p: &str| {
+            let public =
+                hex::decode(provenance::public_key(&v, "w", Curve::Secp256k1, p).unwrap()).unwrap();
+            icp::address(&public).unwrap()
+        };
+        let from = address_of(path);
+        let to = address_of("m/44'/223'/0'/0/1");
+        let mut i = intent("icp", &to, "100000000");
+        i.chain_id = ChainId(icp::MAINNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", icp::MAINNET)),
+            amount: Amount("100000000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let tx = |from: &str| {
+            UnsignedTx::Icp(IcpTx {
+                chain_id: icp::MAINNET.into(),
+                from: from.into(),
+                to: to.clone(),
+                e8s: "100000000".into(),
+                memo: 0,
+                created_at_nanos: "1760000000000000000".into(),
+                ingress_expiry_nanos: "1760000240000000000".into(),
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Icp(_)));
+        // Signing as the recipient account must be refused.
+        assert!(attach(
+            &mut v,
+            "icp",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "icp",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "icp", "d", 4).unwrap();
+        let rec = approve(&mut v, "icp", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "icp", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "icp", TxState::Pending, None, "d", 7).unwrap();
+        // Past the ingress expiry the replica drops the request.
+        assert_eq!(
+            report(&mut v, "icp", TxState::Expired, None, "d", 8)
+                .unwrap()
+                .state,
+            TxState::Expired
+        );
+        // Any other chain id must be refused.
+        let mut other = intent("icp-other", &to, "1");
+        other.chain_id = ChainId("icp:00000000000000000001".into());
+        assert!(propose(&mut v, other, "d", 9).is_err());
+    }
+
+    #[test]
+    fn radix_stokenet_transfer_flows_through_the_ledger() {
+        family_transfer_flow(
+            "xrd",
+            radix::STOKENET,
+            radix::MAINNET,
+            Curve::Ed25519,
+            [
+                "m/44'/1022'/2'/525'/1460'/0'",
+                "m/44'/1022'/2'/525'/1460'/1'",
+            ],
+            radix::address,
+            "1000000000000000000",
+            |from, to| {
+                UnsignedTx::Radix(RadixTx {
+                    chain_id: radix::STOKENET.into(),
+                    from,
+                    to,
+                    attos: "1000000000000000000".into(),
+                    start_epoch_inclusive: 100,
+                    end_epoch_exclusive: 110,
+                    nonce: 7,
+                    tip_percentage: 0,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn waves_testnet_transfer_binds_the_axolotl_signing_key() {
+        let mut v = vault();
+        let path = "m/44'/5741564'/0'/0'/0'";
+        let public_of = |p: &str| provenance::public_key(&v, "w", Curve::Ed25519, p).unwrap();
+        let address_of = |p: &str| waves::address(&hex::decode(public_of(p)).unwrap()).unwrap();
+        let from = address_of(path);
+        let from_pub = public_of(path);
+        let to = address_of("m/44'/5741564'/0'/0'/1'");
+        let mut i = intent("waves", &to, "100000000");
+        i.chain_id = ChainId(waves::TESTNET.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", waves::TESTNET)),
+            amount: Amount("100000000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let tx = |from: &str| {
+            UnsignedTx::Waves(WavesTx {
+                chain_id: waves::TESTNET.into(),
+                from: from.into(),
+                to: to.clone(),
+                wavelets: "100000000".into(),
+                public_key_hex: from_pub.clone(),
+                timestamp: 1_760_000_000_000,
+                built_at_ms: 1_760_000_000_000,
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Waves(_)));
+        // Signing as the recipient account must be refused.
+        assert!(attach(
+            &mut v,
+            "waves",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "waves",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "waves", "d", 4).unwrap();
+        let rec = approve(&mut v, "waves", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        report(&mut v, "waves", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "waves", TxState::Pending, None, "d", 7).unwrap();
+        assert_eq!(
+            report(&mut v, "waves", TxState::Expired, None, "d", 8)
+                .unwrap()
+                .state,
+            TxState::Expired
+        );
+        let mut main = intent("waves-main", &to, "1");
+        main.chain_id = ChainId(waves::MAINNET.into());
+        assert!(propose(&mut v, main, "d", 9).is_err());
+    }
+
+    #[test]
+    fn everscale_venom_testnet_transfer_flows_through_the_ledger() {
+        family_transfer_flow(
+            "venom",
+            everscale::TESTNET,
+            everscale::VENOM_MAINNET,
+            Curve::Ed25519,
+            ["m/44'/396'/0'/0'/0'", "m/44'/396'/0'/0'/1'"],
+            everscale::address,
+            "1000000000",
+            |from, to| {
+                UnsignedTx::Everscale(EverscaleTx {
+                    chain_id: everscale::TESTNET.into(),
+                    from,
+                    to,
+                    evers: "1000000000".into(),
+                    time_ms: 1_760_000_000_000,
+                    expire_at: 1_760_001_800,
+                    built_at_ms: 1_760_000_000_000,
+                    bounce: false,
+                    deploy: false,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn icon_lisbon_transfer_flows_through_the_ledger() {
+        family_transfer_flow(
+            "icx",
+            icon::LISBON,
+            icon::MAINNET,
+            Curve::Secp256k1,
+            ["m/44'/4801368'/0'/0'/0'", "m/44'/4801368'/0'/0'/1'"],
+            icon::address,
+            "1000000000000000000",
+            |from, to| {
+                UnsignedTx::Icon(IconTx {
+                    chain_id: icon::LISBON.into(),
+                    from,
+                    to,
+                    r#loop: "1000000000000000000".into(),
+                    nonce: 1,
+                    step_limit: 100_000,
+                    timestamp: 1_760_000_000_000_000,
+                    built_at_ms: 1_760_000_000_000,
+                })
+            },
+        );
+    }
+
+    #[test]
+    fn starknet_sepolia_transfer_deploys_and_signs_as_the_derived_account() {
+        let mut v = vault();
+        let path = "m/44'/9004'/0'/0/0";
+        let address_of = |p: &str| {
+            let public =
+                hex::decode(provenance::public_key(&v, "w", Curve::Secp256k1, p).unwrap()).unwrap();
+            starknet::address(&public).unwrap()
+        };
+        let from = address_of(path);
+        let to = address_of("m/44'/9004'/0'/0/1");
+        let mut i = intent("strk", &to, "1000000000000000000");
+        i.chain_id = ChainId(starknet::SEPOLIA.into());
+        i.kind = TxIntentKind::Transfer {
+            to: to.clone(),
+            asset: AssetRef(format!("{}:native", starknet::SEPOLIA)),
+            amount: Amount("1000000000000000000".into()),
+        };
+        propose(&mut v, i, "d", 1).unwrap();
+        let tx = |from: &str| {
+            UnsignedTx::Starknet(StarknetTx {
+                chain_id: starknet::SEPOLIA.into(),
+                from: from.into(),
+                to: to.clone(),
+                fri: "1000000000000000000".into(),
+                nonce: 1,
+                deploy: true,
+                tip: "0".into(),
+                l1_gas_max_amount: 0,
+                l1_gas_max_price: "0".into(),
+                l2_gas_max_amount: 4_000_000,
+                l2_gas_max_price: "1000000000".into(),
+                l1_data_gas_max_amount: 1_024,
+                l1_data_gas_max_price: "1000000000".into(),
+            })
+        };
+        let signer = |address: &str| Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: address.into(),
+        };
+        let parsed: UnsignedTx =
+            serde_json::from_value(serde_json::to_value(tx(&from)).unwrap()).unwrap();
+        assert!(matches!(parsed, UnsignedTx::Starknet(_)));
+        // Signing as the recipient account must be refused.
+        assert!(attach(
+            &mut v,
+            "strk",
+            signer(&to),
+            tx(&to),
+            serde_json::json!({}),
+            true,
+            "d",
+            2
+        )
+        .is_err());
+        attach(
+            &mut v,
+            "strk",
+            signer(&from),
+            parsed,
+            serde_json::json!({}),
+            true,
+            "d",
+            3,
+        )
+        .unwrap();
+        evaluate(&mut v, "strk", "d", 4).unwrap();
+        let rec = approve(&mut v, "strk", &pw(), "d", 5).unwrap();
+        assert_eq!(rec.state, TxState::Signed);
+        assert!(rec
+            .raw_signed_hex
+            .unwrap()
+            .contains("deploy_account_transaction"));
+        report(&mut v, "strk", TxState::Broadcast, None, "d", 6).unwrap();
+        report(&mut v, "strk", TxState::Pending, None, "d", 7).unwrap();
+        // v3 transactions have no expiry: reporting Expired must be refused.
+        assert!(report(&mut v, "strk", TxState::Expired, None, "d", 8).is_err());
+        let mut main = intent("strk-main", &to, "1");
+        main.chain_id = ChainId(starknet::MAINNET.into());
+        assert!(propose(&mut v, main, "d", 9).is_err());
+    }
+
+    #[test]
+    fn cardano_refuses_a_non_cip1852_path() {
+        assert_eq!(provenance::cardano_account("m/1852'/1815'/3'/0/0"), Some(3));
+        for p in [
+            "m/1852'/1815'/0'/2/0",
+            "m/1852'/1815'/01'/0/0",
+            "m/44'/1815'/0'/0/0",
+            "m/1852'/1815'/2147483648'/0/0",
+        ] {
+            assert_eq!(provenance::cardano_account(p), None, "{p}");
+        }
+    }
     #[test]
     fn a_swapped_destination_or_signer_is_refused() {
         let mut v = vault();

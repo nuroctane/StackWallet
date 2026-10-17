@@ -17,29 +17,68 @@
 //! - [`transport`] pairing, Noise channel and session framing (sans-IO)
 //! - [`store`]     SQLite persistence
 
+pub mod aelf;
+pub mod aeternity;
+pub mod aleo;
+pub mod alephium;
+pub mod algorand;
+pub mod antelope;
+pub mod aptos;
 pub mod audit;
 pub mod bitcoin;
+pub mod btcfork;
+pub mod canton;
+pub mod cardano;
+pub mod chia;
+pub mod chromia;
 pub mod cosmos;
+pub mod ergo;
+pub mod everscale;
 pub mod evm;
 pub mod export_gate;
+pub mod fuel;
+pub mod gala;
 pub mod hardware;
 pub mod hd;
+pub mod hyperliquid;
+pub mod icon;
+pub mod icp;
 pub mod identity;
 pub mod intent;
+pub mod keeta;
 pub mod ledger;
 pub mod lifecycle;
 pub mod message;
+pub mod mixin;
 pub mod model;
+pub mod multiversx;
+pub mod namada;
+pub mod near;
+pub mod neo;
+pub mod obyte;
 pub mod policy;
 pub mod provenance;
+pub mod qubic;
+pub mod radix;
 pub mod solana;
+pub mod stacks;
+pub mod starcoin;
+pub mod starknet;
+pub mod stellar;
 pub mod store;
+pub mod substrate;
+pub mod sui;
+pub mod tezos;
 pub mod threshold;
+pub mod ton;
 pub mod transfer;
 pub mod transport;
 pub mod tron;
 pub mod tss;
 pub mod vault;
+pub mod vechain;
+pub mod waves;
+pub mod xrpl;
 
 /// Crate version, surfaced to every frontend so the UI can show which core it talks to.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

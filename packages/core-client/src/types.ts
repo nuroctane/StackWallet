@@ -5,7 +5,52 @@
  */
 import { z } from 'zod';
 
-export const ChainFamily = z.enum(['evm', 'bitcoin', 'solana', 'cosmos', 'tron']);
+export const ChainFamily = z.enum([
+  'evm',
+  'bitcoin',
+  'solana',
+  'cosmos',
+  'tron',
+  'substrate',
+  'sui',
+  'aptos',
+  'stellar',
+  'near',
+  'ton',
+  'xrpl',
+  'cardano',
+  'algorand',
+  'tezos',
+  'multiversx',
+  'antelope',
+  'hyperliquid',
+  'stacks',
+  'vechain',
+  'starknet',
+  'icp',
+  'waves',
+  'neo',
+  'ergo',
+  'icon',
+  'alephium',
+  'chia',
+  'everscale',
+  'radix',
+  'aeternity',
+  'fuel',
+  'aelf',
+  'starcoin',
+  'obyte',
+  'chromia',
+  'keeta',
+  'btcfork',
+  'gala',
+  'mixin',
+  'qubic',
+  'aleo',
+  'canton',
+  'namada',
+]);
 export type ChainFamily = z.infer<typeof ChainFamily>;
 
 /** CAIP-2: `namespace:reference`. */
@@ -27,6 +72,101 @@ export function chainFamilyOf(chainId: ChainId): ChainFamily | undefined {
       return 'cosmos';
     case 'tron':
       return 'tron';
+    case 'algorand':
+      return 'algorand';
+    case 'antelope':
+      return 'antelope';
+    case 'aptos':
+    case 'movement':
+    case 'supra':
+      return 'aptos';
+    case 'cip34':
+      return 'cardano';
+    case 'hype':
+      return 'hyperliquid';
+    case 'mvx':
+      return 'multiversx';
+    case 'near':
+      return 'near';
+    case 'polkadot':
+      return 'substrate';
+    case 'stacks':
+      return 'stacks';
+    case 'stellar':
+      return 'stellar';
+    case 'sui':
+    case 'iota':
+      return 'sui';
+    case 'tezos':
+      return 'tezos';
+    case 'tvm':
+      return 'ton';
+    case 'vechain':
+      return 'vechain';
+    case 'starknet':
+      return 'starknet';
+    case 'icp':
+      return 'icp';
+    case 'waves':
+      return 'waves';
+    case 'neo3':
+      return 'neo';
+    case 'ergo':
+      return 'ergo';
+    case 'obyte':
+      return 'obyte';
+    case 'chromia':
+      return 'chromia';
+    case 'keeta':
+      return 'keeta';
+    case 'icon':
+      return 'icon';
+    case 'alph':
+    case 'alephium':
+      return 'alephium';
+    case 'chia':
+      return 'chia';
+    case 'ever':
+    case 'venom':
+      return 'everscale';
+    case 'radix':
+      return 'radix';
+    case 'aet':
+      return 'aeternity';
+    case 'fuel':
+      return 'fuel';
+    case 'aelf':
+      return 'aelf';
+    case 'starcoin':
+      return 'starcoin';
+    case 'obyte':
+      return 'obyte';
+    case 'chromia':
+      return 'chromia';
+    case 'keeta':
+      return 'keeta';
+    case 'chromia':
+      return 'chromia';
+    case 'keeta':
+      return 'keeta';
+    case 'keeta':
+      return 'keeta';
+    case 'btcfork':
+      return 'btcfork';
+    case 'gala':
+      return 'gala';
+    case 'mixin':
+      return 'mixin';
+    case 'qubic':
+      return 'qubic';
+    case 'aleo':
+      return 'aleo';
+    case 'canton':
+      return 'canton';
+    case 'namada':
+      return 'namada';
+    case 'xrpl':
+      return 'xrpl';
     default:
       return undefined;
   }
@@ -792,7 +932,581 @@ export const TronTx = z.strictObject({
   timestamp: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
 });
 export type TronTx = z.infer<typeof TronTx>;
-export const LedgerUnsignedTx = z.union([EvmTx, SolanaTx, CosmosTx, BitcoinTx, TronTx]);
+const SubstrateAddress = z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{40,50}$/);
+const SubstrateU32 = z.number().int().nonnegative().max(0xffffffff);
+const SubstrateHash = z.string().regex(/^0x[0-9a-f]{64}$/);
+export const SubstrateTx = z.strictObject({
+  chainId: z.enum([
+    'polkadot:e143f23803ac50e8f6f8e62695d1ce9e',
+    'polkadot:67f9723393ef76214df0118c34bbbd3d',
+  ]),
+  from: SubstrateAddress,
+  to: SubstrateAddress,
+  planck: z.string().regex(/^(0|[1-9][0-9]{0,38})$/),
+  tip: z.string().regex(/^(0|[1-9][0-9]{0,38})$/),
+  nonce: SubstrateU32,
+  specVersion: SubstrateU32.min(1),
+  transactionVersion: SubstrateU32,
+  genesisHash: SubstrateHash,
+  blockHash: SubstrateHash,
+  blockNumber: SubstrateU32,
+  eraPeriod: z.number().int().min(4).max(4096),
+  metadataHashMode: z.literal(0),
+});
+export type SubstrateTx = z.infer<typeof SubstrateTx>;
+const StellarAddress = z.string().regex(/^G[A-Z2-7]{55}$/);
+export const StellarTx = z.strictObject({
+  chainId: z.literal('stellar:testnet'),
+  from: StellarAddress,
+  to: StellarAddress,
+  stroops: Amount,
+  fee: z.number().int().min(100).max(10_000_000),
+  seqNum: z.string().regex(/^[0-9]+$/),
+  maxTime: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  builtAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  createAccount: z.boolean(),
+});
+export type StellarTx = z.infer<typeof StellarTx>;
+const Hex32Address = z.string().regex(/^0x[0-9a-f]{64}$/);
+export const AptosTx = z.strictObject({
+  chainId: z.literal('aptos:2'),
+  from: Hex32Address,
+  to: Hex32Address,
+  octas: Amount,
+  sequenceNumber: z.string().regex(/^[0-9]+$/),
+  maxGasAmount: z.number().int().min(1).max(20_000),
+  gasUnitPrice: z.number().int().min(1).max(10_000),
+  expirationTimestampSecs: z.number().int().positive().max(4_102_444_800),
+});
+export type AptosTx = z.infer<typeof AptosTx>;
+const XrplAddress = z.string().regex(/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/);
+export const XrplTx = z.strictObject({
+  chainId: z.literal('xrpl:1'),
+  from: XrplAddress,
+  to: XrplAddress,
+  drops: Amount,
+  fee: z.number().int().min(10).max(1_000_000),
+  sequence: z.number().int().min(1).max(0xffff_ffff),
+  lastLedgerSequence: z.number().int().min(2).max(0xffff_ffff),
+  builtAtLedger: z.number().int().min(1).max(0xffff_ffff),
+  destinationTag: z.number().int().min(0).max(0xffff_ffff).optional(),
+  publicKeyHex: z.string().regex(/^(02|03)[0-9a-f]{64}$/),
+});
+export type XrplTx = z.infer<typeof XrplTx>;
+export const SuiTx = z.strictObject({
+  chainId: z.literal('sui:testnet'),
+  from: Hex32Address,
+  to: Hex32Address,
+  mist: Amount,
+  gasPayment: z
+    .array(
+      z.strictObject({
+        objectId: Hex32Address,
+        version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+        digest: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
+      }),
+    )
+    .min(1)
+    .max(16),
+  gasPrice: z.number().int().min(1).max(100_000),
+  gasBudget: z.number().int().positive().max(1_000_000_000),
+});
+export type SuiTx = z.infer<typeof SuiTx>;
+export const NearTx = z.strictObject({
+  chainId: z.literal('near:testnet'),
+  from: z.string().regex(/^[0-9a-f]{64}$/),
+  to: z
+    .string()
+    .min(2)
+    .max(64)
+    .regex(/^[a-z0-9._-]+$/),
+  yocto: Amount,
+  nonce: z.string().regex(/^[0-9]+$/),
+  blockHash: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/),
+  blockHeight: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
+export type NearTx = z.infer<typeof NearTx>;
+const AlgorandAddress = z.string().regex(/^[A-Z2-7]{58}$/);
+const AlgorandRound = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+export const AlgorandTx = z.strictObject({
+  chainId: z.literal('algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDe'),
+  from: AlgorandAddress,
+  to: AlgorandAddress,
+  microalgos: z.string().regex(/^[1-9][0-9]{0,16}$/),
+  fee: z.number().int().min(1_000).max(1_000_000),
+  firstValid: AlgorandRound,
+  lastValid: AlgorandRound,
+  genesisID: z.literal('testnet-v1.0'),
+  genesisHash: z.literal('SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI='),
+});
+export type AlgorandTx = z.infer<typeof AlgorandTx>;
+export const TonTx = z.strictObject({
+  chainId: z.literal('tvm:-3'),
+  from: z.string().regex(/^[A-Za-z0-9_-]{48}$/),
+  to: z.string().min(48).max(66),
+  nanoton: Amount,
+  seqno: z.number().int().min(0).max(0xffff_ffff),
+  validUntil: z.number().int().positive().max(0xffff_ffff),
+  builtAt: z.number().int().positive().max(0xffff_ffff),
+  bounce: z.boolean(),
+  deploy: z.boolean(),
+});
+export type TonTx = z.infer<typeof TonTx>;
+const CardanoLovelace = z.string().regex(/^[1-9][0-9]{0,16}$/);
+const CardanoTestnetAddress = z.string().regex(/^addr_test1[02-9ac-hj-np-z]{50,110}$/);
+export const CardanoInput = z.strictObject({
+  txHash: z.string().regex(/^[0-9a-f]{64}$/),
+  index: z.number().int().min(0).max(0xffffffff),
+  lovelace: CardanoLovelace,
+});
+export type CardanoInput = z.infer<typeof CardanoInput>;
+export const CardanoTx = z.strictObject({
+  chainId: z.literal('cip34:0-1'),
+  from: CardanoTestnetAddress,
+  to: CardanoTestnetAddress,
+  lovelace: CardanoLovelace,
+  inputs: z.array(CardanoInput).min(1).max(40),
+  fee: z.number().int().min(1).max(1_000_000),
+  ttl: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  builtSlot: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  minFeeA: z.number().int().min(1).max(1_000),
+  minFeeB: z.number().int().min(1).max(1_000_000),
+  coinsPerUtxoByte: z.number().int().min(1).max(100_000),
+});
+export type CardanoTx = z.infer<typeof CardanoTx>;
+const AntelopeName = z.string().regex(/^[.1-5a-z]{1,12}$/);
+export const AntelopeTx = z.strictObject({
+  chainId: z.literal('antelope:f16b1833c747c43682f4386fca9cbb32'),
+  from: AntelopeName,
+  permission: AntelopeName,
+  to: AntelopeName,
+  antelopeUnits: z.string().regex(/^[1-9][0-9]{0,18}$/),
+  symbol: z.literal('WAX'),
+  precision: z.literal(8),
+  tokenContract: z.literal('eosio.token'),
+  memo: z.string().max(256),
+  expiration: z.number().int().min(1).max(0xffff_ffff),
+  refBlockNum: z.number().int().min(0).max(0xffff),
+  refBlockPrefix: z.number().int().min(0).max(0xffff_ffff),
+  builtAtSecs: z.number().int().min(1).max(0xffff_ffff),
+  publicKey: z.string().regex(/^PUB_K1_[1-9A-HJ-NP-Za-km-z]{48,52}$/),
+});
+export type AntelopeTx = z.infer<typeof AntelopeTx>;
+export const MultiversxTx = z.strictObject({
+  chainId: z.literal('mvx:D'),
+  from: z.string().regex(/^erd1[02-9ac-hj-np-z]{58}$/),
+  to: z.string().regex(/^erd1[02-9ac-hj-np-z]{58}$/),
+  attoegld: z.string().regex(/^[1-9][0-9]{0,25}$/),
+  nonce: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  gasPrice: z.number().int().min(1_000_000_000).max(100_000_000_000),
+  gasLimit: z.number().int().min(50_000).max(1_000_000),
+});
+export type MultiversxTx = z.infer<typeof MultiversxTx>;
+const TezosImplicit = z.string().regex(/^tz[1-4][1-9A-HJ-NP-Za-km-z]{33}$/);
+const TezosFee = z.number().int().min(100).max(100_000);
+export const TezosTx = z.strictObject({
+  chainId: z.literal('tezos:NetXsqzbfFenSTS'),
+  from: z.string().regex(/^tz1[1-9A-HJ-NP-Za-km-z]{33}$/),
+  to: TezosImplicit,
+  mutez: z.string().regex(/^[1-9][0-9]{0,18}$/),
+  branch: z.string().regex(/^B[1-9A-HJ-NP-Za-km-z]{50}$/),
+  counter: z.number().int().min(1).max(9_007_199_254_740_990),
+  fee: TezosFee,
+  gasLimit: z.number().int().min(1).max(100_000),
+  storageLimit: z.number().int().min(0).max(1_000),
+  reveal: z
+    .strictObject({ fee: TezosFee, gasLimit: z.number().int().min(1).max(10_000) })
+    .optional(),
+});
+export type TezosTx = z.infer<typeof TezosTx>;
+export const StacksTx = z.strictObject({
+  chainId: z.literal('stacks:2147483648'),
+  from: z.string().max(64),
+  to: z.string().max(64),
+  microstx: z.string().regex(/^[1-9][0-9]{0,19}$/),
+  fee: z.number().int().min(1).max(1_000_000),
+  nonce: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+});
+export type StacksTx = z.infer<typeof StacksTx>;
+export const VechainTx = z.strictObject({
+  chainId: z.literal('vechain:87721b09ed2e15997f466536b20bb127'),
+  from: z.string().regex(/^0x[0-9a-f]{40}$/),
+  to: z.string().regex(/^0x[0-9a-f]{40}$/),
+  vetWei: z.string().regex(/^[1-9][0-9]{0,38}$/),
+  blockRef: z.string().regex(/^[0-9a-f]{16}$/),
+  expiration: z.number().int().min(1).max(720),
+  gasPriceCoef: z.number().int().min(0).max(255),
+  gas: z.number().int().min(21_000).max(100_000),
+  nonce: z.string().regex(/^[0-9a-f]{16}$/),
+});
+export type VechainTx = z.infer<typeof VechainTx>;
+export const HyperliquidTx = z.strictObject({
+  chainId: z.literal('hype:testnet'),
+  from: z.string().regex(/^0x[0-9a-f]{40}$/),
+  to: z.string().regex(/^0x[0-9a-f]{40}$/),
+  hlUsdMicro: z.string().regex(/^[1-9][0-9]{0,15}$/),
+  time: z.number().int().min(1_672_531_200_000).max(Number.MAX_SAFE_INTEGER),
+  builtAtMs: z.number().int().min(1_672_531_200_000).max(Number.MAX_SAFE_INTEGER),
+});
+export type HyperliquidTx = z.infer<typeof HyperliquidTx>;
+const StarknetAddress = z.string().regex(/^0x[0-9a-f]{64}$/);
+const StarknetU128 = z.string().regex(/^(0|[1-9][0-9]{0,38})$/);
+export const StarknetTx = z.strictObject({
+  chainId: z.literal('starknet:SN_SEPOLIA'),
+  from: StarknetAddress,
+  to: StarknetAddress,
+  fri: z.string().regex(/^[1-9][0-9]{0,38}$/),
+  nonce: z
+    .number()
+    .int()
+    .min(1)
+    .max(2 ** 53),
+  deploy: z.boolean(),
+  tip: StarknetU128,
+  l1GasMaxAmount: z.number().int().nonnegative().max(1_000_000),
+  l1GasMaxPrice: StarknetU128,
+  l2GasMaxAmount: z.number().int().min(1).max(1_000_000_000),
+  l2GasMaxPrice: z.string().regex(/^[1-9][0-9]{0,38}$/),
+  l1DataGasMaxAmount: z.number().int().nonnegative().max(1_000_000),
+  l1DataGasMaxPrice: StarknetU128,
+});
+export type StarknetTx = z.infer<typeof StarknetTx>;
+const IconAddress = z.string().regex(/^hx[0-9a-f]{40}$/);
+export const IconTx = z.strictObject({
+  chainId: z.literal('icon:2'),
+  from: IconAddress,
+  to: IconAddress,
+  loop: z.string().regex(/^[1-9][0-9]{0,26}$/),
+  nonce: z.number().int().min(1).max(1_000_000),
+  stepLimit: z.number().int().min(100_000).max(25_000_000),
+  timestamp: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  builtAtMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
+export type IconTx = z.infer<typeof IconTx>;
+export const EverscaleTx = z.strictObject({
+  chainId: z.literal('venom:1002'),
+  from: z.string().regex(/^0:[0-9a-f]{64}$/),
+  to: z.string().regex(/^0:[0-9a-f]{64}$/),
+  evers: Amount,
+  timeMs: z
+    .number()
+    .int()
+    .positive()
+    .max(2 ** 53 - 1),
+  expireAt: z.number().int().positive().max(0xffff_ffff),
+  builtAtMs: z.number().int().positive(),
+  bounce: z.boolean(),
+  deploy: z.boolean(),
+});
+export type EverscaleTx = z.infer<typeof EverscaleTx>;
+export const WavesTx = z.strictObject({
+  chainId: z.literal('waves:84'),
+  from: z.string().regex(/^3[1-9A-HJ-NP-Za-km-z]{25,35}$/),
+  to: z.string().regex(/^3[1-9A-HJ-NP-Za-km-z]{25,35}$/),
+  wavelets: z.string().regex(/^[1-9][0-9]{0,18}$/),
+  publicKeyHex: z.string().regex(/^[0-9a-f]{64}$/),
+  timestamp: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  builtAtMs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+});
+export type WavesTx = z.infer<typeof WavesTx>;
+export const RadixTx = z.strictObject({
+  chainId: z.literal('radix:stokenet'),
+  from: z.string().regex(/^account_tdx_2_1[02-9ac-hj-np-z]{20,60}$/),
+  to: z.string().regex(/^account_tdx_2_1[02-9ac-hj-np-z]{20,60}$/),
+  attos: z.string().regex(/^[1-9][0-9]{0,28}$/),
+  startEpochInclusive: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  endEpochExclusive: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  nonce: z.number().int().nonnegative().max(0xffffffff),
+  tipPercentage: z.number().int().nonnegative().max(100),
+});
+export type RadixTx = z.infer<typeof RadixTx>;
+export const IcpTx = z.strictObject({
+  chainId: z.literal('icp:00000000000000000000'),
+  from: z.string().regex(/^[0-9a-f]{64}$/),
+  to: z.string().regex(/^[0-9a-f]{64}$/),
+  e8s: z.string().regex(/^[1-9]\d{0,17}$/),
+  memo: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  createdAtNanos: z.string().regex(/^(0|[1-9]\d{0,18})$/),
+  ingressExpiryNanos: z.string().regex(/^(0|[1-9]\d{0,18})$/),
+});
+export type IcpTx = z.infer<typeof IcpTx>;
+export const ErgoTx = z.strictObject({
+  chainId: z.literal('ergo:testnet'),
+  from: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{51,52}$/),
+  to: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{51,52}$/),
+  nanoerg: z.string().regex(/^[1-9]\d{0,18}$/),
+  inputs: z
+    .array(z.string().regex(/^[0-9a-f]{64}$/))
+    .min(1)
+    .max(16),
+  change: z.string().regex(/^[1-9]\d{0,18}$/),
+  fee: z.string().regex(/^[1-9]\d{0,7}$/),
+  height: z.number().int().min(1).max(100_000_000),
+});
+export type ErgoTx = z.infer<typeof ErgoTx>;
+export const AlephiumTx = z.strictObject({
+  chainId: z.literal('alephium:1'),
+  from: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{30,50}$/),
+  publicKey: z.string().regex(/^0[23][0-9a-f]{64}$/),
+  to: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{30,50}$/),
+  attoalph: z.string().regex(/^[1-9][0-9]{0,38}$/),
+  change: z.string().regex(/^[1-9][0-9]{0,38}$/),
+  inputs: z
+    .array(
+      z.strictObject({
+        hint: z.number().int().min(-0x80000000).max(0x7fffffff),
+        key: z.string().regex(/^[0-9a-f]{64}$/),
+      }),
+    )
+    .min(1)
+    .max(64),
+  gasAmount: z.number().int().min(20_000).max(5_000_000),
+  gasPrice: z.string().regex(/^[1-9][0-9]{10,17}$/),
+});
+export type AlephiumTx = z.infer<typeof AlephiumTx>;
+const AeternityAddress = z.string().regex(/^ak_[1-9A-HJ-NP-Za-km-z]{40,60}$/);
+export const AeternityTx = z.strictObject({
+  chainId: z.literal('aet:ae_uat'),
+  from: AeternityAddress,
+  to: AeternityAddress,
+  aettos: z.string().regex(/^[1-9][0-9]{0,29}$/),
+  fee: z.string().regex(/^[1-9][0-9]{11,17}$/),
+  ttl: z.number().int().nonnegative().max(0xffffffff),
+  nonce: z.number().int().positive().max(0xffffffff),
+});
+export type AeternityTx = z.infer<typeof AeternityTx>;
+export const ChiaTx = z.strictObject({
+  chainId: z.literal('chia:37a90eb5'),
+  from: z.string().regex(/^txch1[02-9ac-hj-np-z]+$/),
+  to: z.string().regex(/^txch1[02-9ac-hj-np-z]+$/),
+  mojos: z.string().regex(/^[1-9][0-9]{0,18}$/),
+  fee: z.string().regex(/^(0|[1-9][0-9]{0,18})$/),
+  parentCoinId: z.string().regex(/^[0-9a-f]{64}$/),
+  coinMojos: z.string().regex(/^[1-9][0-9]{0,18}$/),
+});
+export type ChiaTx = z.infer<typeof ChiaTx>;
+const FuelCoinInput = z.strictObject({
+  txId: z.string().regex(/^0x[0-9a-f]{64}$/),
+  outputIndex: z.number().int().nonnegative().max(0xffff),
+  amount: z.string().regex(/^[1-9][0-9]{0,19}$/),
+});
+export const FuelTx = z.strictObject({
+  chainId: z.literal('fuel:0'),
+  from: z.string().regex(/^0x[0-9a-f]{64}$/),
+  to: z.string().regex(/^0x[0-9a-f]{64}$/),
+  base: z.string().regex(/^[1-9][0-9]{0,19}$/),
+  inputs: z.array(FuelCoinInput).min(1).max(8),
+  gasLimit: z.number().int().nonnegative().max(30_000_000),
+  maxFee: z.string().regex(/^[1-9][0-9]{0,12}$/),
+  expiration: z.number().int().positive().max(0xffffffff),
+});
+export type FuelTx = z.infer<typeof FuelTx>;
+const AelfAddress = z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,64}$/);
+export const AelfTx = z.strictObject({
+  chainId: z.literal('aelf:tDVV'),
+  from: AelfAddress,
+  to: AelfAddress,
+  elves: z.string().regex(/^\d{1,19}$/),
+  refBlockNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  refBlockPrefix: z.string().regex(/^[0-9a-f]{8}$/),
+});
+export type AelfTx = z.infer<typeof AelfTx>;
+const StarcoinAddress = z.string().regex(/^0x[0-9a-f]{32}$/);
+export const StarcoinTx = z.strictObject({
+  chainId: z.literal('starcoin:251'),
+  from: StarcoinAddress,
+  to: StarcoinAddress,
+  nano: z.string().regex(/^[1-9][0-9]{0,38}$/),
+  sequenceNumber: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  maxGasAmount: z.number().int().min(1).max(50_000_000),
+  gasUnitPrice: z.number().int().min(1).max(1_000_000),
+  expirationTimestampSecs: z.number().int().positive().max(4_102_444_800),
+});
+export type StarcoinTx = z.infer<typeof StarcoinTx>;
+const ObyteB64Hash = z
+  .string()
+  .length(44)
+  .regex(/^[A-Za-z0-9+/]{43}=$/);
+const ObyteAddress = z
+  .string()
+  .length(32)
+  .regex(/^[A-Z2-7]{32}$/);
+export const ObyteTx = z.strictObject({
+  chainId: z.literal('obyte:testnet'),
+  from: ObyteAddress,
+  authorPubkey: z.string().regex(/^[A-Za-z0-9+/]{44}$/),
+  to: ObyteAddress,
+  bytes: z.string().regex(/^[1-9][0-9]{0,15}$/),
+  timestamp: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  tpsFee: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  parentUnits: z.array(ObyteB64Hash).min(1).max(16),
+  lastBall: ObyteB64Hash,
+  lastBallUnit: ObyteB64Hash,
+  inputs: z
+    .array(
+      z.strictObject({
+        unit: ObyteB64Hash,
+        messageIndex: z.number().int().nonnegative().max(0x7fffffff),
+        outputIndex: z.number().int().nonnegative().max(0x7fffffff),
+        amount: z.string().regex(/^(0|[1-9][0-9]{0,15})$/),
+      }),
+    )
+    .min(1)
+    .max(128),
+  firstUnit: z.boolean(),
+});
+export type ObyteTx = z.infer<typeof ObyteTx>;
+const ChromiaHex64 = z.string().regex(/^[0-9a-f]{64}$/);
+const ChromiaHex66 = z.string().regex(/^[0-9a-f]{66}$/);
+export const ChromiaTx = z.strictObject({
+  chainId: z.literal('chromia:0x090bcd47149fbb66'),
+  from: ChromiaHex64,
+  signer: ChromiaHex66,
+  to: ChromiaHex64,
+  uchr: z.string().regex(/^[1-9][0-9]{0,14}$/),
+  nonce: ChromiaHex64,
+});
+export type ChromiaTx = z.infer<typeof ChromiaTx>;
+export const ChromiaRegisterTx = z.strictObject({
+  chainId: z.literal('chromia:0x090bcd47149fbb66'),
+  from: ChromiaHex64,
+  signer: ChromiaHex66,
+  register: z.literal(true),
+});
+export type ChromiaRegisterTx = z.infer<typeof ChromiaRegisterTx>;
+const KeetaAddress = z.string().regex(/^keeta_[a-z2-7]{63}$/);
+export const KeetaTx = z.strictObject({
+  chainId: z.literal('keeta:test'),
+  from: KeetaAddress,
+  to: KeetaAddress,
+  attoKta: z.string().regex(/^[1-9][0-9]{0,38}$/),
+  previous: z.string().regex(/^[0-9a-f]{64}$/),
+  timestamp: z.number().int().positive().max(0xffffffff),
+});
+export type KeetaTx = z.infer<typeof KeetaTx>;
+const NamadaAddress = z.string().regex(/^tnam1[02-9ac-hj-np-z]{40}$/);
+export const NamadaTx = z.strictObject({
+  chainId: z.literal('namada:cc0d3e0c033be'),
+  from: NamadaAddress,
+  to: NamadaAddress,
+  namnam: Amount,
+  token: NamadaAddress,
+  feeToken: NamadaAddress,
+  feePerGas: Amount,
+  gasLimit: z.number().int().positive().max(1_000_000),
+  wasmCodeHash: z.string().regex(/^[0-9a-f]{64}$/),
+  timestamp: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{9}\+00:00$/),
+  codeSalt: z.string().regex(/^[0-9a-f]{16}$/),
+  dataSalt: z.string().regex(/^[0-9a-f]{16}$/),
+});
+export type NamadaTx = z.infer<typeof NamadaTx>;
+const BtcForkHash = z.string().regex(/^[0-9a-f]{64}$/);
+export const BtcForkInput = z.strictObject({
+  txid: BtcForkHash,
+  vout: z.number().int().nonnegative().max(0xffffffff),
+  previousTxHex: z
+    .string()
+    .regex(/^(?:[0-9a-f]{2})+$/)
+    .max(400_000),
+});
+export const BtcForkTx = z.strictObject({
+  chainId: z.enum([
+    'btcfork:bch-testnet',
+    'btcfork:dash-testnet',
+    'btcfork:zcash-testnet',
+    'btcfork:defichain-testnet',
+    'btcfork:verus-testnet',
+  ]),
+  from: z.string().min(25).max(100),
+  to: z.string().min(25).max(100),
+  satoshis: Amount,
+  fee: Amount,
+  inputs: z.array(BtcForkInput).min(1).max(8),
+  expiryHeight: z.number().int().min(1).max(500_000_000).optional(),
+});
+export type BtcForkTx = z.infer<typeof BtcForkTx>;
+const GalaEthRef = z.string().regex(/^eth\|[0-9a-fA-F]{40}$/);
+export const GalaTx = z.strictObject({
+  chainId: z.literal('gala:testnet'),
+  from: GalaEthRef,
+  to: GalaEthRef,
+  gunits: Amount,
+  uniqueKey: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  dtoExpiresAt: z.number().int().min(1_577_836_800_000).max(4_102_444_800_000),
+});
+export type GalaTx = z.infer<typeof GalaTx>;
+const MixinHash32 = z.string().regex(/^[0-9a-f]{64}$/);
+export const MixinInput = z.strictObject({
+  hash: MixinHash32,
+  index: z.number().int().min(0).max(1024),
+  key: MixinHash32,
+  mask: MixinHash32,
+  xinat: Amount,
+});
+export const MixinTx = z.strictObject({
+  chainId: z.literal('mixin:74c6cdb7d51af570'),
+  from: z.string().regex(/^XIN[1-9A-HJ-NP-Za-km-z]{80,100}$/),
+  to: z.string().regex(/^XIN[1-9A-HJ-NP-Za-km-z]{80,100}$/),
+  xinat: Amount,
+  inputs: z.array(MixinInput).min(1).max(8),
+  toSeed: z.string().regex(/^[0-9a-f]{128}$/),
+  changeSeed: z.string().regex(/^[0-9a-f]{128}$/),
+});
+export type MixinTx = z.infer<typeof MixinTx>;
+const QubicIdentity = z.string().regex(/^[A-Z]{60}$/);
+export const QubicTx = z.strictObject({
+  chainId: z.literal('qubic:mainnet'),
+  from: QubicIdentity,
+  to: QubicIdentity,
+  qu: z.string().regex(/^[1-9]\d{0,18}$/),
+  tick: z.number().int().min(1).max(4_000_000_000),
+});
+export type QubicTx = z.infer<typeof QubicTx>;
+
+export const LedgerUnsignedTx = z.union([
+  EvmTx,
+  SolanaTx,
+  CosmosTx,
+  BitcoinTx,
+  TronTx,
+  SubstrateTx,
+  StellarTx,
+  AptosTx,
+  XrplTx,
+  SuiTx,
+  NearTx,
+  AlgorandTx,
+  TonTx,
+  CardanoTx,
+  AntelopeTx,
+  MultiversxTx,
+  TezosTx,
+  StacksTx,
+  VechainTx,
+  HyperliquidTx,
+  StarknetTx,
+  IconTx,
+  EverscaleTx,
+  WavesTx,
+  RadixTx,
+  IcpTx,
+  ErgoTx,
+  AlephiumTx,
+  AeternityTx,
+  ChiaTx,
+  FuelTx,
+  AelfTx,
+  StarcoinTx,
+  ObyteTx,
+  ChromiaTx,
+  ChromiaRegisterTx,
+  KeetaTx,
+  NamadaTx,
+  BtcForkTx,
+  GalaTx,
+  MixinTx,
+  QubicTx,
+]);
 export type LedgerUnsignedTx = z.infer<typeof LedgerUnsignedTx>;
 
 export const Signer = z.object({ walletId: z.string(), path: z.string(), address: z.string() });

@@ -41,21 +41,138 @@ importers:
       '@stackwallet/chains':
         specifier: workspace:*
         version: link:../../packages/chains
+      '@stackwallet/chains-aelf':
+        specifier: workspace:*
+        version: link:../../packages/chains-aelf
+      '@stackwallet/chains-aeternity':
+        specifier: workspace:*
+        version: link:../../packages/chains-aeternity
+      '@stackwallet/chains-aleo':
+        specifier: workspace:*
+        version: link:../../packages/chains-aleo
+      '@stackwallet/chains-alephium':
+        specifier: workspace:*
+        version: link:../../packages/chains-alephium
+      '@stackwallet/chains-algorand':
+        specifier: workspace:*
+        version: link:../../packages/chains-algorand
+      '@stackwallet/chains-antelope':
+        specifier: workspace:*
+        version: link:../../packages/chains-antelope
+      '@stackwallet/chains-aptos':
+        specifier: workspace:*
+        version: link:../../packages/chains-aptos
       '@stackwallet/chains-bitcoin':
         specifier: workspace:*
         version: link:../../packages/chains-bitcoin
+      '@stackwallet/chains-btcfork':
+        specifier: workspace:*
+        version: link:../../packages/chains-btcfork
+      '@stackwallet/chains-canton':
+        specifier: workspace:*
+        version: link:../../packages/chains-canton
+      '@stackwallet/chains-cardano':
+        specifier: workspace:*
+        version: link:../../packages/chains-cardano
+      '@stackwallet/chains-chia':
+        specifier: workspace:*
+        version: link:../../packages/chains-chia
+      '@stackwallet/chains-chromia':
+        specifier: workspace:*
+        version: link:../../packages/chains-chromia
       '@stackwallet/chains-cosmos':
         specifier: workspace:*
         version: link:../../packages/chains-cosmos
+      '@stackwallet/chains-ergo':
+        specifier: workspace:*
+        version: link:../../packages/chains-ergo
+      '@stackwallet/chains-everscale':
+        specifier: workspace:*
+        version: link:../../packages/chains-everscale
       '@stackwallet/chains-evm':
         specifier: workspace:*
         version: link:../../packages/chains-evm
+      '@stackwallet/chains-fuel':
+        specifier: workspace:*
+        version: link:../../packages/chains-fuel
+      '@stackwallet/chains-gala':
+        specifier: workspace:*
+        version: link:../../packages/chains-gala
+      '@stackwallet/chains-hyperliquid':
+        specifier: workspace:*
+        version: link:../../packages/chains-hyperliquid
+      '@stackwallet/chains-icon':
+        specifier: workspace:*
+        version: link:../../packages/chains-icon
+      '@stackwallet/chains-icp':
+        specifier: workspace:*
+        version: link:../../packages/chains-icp
+      '@stackwallet/chains-keeta':
+        specifier: workspace:*
+        version: link:../../packages/chains-keeta
+      '@stackwallet/chains-mixin':
+        specifier: workspace:*
+        version: link:../../packages/chains-mixin
+      '@stackwallet/chains-multiversx':
+        specifier: workspace:*
+        version: link:../../packages/chains-multiversx
+      '@stackwallet/chains-namada':
+        specifier: workspace:*
+        version: link:../../packages/chains-namada
+      '@stackwallet/chains-near':
+        specifier: workspace:*
+        version: link:../../packages/chains-near
+      '@stackwallet/chains-neo':
+        specifier: workspace:*
+        version: link:../../packages/chains-neo
+      '@stackwallet/chains-obyte':
+        specifier: workspace:*
+        version: link:../../packages/chains-obyte
+      '@stackwallet/chains-qubic':
+        specifier: workspace:*
+        version: link:../../packages/chains-qubic
+      '@stackwallet/chains-radix':
+        specifier: workspace:*
+        version: link:../../packages/chains-radix
       '@stackwallet/chains-solana':
         specifier: workspace:*
         version: link:../../packages/chains-solana
+      '@stackwallet/chains-stacks':
+        specifier: workspace:*
+        version: link:../../packages/chains-stacks
+      '@stackwallet/chains-starcoin':
+        specifier: workspace:*
+        version: link:../../packages/chains-starcoin
+      '@stackwallet/chains-starknet':
+        specifier: workspace:*
+        version: link:../../packages/chains-starknet
+      '@stackwallet/chains-stellar':
+        specifier: workspace:*
+        version: link:../../packages/chains-stellar
+      '@stackwallet/chains-substrate':
+        specifier: workspace:*
+        version: link:../../packages/chains-substrate
+      '@stackwallet/chains-sui':
+        specifier: workspace:*
+        version: link:../../packages/chains-sui
+      '@stackwallet/chains-tezos':
+        specifier: workspace:*
+        version: link:../../packages/chains-tezos
+      '@stackwallet/chains-ton':
+        specifier: workspace:*
+        version: link:../../packages/chains-ton
       '@stackwallet/chains-tron':
         specifier: workspace:*
         version: link:../../packages/chains-tron
+      '@stackwallet/chains-vechain':
+        specifier: workspace:*
+        version: link:../../packages/chains-vechain
+      '@stackwallet/chains-waves':
+        specifier: workspace:*
+        version: link:../../packages/chains-waves
+      '@stackwallet/chains-xrpl':
+        specifier: workspace:*
+        version: link:../../packages/chains-xrpl
       '@stackwallet/collectibles':
         specifier: workspace:*
         version: link:../../packages/collectibles
@@ -178,6 +295,196 @@ importers:
         specifier: 3.2.6
         version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
 
+  packages/chains-aelf:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-aeternity:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-aleo:
+    dependencies:
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-alephium:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-algorand:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-antelope:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-aptos:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
   packages/chains-bitcoin:
     dependencies:
       '@noble/hashes':
@@ -202,6 +509,140 @@ importers:
       '@cosmjs/crypto':
         specifier: 0.39.0
         version: 0.39.0
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-btcfork:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-canton:
+    dependencies:
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-cardano:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-chia:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-chromia:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -240,8 +681,441 @@ importers:
         specifier: 3.2.6
         version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
 
+  packages/chains-ergo:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-everscale:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
   packages/chains-evm:
     dependencies:
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-fuel:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-gala:
+    dependencies:
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-hyperliquid:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-icon:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-icp:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-keeta:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-mixin:
+    dependencies:
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-multiversx:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-namada:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-near:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-neo:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-obyte:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-qubic:
+    dependencies:
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-radix:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
       '@noble/hashes':
         specifier: 2.4.0
         version: 2.4.0
@@ -293,8 +1167,316 @@ importers:
         specifier: 3.2.6
         version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
 
+  packages/chains-stacks:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-starcoin:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-starknet:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-stellar:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-substrate:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-sui:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-tezos:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-ton:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
   packages/chains-tron:
     dependencies:
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-vechain:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-waves:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@scure/base':
+        specifier: 2.4.0
+        version: 2.4.0
+      '@stackwallet/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@stackwallet/core-client':
+        specifier: workspace:*
+        version: link:../core-client
+      zod:
+        specifier: ^4.0.0
+        version: 4.6.5
+    devDependencies:
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 3.2.6
+        version: 3.2.6(@types/node@24.19.1)(jiti@2.7.0)(lightningcss@1.33.0)
+
+  packages/chains-xrpl:
+    dependencies:
+      '@noble/curves':
+        specifier: 2.4.0
+        version: 2.4.0
       '@noble/hashes':
         specifier: 2.4.0
         version: 2.4.0

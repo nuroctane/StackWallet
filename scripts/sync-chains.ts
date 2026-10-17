@@ -10,8 +10,11 @@
  * committed, so builds stay reproducible (D8) and the app fetches nothing.
  */
 import { writeFileSync } from 'node:fs';
+import { register } from 'node:module';
 
-import { CURATED_CATALOG } from '../packages/chains/src/catalog-curated.ts';
+// The catalog sources import each other with tsc-style `.js` specifiers; the
+// hook retries them as `.ts` under --experimental-strip-types.
+register('./resolve-ts.mjs', import.meta.url);
 
 const OUT = 'packages/chains/src/catalog-generated.ts';
 const ORIGIN = 'https://stackwallet.civetadeicollegium.workers.dev';
@@ -58,6 +61,11 @@ const EVM_IDS: Record<string, number> = {
   'SKALE Europa': 2046399126,
   'Unit Zero': 88811,
   Xai: 660279,
+  Hydra: 4488,
+  MultiVAC: 62621,
+  Anubis: 6714,
+  // DefiLlama's "Open" is the OpenLedger mainnet.
+  Open: 1612,
   Darwinia: 46,
   Elysium: 1339,
   Zeniq: 383414847825,
@@ -105,6 +113,7 @@ const EVM_IDS: Record<string, number> = {
   Zilliqa: 32769,
   Coti: 2632500,
   Ontology: 58,
+  Kasplex: 202555,
 };
 
 // DefiLlama ids that point at a retired network; the chain moved to a new id.
@@ -119,8 +128,74 @@ const EVM_ID_OVERRIDES: Record<string, number> = {
 const CHAINLIST_COLLISIONS = new Set([10001]);
 const COLLISION_RPCS: Record<number, string[]> = { 10001: ['https://mainnet.ethereumpow.org'] };
 
-// Served by curated entries in families the generator does not produce.
-const CURATED_LLAMA = new Set(['Bitcoin', 'Litecoin', 'Doge', 'Solana', 'Tron']);
+// Served by curated entries in families the generator does not produce: DefiLlama name to the
+// curated mainnet's name.
+const CURATED_LLAMA: Record<string, string> = {
+  Bitcoin: 'Bitcoin',
+  Litecoin: 'Litecoin',
+  Doge: 'Dogecoin',
+  Solana: 'Solana',
+  Tron: 'Tron',
+  Bittensor: 'Bittensor',
+  Hydration: 'Hydration',
+  Bifrost: 'Bifrost Polkadot',
+  Acala: 'Acala',
+  Karura: 'Karura',
+  Vara: 'Vara',
+  Sora: 'SORA',
+  Chainflip: 'Chainflip',
+  Stellar: 'Stellar',
+  Near: 'NEAR',
+  Aptos: 'Aptos',
+  Supra: 'Supra',
+  Sui: 'Sui',
+  IOTA: 'IOTA',
+  XRPL: 'XRP Ledger',
+  Algorand: 'Algorand',
+  'Voi Network': 'Voi Network',
+  TON: 'TON',
+  Cardano: 'Cardano',
+  Vaulta: 'Vaulta',
+  'XPR Network': 'XPR Network',
+  Wax: 'WAX',
+  Libre: 'Libre',
+  MultiversX: 'MultiversX',
+  Tezos: 'Tezos',
+  Stacks: 'Stacks',
+  VeChain: 'VeChain',
+  'Hyperliquid L1': 'Hyperliquid',
+  Starknet: 'Starknet',
+  Icon: 'ICON',
+  Everscale: 'Everscale',
+  Venom: 'Venom',
+  Waves: 'Waves',
+  Radix: 'Radix',
+  ICP: 'Internet Computer',
+  Ergo: 'Ergo',
+  Alephium: 'Alephium',
+  NEO: 'NEO N3',
+  Aeternity: 'Aeternity',
+  Chia: 'Chia',
+  'Fuel Ignition': 'Fuel Ignition',
+  aelf: 'aelf',
+  Starcoin: 'Starcoin',
+  Obyte: 'Obyte',
+  Chromia: 'Chromia',
+  Keeta: 'Keeta',
+  Namada: 'Namada',
+  Bitcoincash: 'Bitcoin Cash',
+  Dash: 'Dash',
+  Zcash: 'Zcash',
+  DefiChain: 'DefiChain',
+  Verus: 'Verus',
+  Gala: 'GalaChain',
+  Mixin: 'Mixin Kernel',
+  Qubic: 'Qubic',
+  ALEO: 'Aleo',
+  Canton: 'Canton Network',
+  // An Initia minievm Minitia; covered by a curated EVM entry, not chainlist.
+  Cabal: 'Cabal',
+};
 
 // Listed under EVM by DefiLlama but run their own virtual machines; each needs its own family.
 const NOT_EVM = new Set([
@@ -130,7 +205,6 @@ const NOT_EVM = new Set([
   'Fuel Ignition',
   'Supra',
   'Namada',
-  'Anubis',
   'Naka',
   'Echelon',
 ]);
@@ -205,7 +279,10 @@ const SVM: {
     priceId: 'renec',
     layer: 'L1',
     parent: null,
-    rpcs: ['https://api-mainnet.renec.foundation:8899'],
+    rpcs: [
+      'https://api-mainnet-beta.renec.foundation',
+      'https://api-mainnet-beta.renec.foundation:8899',
+    ],
     explorer: 'https://explorer.renec.foundation/tx/{hash}',
   },
   {
@@ -215,8 +292,9 @@ const SVM: {
     priceId: null,
     layer: 'L1',
     parent: null,
-    rpcs: ['https://rpc.cookiechain.io'],
-    explorer: null,
+    // The cookiechain.io RPCs are dead; the community chain lives behind cookiescan.
+    rpcs: ['https://rpc.cookiescan.io'],
+    explorer: 'https://cookiescan.io/tx/{hash}',
   },
 ];
 
@@ -417,6 +495,9 @@ function layerOf(meta: any): Layer {
 
 async function main() {
   console.log('fetching sources');
+  const { CURATED_CATALOG } = (await import('../packages/chains/src/catalog-curated.ts')) as {
+    CURATED_CATALOG: import('../packages/chains/src/types.js').ChainInfo[];
+  };
   const [v2, config, chainlist, chainlistRpcs, cosmosDir] = await Promise.all([
     json('https://api.llama.fi/v2/chains'),
     json('https://api.llama.fi/config'),
@@ -452,7 +533,9 @@ async function main() {
   // Ethermint chains (Kava, Evmos, HAQQ...) carry an EVM id too; they get both sides.
   const cosmosRows = rows.filter((r) => r.cats.includes('Cosmos') || COSMOS_EXTRA.has(r.name));
   const covered = new Set(
-    [...evmRows, ...cosmosRows].map((r) => r.name).concat([...svmNames, ...CURATED_LLAMA]),
+    [...evmRows, ...cosmosRows]
+      .map((r) => r.name)
+      .concat([...svmNames, ...Object.keys(CURATED_LLAMA)]),
   );
   const unsupported = rows.filter((r) => !covered.has(r.name)).sort((a, b) => b.tvl - a.tvl);
 
@@ -693,6 +776,20 @@ async function main() {
     priceId: 'dogecoin',
     halted: false,
   };
+
+  for (const row of rows) {
+    const name = CURATED_LLAMA[row.name];
+    if (!name) continue;
+    const chain = CURATED_CATALOG.find((c) => c.name === name && !c.testnet);
+    if (!chain) throw new Error(`CURATED_LLAMA: no curated mainnet named ${name}`);
+    meta[chain.chainId] ??= {
+      llama: row.name,
+      layer: row.layer,
+      parent: row.parent,
+      priceId: chain.priceId ?? row.priceId,
+      halted: false,
+    };
+  }
 
   const line = (x: unknown) => '  ' + JSON.stringify(x) + ',';
   const fresh = (list: any[], ns: string) => list.filter((c) => !curated.has(`${ns}:${c.id}`));

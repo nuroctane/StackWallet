@@ -155,7 +155,7 @@ describe('createWatchWallet', () => {
       /Folder not found/,
     );
     expect(expectFail(r.createWatchWallet(s, { ...base, chainId: 'bad' }, ctx))).toMatch(/CAIP-2/);
-    expect(expectFail(r.createWatchWallet(s, { ...base, chainId: 'tezos:main' }, ctx))).toMatch(
+    expect(expectFail(r.createWatchWallet(s, { ...base, chainId: 'zzzz:main' }, ctx))).toMatch(
       /Unsupported/,
     );
     expect(expectFail(r.createWatchWallet(s, { ...base, address: '  ' }, ctx))).toMatch(/Address/);

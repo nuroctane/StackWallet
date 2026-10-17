@@ -158,7 +158,21 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
   const evm = tx.unsigned && 'dataHex' in tx.unsigned ? tx.unsigned : null;
   const solana = tx.unsigned && 'recentBlockhash' in tx.unsigned ? tx.unsigned : null;
   const cosmos = tx.unsigned && 'timeoutHeight' in tx.unsigned ? tx.unsigned : null;
-  const bitcoin = tx.unsigned && 'inputs' in tx.unsigned ? tx.unsigned : null;
+  const bitcoin =
+    tx.unsigned &&
+    'inputs' in tx.unsigned &&
+    !('lovelace' in tx.unsigned) &&
+    !('nanoerg' in tx.unsigned) &&
+    !('attoalph' in tx.unsigned) &&
+    !('base' in tx.unsigned) &&
+    !('bytes' in tx.unsigned) &&
+    !('satoshis' in tx.unsigned) &&
+    !('xinat' in tx.unsigned)
+      ? tx.unsigned
+      : null;
+  const xrplTag =
+    tx.unsigned && 'drops' in tx.unsigned ? (tx.unsigned.destinationTag ?? undefined) : null;
+  const antelope = tx.unsigned && 'antelopeUnits' in tx.unsigned ? tx.unsigned : null;
   const call = decodeCalldata(evm?.dataHex ?? '');
   const native = chain?.nativeAsset;
   const maxFee = evm ? BigInt(evm.maxFeePerGas) * BigInt(evm.gasLimit) : undefined;
@@ -216,6 +230,25 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
         <Row label="to">
           <AddressLabel address={recipient} chainId={i.chainId} full />
         </Row>
+      )}
+      {xrplTag !== null && (
+        // The core binds amount and destination but not the tag, so the user checks it here.
+        <Row label="dest. tag">
+          <span className="font-mono text-ink">{xrplTag ?? 'none'}</span>
+        </Row>
+      )}
+      {antelope && (
+        // The core binds the key, amount and recipient; the sending account and memo are checked here.
+        <>
+          <Row label="from acct">
+            <span className="font-mono text-ink">
+              {antelope.from}@{antelope.permission}
+            </span>
+          </Row>
+          <Row label="memo">
+            <span className="font-mono text-ink break-all">{antelope.memo || 'none'}</span>
+          </Row>
+        </>
       )}
       <DecodedLine call={call} chainId={i.chainId} />
       {bitcoin && (

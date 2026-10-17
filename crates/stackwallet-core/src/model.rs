@@ -13,6 +13,45 @@ pub enum ChainFamily {
     Solana,
     Cosmos,
     Tron,
+    Substrate,
+    Sui,
+    Aptos,
+    Stellar,
+    Near,
+    Ton,
+    Xrpl,
+    Cardano,
+    Algorand,
+    Tezos,
+    Multiversx,
+    Antelope,
+    Hyperliquid,
+    Stacks,
+    Vechain,
+    Starknet,
+    Icp,
+    Waves,
+    Neo,
+    Ergo,
+    Icon,
+    Alephium,
+    Chia,
+    Everscale,
+    Radix,
+    Aeternity,
+    Fuel,
+    Aelf,
+    Starcoin,
+    Obyte,
+    Chromia,
+    Keeta,
+    Namada,
+    BtcFork,
+    Gala,
+    Mixin,
+    Qubic,
+    Aleo,
+    Canton,
 }
 
 /// CAIP-2 chain identifier, e.g. `eip155:1` or `cosmos:osmosis-1`.
@@ -54,6 +93,45 @@ impl ChainId {
             "solana" => Some(ChainFamily::Solana),
             "cosmos" => Some(ChainFamily::Cosmos),
             "tron" => Some(ChainFamily::Tron),
+            "polkadot" => Some(ChainFamily::Substrate),
+            "sui" | "iota" => Some(ChainFamily::Sui),
+            "aptos" | "movement" | "supra" => Some(ChainFamily::Aptos),
+            "stellar" => Some(ChainFamily::Stellar),
+            "near" => Some(ChainFamily::Near),
+            "tvm" => Some(ChainFamily::Ton),
+            "xrpl" => Some(ChainFamily::Xrpl),
+            "cip34" => Some(ChainFamily::Cardano),
+            "algorand" => Some(ChainFamily::Algorand),
+            "tezos" => Some(ChainFamily::Tezos),
+            "mvx" => Some(ChainFamily::Multiversx),
+            "antelope" => Some(ChainFamily::Antelope),
+            "hype" => Some(ChainFamily::Hyperliquid),
+            "stacks" => Some(ChainFamily::Stacks),
+            "vechain" => Some(ChainFamily::Vechain),
+            "starknet" => Some(ChainFamily::Starknet),
+            "icp" => Some(ChainFamily::Icp),
+            "waves" => Some(ChainFamily::Waves),
+            "neo3" => Some(ChainFamily::Neo),
+            "ergo" => Some(ChainFamily::Ergo),
+            "icon" => Some(ChainFamily::Icon),
+            "alph" => Some(ChainFamily::Alephium),
+            "chia" => Some(ChainFamily::Chia),
+            "ever" | "venom" => Some(ChainFamily::Everscale),
+            "radix" => Some(ChainFamily::Radix),
+            "aet" => Some(ChainFamily::Aeternity),
+            "fuel" => Some(ChainFamily::Fuel),
+            "aelf" => Some(ChainFamily::Aelf),
+            "starcoin" => Some(ChainFamily::Starcoin),
+            "obyte" => Some(ChainFamily::Obyte),
+            "chromia" => Some(ChainFamily::Chromia),
+            "keeta" => Some(ChainFamily::Keeta),
+            "namada" => Some(ChainFamily::Namada),
+            "btcfork" => Some(ChainFamily::BtcFork),
+            "gala" => Some(ChainFamily::Gala),
+            "mixin" => Some(ChainFamily::Mixin),
+            "qubic" => Some(ChainFamily::Qubic),
+            "aleo" => Some(ChainFamily::Aleo),
+            "canton" => Some(ChainFamily::Canton),
             _ => None,
         }
     }
@@ -79,9 +157,50 @@ pub enum Curve {
 impl Curve {
     pub fn for_family(family: ChainFamily) -> &'static [Curve] {
         match family {
-            ChainFamily::Evm | ChainFamily::Cosmos | ChainFamily::Tron => &[Curve::Secp256k1],
+            ChainFamily::Evm
+            | ChainFamily::Cosmos
+            | ChainFamily::Tron
+            | ChainFamily::Xrpl
+            | ChainFamily::Antelope
+            | ChainFamily::Hyperliquid
+            | ChainFamily::Stacks
+            | ChainFamily::Vechain
+            | ChainFamily::Starknet
+            | ChainFamily::Icp
+            | ChainFamily::Neo
+            | ChainFamily::Ergo
+            | ChainFamily::Icon
+            | ChainFamily::Alephium
+            | ChainFamily::Chia
+            | ChainFamily::Fuel
+            | ChainFamily::Aelf
+            | ChainFamily::Obyte
+            | ChainFamily::Chromia
+            | ChainFamily::BtcFork
+            | ChainFamily::Gala => &[Curve::Secp256k1],
             ChainFamily::Bitcoin => &[Curve::Secp256k1, Curve::Secp256k1Tr],
-            ChainFamily::Solana => &[Curve::Ed25519],
+            ChainFamily::Solana
+            | ChainFamily::Substrate
+            | ChainFamily::Sui
+            | ChainFamily::Aptos
+            | ChainFamily::Stellar
+            | ChainFamily::Near
+            | ChainFamily::Ton
+            | ChainFamily::Cardano
+            | ChainFamily::Algorand
+            | ChainFamily::Tezos
+            | ChainFamily::Multiversx
+            | ChainFamily::Waves
+            | ChainFamily::Everscale
+            | ChainFamily::Radix
+            | ChainFamily::Aeternity
+            | ChainFamily::Starcoin
+            | ChainFamily::Keeta
+            | ChainFamily::Namada
+            | ChainFamily::Mixin
+            | ChainFamily::Qubic
+            | ChainFamily::Aleo
+            | ChainFamily::Canton => &[Curve::Ed25519],
         }
     }
 }

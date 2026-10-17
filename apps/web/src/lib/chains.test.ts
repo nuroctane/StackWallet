@@ -57,6 +57,103 @@ describe('explorerAddressUrl', () => {
     ).toBeUndefined();
   });
 
+  it('maps the Aptos, XRPL and IOTA explorer routes', () => {
+    expect(
+      explorerAddressUrl(
+        {
+          ...base,
+          family: 'aptos',
+          explorerTxUrl: 'https://explorer.aptoslabs.com/txn/{hash}?network=testnet',
+        },
+        '0x1',
+      ),
+    ).toBe('https://explorer.aptoslabs.com/account/0x1?network=testnet');
+    expect(
+      explorerAddressUrl(
+        { ...base, family: 'xrpl', explorerTxUrl: 'https://testnet.xrpl.org/transactions/{hash}' },
+        'rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe',
+      ),
+    ).toBe('https://testnet.xrpl.org/accounts/rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe');
+    expect(
+      explorerAddressUrl(
+        {
+          ...base,
+          family: 'sui',
+          explorerTxUrl: 'https://explorer.iota.org/txblock/{hash}?network=mainnet',
+        },
+        '0x2',
+      ),
+    ).toBe('https://explorer.iota.org/address/0x2?network=mainnet');
+    expect(
+      explorerAddressUrl(
+        { ...base, family: 'sui', explorerTxUrl: 'https://suiscan.xyz/testnet/tx/{hash}' },
+        '0x2',
+      ),
+    ).toBe('https://suiscan.xyz/testnet/account/0x2');
+    expect(
+      explorerAddressUrl(
+        {
+          ...base,
+          family: 'algorand',
+          explorerTxUrl: 'https://lora.algokit.io/testnet/transaction/{hash}',
+        },
+        'A1',
+      ),
+    ).toBe('https://lora.algokit.io/testnet/account/A1');
+    expect(
+      explorerAddressUrl(
+        { ...base, family: 'tezos', explorerTxUrl: 'https://shadownet.tzkt.io/{hash}' },
+        'tz1abc',
+      ),
+    ).toBe('https://shadownet.tzkt.io/tz1abc');
+    expect(
+      explorerAddressUrl(
+        {
+          ...base,
+          family: 'stacks',
+          explorerTxUrl: 'https://explorer.hiro.so/txid/{hash}?chain=testnet',
+        },
+        'ST1',
+      ),
+    ).toBe('https://explorer.hiro.so/address/ST1?chain=testnet');
+    expect(
+      explorerAddressUrl(
+        {
+          ...base,
+          family: 'vechain',
+          explorerTxUrl: 'https://insight.vecha.in/#/test/txs/{hash}',
+        },
+        '0xabc',
+      ),
+    ).toBe('https://insight.vecha.in/#/test/accounts/0xabc');
+    expect(
+      explorerAddressUrl(
+        {
+          ...base,
+          family: 'starknet',
+          explorerTxUrl: 'https://sepolia.voyager.online/tx/{hash}',
+        },
+        '0x123',
+      ),
+    ).toBe('https://sepolia.voyager.online/contract/0x123');
+    expect(
+      explorerAddressUrl(
+        {
+          ...base,
+          family: 'cardano',
+          explorerTxUrl: 'https://preprod.cardanoscan.io/transaction/{hash}',
+        },
+        'addr_test1q',
+      ),
+    ).toBe('https://preprod.cardanoscan.io/address/addr_test1q');
+    expect(
+      explorerAddressUrl(
+        { ...base, family: 'near', explorerTxUrl: 'https://nearblocks.io/txns/{hash}' },
+        'alice.near',
+      ),
+    ).toBe('https://nearblocks.io/address/alice.near');
+  });
+
   it('refuses non-https templates', () => {
     expect(
       explorerAddressUrl({ ...base, explorerTxUrl: 'http://example.org/tx/{hash}' }, '0xabc'),
