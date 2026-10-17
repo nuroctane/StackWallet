@@ -794,6 +794,16 @@ fn signer_address(
             "Signet signing requires a testnet BIP84 derivation path",
         ));
     }
+    // Bitcoin-fork sighashes and TVM external messages are network-agnostic too:
+    // a "testnet" transaction signed by a mainnet-coin-type key is a valid
+    // mainnet spend from the same address, so those keys never sign here.
+    if matches!(unsigned, UnsignedTx::BtcFork(_) | UnsignedTx::Everscale(_))
+        && !signer.path.starts_with("m/44'/1'/")
+    {
+        return Err(invalid(
+            "testnet signing requires a testnet (coin type 1) derivation path",
+        ));
+    }
     if matches!(unsigned, UnsignedTx::Cardano(_)) {
         let account = provenance::cardano_account(&signer.path)
             .ok_or_else(|| invalid("Cardano signs from a CIP-1852 payment path"))?;
@@ -3119,13 +3129,14 @@ mod tests {
     fn btcfork_dash_transfer_signs_as_the_derived_address() {
         use sha2::Digest;
         let mut v = vault();
-        let path = "m/44'/5'/0'/0/0";
+        let path = "m/44'/1'/0'/0/0";
         let public_of = |p: &str| {
             hex::decode(provenance::public_key(&v, "w", Curve::Secp256k1, p).unwrap()).unwrap()
         };
         let from_pub = public_of(path);
         let from = btcfork::address(btcfork::DASH_TESTNET, &from_pub).unwrap();
-        let to = btcfork::address(btcfork::DASH_TESTNET, &public_of("m/44'/5'/0'/0/1")).unwrap();
+        let to = btcfork::address(btcfork::DASH_TESTNET, &public_of("m/44'/1'/0'/0/1")).unwrap();
+        let main_pub = public_of("m/44'/5'/0'/0/0");
         let mut i = intent("tdash", &to, "50000");
         i.chain_id = ChainId(btcfork::DASH_TESTNET.into());
         i.kind = TxIntentKind::Transfer {
@@ -3136,18 +3147,21 @@ mod tests {
         propose(&mut v, i, "d", 1).unwrap();
         // A synthetic funding tx paying 100_000 sats to the sender; its txid is
         // the reversed sha256d of its bytes, which sign() re-verifies.
-        let h160 = hex::encode(ripemd::Ripemd160::digest(sha2::Sha256::digest(&from_pub)));
-        let funding = format!(
-            "0300000001{}0100000003515151ffffffff02a0860100000000001976a914{}88ac01000000000000001976a914{}88ac00000000",
-            "02".repeat(32),
-            h160,
-            h160
-        );
-        let fb = hex::decode(&funding).unwrap();
-        let mut txid_bytes = sha2::Sha256::digest(sha2::Sha256::digest(&fb)).to_vec();
-        txid_bytes.reverse();
-        let txid = hex::encode(txid_bytes);
-        let tx = |from: &str| {
+        let funding_for = |pubkey: &[u8]| {
+            let h160 = hex::encode(ripemd::Ripemd160::digest(sha2::Sha256::digest(pubkey)));
+            let funding = format!(
+                "0300000001{}0100000003515151ffffffff02a0860100000000001976a914{}88ac01000000000000001976a914{}88ac00000000",
+                "02".repeat(32),
+                h160,
+                h160
+            );
+            let fb = hex::decode(&funding).unwrap();
+            let mut txid_bytes = sha2::Sha256::digest(sha2::Sha256::digest(&fb)).to_vec();
+            txid_bytes.reverse();
+            (funding, hex::encode(txid_bytes))
+        };
+        let tx_funded_by = |from: &str, pubkey: &[u8]| {
+            let (funding, txid) = funding_for(pubkey);
             UnsignedTx::BtcFork(BtcForkTx {
                 chain_id: btcfork::DASH_TESTNET.into(),
                 from: from.into(),
@@ -3155,13 +3169,14 @@ mod tests {
                 satoshis: "50000".into(),
                 fee: "500".into(),
                 inputs: vec![crate::btcfork::BtcForkInput {
-                    txid: txid.clone(),
+                    txid,
                     vout: 0,
-                    previous_tx_hex: funding.clone(),
+                    previous_tx_hex: funding,
                 }],
                 expiry_height: None,
             })
         };
+        let tx = |from: &str| tx_funded_by(from, &from_pub);
         let signer = |address: &str| Signer {
             wallet_id: "w".into(),
             path: path.into(),
@@ -3182,6 +3197,25 @@ mod tests {
             2
         )
         .is_err());
+        // A mainnet-coin-type key (SLIP-44 5) holds real DASH at the same
+        // script, so it must never sign a "testnet" fork transaction.
+        let main_from = btcfork::address(btcfork::DASH_TESTNET, &main_pub).unwrap();
+        let err = attach(
+            &mut v,
+            "tdash",
+            Signer {
+                wallet_id: "w".into(),
+                path: "m/44'/5'/0'/0/0".into(),
+                address: main_from.clone(),
+            },
+            tx_funded_by(&main_from, &main_pub),
+            serde_json::json!({}),
+            true,
+            "d",
+            2,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("coin type 1"), "{err}");
         attach(
             &mut v,
             "tdash",
@@ -4058,7 +4092,7 @@ mod tests {
             everscale::TESTNET,
             everscale::VENOM_MAINNET,
             Curve::Ed25519,
-            ["m/44'/396'/0'/0'/0'", "m/44'/396'/0'/0'/1'"],
+            ["m/44'/1'/0'/0'/0'", "m/44'/1'/0'/0'/1'"],
             everscale::address,
             "1000000000",
             |from, to| {

@@ -37,6 +37,8 @@ export const ChainExtra = z.object({
   /** Bitcoin family base58check version bytes. */
   p2pkhVersion: z.number().int().min(0).max(255).optional(),
   p2shVersion: z.number().int().min(0).max(255).optional(),
+  /** Bitcoin forks: the WIF secret-key version byte, which does not follow P2PKH + 0x80 everywhere. */
+  wifVersion: z.number().int().min(0).max(255).optional(),
   /** Bitcoin family: whether bech32 segwit addresses are valid on this network. */
   segwit: z.boolean().optional(),
 });

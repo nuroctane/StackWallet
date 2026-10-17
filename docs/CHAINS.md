@@ -37,7 +37,7 @@ spl | spl2022 | ibc | factory | cw20 | brc20 | rune | trc20`.
 
 ```ts
 interface ChainAdapter {
-  family: 'evm' | 'bitcoin' | 'solana' | 'cosmos';
+  family: ChainFamily; // 44 families; see Signing families and Read-only families below
   chains(): ChainInfo[];
   deriveAddress(pub: PublicKey, chain: ChainId): Address;
   getBalances(addr: Address, chain: ChainId): Promise<Holding[]>;
@@ -419,12 +419,16 @@ has exactly one known public endpoint (the solidwallet zone is dead), which is t
 risk.
 
 **Everscale/Venom (`ever:42`, `venom:1`, `venom:1002`, `chains-everscale`).** Ed25519 at
-`m/44'/396'/0'/0'/i'` (both networks share SLIP-44 396, nekoton-style). The EverWallet contract
-runs on both networks (same code hash, confirmed live). Everscale reads over EverCloud GraphQL,
-Venom over JRPC; the dialect is picked from the namespace. `ever:42` and `venom:1` are read-only.
-Sends are native VENOM on Venom testnet only; the first transfer deploys the wallet, and the
-wallet refuses the message after `expireAt`, a real expiry. The Venom testnet endpoint was down
-at build time; its global id (1002) comes from secondary sources.
+`m/44'/396'/0'/0'/i'` on the mainnets (both share SLIP-44 396, nekoton-style) and
+`m/44'/1'/0'/0'/i'` on Venom testnet. TVM external messages carry no network id and the
+EverWallet contract runs on both networks (same code hash, confirmed live), so a testnet
+signature from a coin-396 key would be a valid mainnet spend from the same address; the core
+therefore refuses to sign an Everscale transaction unless the signer's path starts with
+`m/44'/1'/`. Everscale reads over EverCloud GraphQL, Venom over JRPC; the dialect is picked from
+the namespace. `ever:42` and `venom:1` are read-only. Sends are native VENOM on Venom testnet
+only; the first transfer deploys the wallet, and the wallet refuses the message after
+`expireAt`, a real expiry. The Venom testnet endpoint was down at build time; its global id
+(1002) comes from secondary sources.
 
 **Waves (`waves:87` mainnet, `waves:84` testnet, `chains-waves`).** Ed25519 SLIP-10 at
 `m/44'/5741564'/0'/0'/i'`, but the signing key is derived from that secret by Waves's own
@@ -539,10 +543,14 @@ carry no expiration, so Namada never reports `Expired`.
 
 **Bitcoin forks (`btcfork:<name>-mainnet|testnet`, `chains-btcfork`).** Bitcoin Cash (145), Dash
 (5), Zcash (133), DefiChain (1129) and Verus (141) share one module: secp256k1 at
-`m/44'/<coin>'/0'/0/i` (no segwit on any fork), transparent addresses only, P2PKH sends of one to
-eight inputs with change to the sender. BCH derives CashAddr and accepts legacy base58. Signing
-is enabled on the five testnets, but only Dash testnet has a live public endpoint (insight); the
-other four carry empty RPC lists and throw honestly. Mainnet reads come from Blockchair
+`m/44'/<coin>'/0'/0/i` on mainnets and `m/44'/1'/0'/0/i` on every testnet (no segwit on any
+fork), transparent addresses only, P2PKH sends of one to eight inputs with change to the sender.
+A fork sighash carries no network id, so a testnet key at the mainnet coin type would sign a
+valid mainnet spend from the same script; like Bitcoin, the core refuses fork transactions from
+any path that does not start with `m/44'/1'/`. BCH derives CashAddr and accepts legacy base58.
+Signing is enabled on the five testnets, but only Dash testnet has a live public endpoint
+(insight), so new wallets receive only that one; the other four carry empty RPC lists, throw
+honestly and can be added by hand. Mainnet reads come from Blockchair
 (BCH/Dash/ZEC — the keyless tier degrades to HTTP 430 under load), ocean (DefiChain balance only;
 it has no UTXO listing, so DFI sends cannot be prepared), and a Verus JSON-RPC proxy with an
 address index. Zcash and Verus v4 carry a real `expiryHeight` (tip + 100) and can report

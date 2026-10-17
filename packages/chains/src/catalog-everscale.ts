@@ -21,7 +21,9 @@ function everLike(spec: {
     testnet: spec.testnet,
     explorerTxUrl: spec.explorerTxUrl,
     defaultRpcs: spec.rpcs,
-    extra: { coinType: 396 },
+    // Testnet keys live under coin type 1: the address and the signature would
+    // otherwise be valid on mainnet too, since TVM messages carry no network id.
+    extra: { coinType: spec.testnet ? 1 : 396 },
     layer: 'L1',
     ...(spec.priceId ? { priceId: spec.priceId } : {}),
   };

@@ -66,7 +66,14 @@ export interface ForkParams {
   name: string;
   symbol: string;
   testnet: boolean;
+  /**
+   * SLIP-44 coin type for mainnets; 1 on every testnet. A fork's sighash carries
+   * no network id, so a testnet key at the mainnet coin type would sign valid
+   * mainnet spends from the same script.
+   */
   coinType: number;
+  /** WIF version byte: the network's secret-key prefix (0xef on every testnet). */
+  wifVersion: number;
   /** base58check version bytes for P2PKH / P2SH (1 or 2 bytes). */
   p2pkh: readonly number[];
   p2sh: readonly number[];
@@ -88,6 +95,7 @@ export const FORKS: Record<string, ForkParams> = {
     symbol: 'BCH',
     testnet: false,
     coinType: 145,
+    wifVersion: 0x80,
     p2pkh: [0x00],
     p2sh: [0x05],
     cashaddrHrp: 'bitcoincash',
@@ -102,7 +110,8 @@ export const FORKS: Record<string, ForkParams> = {
     name: 'Bitcoin Cash Testnet',
     symbol: 'tBCH',
     testnet: true,
-    coinType: 145,
+    coinType: 1,
+    wifVersion: 0xef,
     p2pkh: [0x6f],
     p2sh: [0xc4],
     cashaddrHrp: 'bchtest',
@@ -116,6 +125,7 @@ export const FORKS: Record<string, ForkParams> = {
     symbol: 'DASH',
     testnet: false,
     coinType: 5,
+    wifVersion: 0xcc,
     p2pkh: [0x4c],
     p2sh: [0x10],
     driver: 'blockchair',
@@ -129,7 +139,8 @@ export const FORKS: Record<string, ForkParams> = {
     name: 'Dash Testnet',
     symbol: 'tDASH',
     testnet: true,
-    coinType: 5,
+    coinType: 1,
+    wifVersion: 0xef,
     p2pkh: [0x8c],
     p2sh: [0x13],
     driver: 'insight',
@@ -143,6 +154,7 @@ export const FORKS: Record<string, ForkParams> = {
     symbol: 'ZEC',
     testnet: false,
     coinType: 133,
+    wifVersion: 0x80,
     p2pkh: [0x1c, 0xb8],
     p2sh: [0x1c, 0xbd],
     driver: 'blockchair',
@@ -156,7 +168,8 @@ export const FORKS: Record<string, ForkParams> = {
     name: 'Zcash Testnet',
     symbol: 'tZEC',
     testnet: true,
-    coinType: 133,
+    coinType: 1,
+    wifVersion: 0xef,
     p2pkh: [0x1d, 0x25],
     p2sh: [0x1c, 0xba],
     driver: null,
@@ -169,6 +182,7 @@ export const FORKS: Record<string, ForkParams> = {
     symbol: 'DFI',
     testnet: false,
     coinType: 1129,
+    wifVersion: 0x80,
     p2pkh: [0x12],
     p2sh: [0x5a],
     driver: 'ocean',
@@ -182,7 +196,8 @@ export const FORKS: Record<string, ForkParams> = {
     name: 'DefiChain Testnet',
     symbol: 'tDFI',
     testnet: true,
-    coinType: 1129,
+    coinType: 1,
+    wifVersion: 0xef,
     p2pkh: [0x0f],
     p2sh: [0x80],
     driver: null,
@@ -195,6 +210,7 @@ export const FORKS: Record<string, ForkParams> = {
     symbol: 'VRSC',
     testnet: false,
     coinType: 141,
+    wifVersion: 0xbc,
     p2pkh: [0x3c],
     p2sh: [0x55],
     driver: 'verus-rpc',
@@ -208,7 +224,8 @@ export const FORKS: Record<string, ForkParams> = {
     name: 'Verus Testnet',
     symbol: 'tVRSC',
     testnet: true,
-    coinType: 141,
+    coinType: 1,
+    wifVersion: 0xef,
     p2pkh: [0x3c],
     p2sh: [0x55],
     driver: null,
@@ -225,7 +242,7 @@ function chains(): ChainInfo[] {
       name: f.name,
       nativeAsset: { ref: `${f.chainId}:native`, symbol: f.symbol, decimals: 8 },
       testnet: f.testnet,
-      extra: { coinType: f.coinType, segwit: false },
+      extra: { coinType: f.coinType, wifVersion: f.wifVersion, segwit: false },
       layer: 'L1' as const,
       defaultRpcs: DEFAULT_RPCS[f.chainId] ?? [],
     };

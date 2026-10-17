@@ -8,10 +8,17 @@ import { chainFamilyOf, type ChainFamily } from '@stackwallet/core-client';
 import { canSendFrom, SENDABLE_TESTNETS } from './sendable.js';
 
 const single = { kind: 'single' as const };
+// Testnet paths for the families whose signatures carry no network id; the
+// core refuses any other path for them, and every other family takes any path.
+const TESTNET_PATH: Partial<Record<ChainFamily, string>> = {
+  bitcoin: "m/84'/1'/0'/0/0",
+  btcfork: "m/44'/1'/0'/0/0",
+  everscale: "m/44'/1'/0'/0'/0'",
+};
 const acct = (chainId: string, family: ChainFamily) => ({
   chainId,
   family,
-  derivationPath: "m/44'/60'/0'/0/0",
+  derivationPath: TESTNET_PATH[family] ?? "m/44'/60'/0'/0/0",
 });
 
 describe('canSendFrom', () => {
@@ -21,6 +28,18 @@ describe('canSendFrom', () => {
     expect(canSendFrom(acct(SOLANA_DEVNET, 'solana'), single)).toBe(true);
     expect(canSendFrom(acct(COSMOS_TESTNET, 'cosmos'), single)).toBe(true);
     expect(canSendFrom(acct(TRON_NILE, 'tron'), single)).toBe(true);
+  });
+
+  it('keeps Send off for network-blind families added under another path', () => {
+    const atEvmPath = (chainId: string, family: ChainFamily) => ({
+      chainId,
+      family,
+      derivationPath: "m/44'/60'/0'/0/0",
+    });
+    expect(canSendFrom(atEvmPath(BITCOIN_SIGNET, 'bitcoin'), single)).toBe(false);
+    expect(canSendFrom(atEvmPath('btcfork:dash-testnet', 'btcfork'), single)).toBe(false);
+    expect(canSendFrom(atEvmPath('venom:1002', 'everscale'), single)).toBe(false);
+    expect(canSendFrom(atEvmPath(COSMOS_TESTNET, 'cosmos'), single)).toBe(true);
   });
 
   it('refuses mainnets, watch wallets and accounts without a path', () => {

@@ -105,8 +105,9 @@ const FAMILY_PATHS: Partial<
   starknet: { curve: 'secp256k1', at: (i) => `m/44'/9004'/0'/0/${i}` },
   // IIP-48, used by ICONex, Hana, MyIconWallet and the Ledger ICX app (all hardened).
   icon: { curve: 'secp256k1', at: (i) => `m/44'/4801368'/0'/0'/${i}'` },
-  // Everscale and Venom share SLIP-44 396 (nekoton wallets use it for both), all hardened.
-  everscale: { curve: 'ed25519', at: (i) => `m/44'/396'/0'/0'/${i}'` },
+  // Everscale and Venom share SLIP-44 396 (nekoton wallets use it for both), all
+  // hardened; Venom testnet sits under coin type 1 so its key is never a mainnet key.
+  everscale: { curve: 'ed25519', at: (i, coin) => `m/44'/${coin ?? 396}'/0'/0'/${i}'` },
   // SLIP-44 5741564, all hardened; the Waves key is derived from the seed, not the point.
   waves: { curve: 'ed25519', at: (i) => `m/44'/5741564'/0'/0'/${i}'` },
   // CAP-26, the official Radix Wallet path; network 2 is Stokenet (1 is mainnet).
@@ -146,8 +147,9 @@ const FAMILY_PATHS: Partial<
   // SLIP-44 83293, all-hardened SLIP-10; the derived seed is the SchnorrQ
   // subseed directly (Qubic's FourQ is not an HD curve).
   qubic: { curve: 'ed25519', at: (i) => `m/44'/83293'/0'/0'/${i}'` },
-  // SLIP-44 per fork (BCH 145, Dash 5, Zcash 133, DefiChain 1129, Verus 141);
-  // no fork has segwit, so the plain BIP44 template fits all of them.
+  // SLIP-44 per fork (BCH 145, Dash 5, Zcash 133, DefiChain 1129, Verus 141),
+  // coin type 1 on every testnet so a test key can never spend mainnet coins
+  // at the same script; no fork has segwit, so plain BIP44 fits all of them.
   btcfork: { curve: 'secp256k1', at: (i, coin) => `m/44'/${coin}'/0'/0/${i}` },
   // Xaman, Trust Wallet and Ledger (BIP44); XRPL family seeds derive differently.
   xrpl: { curve: 'secp256k1', at: (i) => `m/44'/144'/0'/0/${i}` },
@@ -156,7 +158,8 @@ const FAMILY_PATHS: Partial<
 function familyPath(chain: ChainInfo, index: number): StandardPath | null {
   const p = FAMILY_PATHS[chain.family];
   const coin = typeof chain.extra?.coinType === 'number' ? chain.extra.coinType : null;
-  return p ? { curve: p.curve, path: p.at(index, coin) } : null;
+  if (!p || (chain.family === 'btcfork' && coin === null)) return null;
+  return { curve: p.curve, path: p.at(index, coin) };
 }
 
 /** The lowest account index on `chainId` that the wallet does not use yet. */

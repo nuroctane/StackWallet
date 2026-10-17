@@ -34,7 +34,7 @@ import { OBYTE_TESTNET } from '@stackwallet/chains-obyte';
 import { CHROMIA_TESTNET } from '@stackwallet/chains-chromia';
 import { KEETA_TEST } from '@stackwallet/chains-keeta';
 import { NAMADA_HOUSEFIRE } from '@stackwallet/chains-namada';
-import { SIGNING_CHAINS as BTCFORK_SIGNING } from '@stackwallet/chains-btcfork';
+import { DASH_TESTNET, SIGNING_CHAINS as BTCFORK_SIGNING } from '@stackwallet/chains-btcfork';
 import { GALA_TESTNET } from '@stackwallet/chains-gala';
 import { MIXIN_MAINNET } from '@stackwallet/chains-mixin';
 import { QUBIC_MAINNET } from '@stackwallet/chains-qubic';
@@ -43,6 +43,7 @@ import { TRON_NILE } from '@stackwallet/chains-tron';
 import { familySendFor } from '../store/families.js';
 import '../store/family-sends.js';
 import { EVM_SIGNING_CHAINS } from './chains.js';
+import { signsAtPath } from './key-siblings.js';
 
 /** One testnet per family the core signs on; new wallets include these so Send works out of the box. */
 export const SENDABLE_TESTNETS: readonly string[] = [
@@ -91,6 +92,20 @@ export const SENDABLE_TESTNETS: readonly string[] = [
 ];
 
 /**
+ * The subset a new wallet actually receives. Namada Housefire's public RPCs do not answer,
+ * the Starcoin Barnard seeds omit CORS headers so a browser cannot reach them, and of the
+ * Bitcoin-fork testnets only Dash has a public indexer; an account that can never load a
+ * balance or send would only confuse a first-run wallet. The core still signs on all of
+ * them, so a user may add them by hand.
+ */
+export const DEFAULT_SENDABLE_TESTNETS: readonly string[] = SENDABLE_TESTNETS.filter(
+  (id) =>
+    id !== NAMADA_HOUSEFIRE &&
+    id !== STARCOIN_BARNARD &&
+    (!(BTCFORK_SIGNING as readonly string[]).includes(id) || id === DASH_TESTNET),
+);
+
+/**
  * Whether the core will sign a transfer from this account. Mainnet signing stays behind the
  * support gates in SECURITY.md, so only testnets qualify; the core refuses anything else anyway.
  */
@@ -104,6 +119,8 @@ export function canSendFrom(
   // A Ledger signs EVM transactions; its accounts send through the device.
   if (wallet.kind !== 'single' && wallet.kind !== 'hardware') return false;
   if (!account.derivationPath) return false;
+  // A sibling account added under another family's path receives but cannot sign.
+  if (!signsAtPath(account, account.derivationPath)) return false;
   switch (account.family) {
     case 'evm':
       return EVM_SIGNING_CHAINS.has(account.chainId);

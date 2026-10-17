@@ -114,7 +114,7 @@ impl ChainId {
             "neo3" => Some(ChainFamily::Neo),
             "ergo" => Some(ChainFamily::Ergo),
             "icon" => Some(ChainFamily::Icon),
-            "alph" => Some(ChainFamily::Alephium),
+            "alephium" => Some(ChainFamily::Alephium),
             "chia" => Some(ChainFamily::Chia),
             "ever" | "venom" => Some(ChainFamily::Everscale),
             "radix" => Some(ChainFamily::Radix),
@@ -155,6 +155,9 @@ pub enum Curve {
 }
 
 impl Curve {
+    /// The HD curve a family's accounts derive from. Secret-derived families
+    /// (Starknet, Chia, Waves, Mixin, Qubic, Cardano) list the curve their
+    /// derivation path is tagged with, not the curve they sign on.
     pub fn for_family(family: ChainFamily) -> &'static [Curve] {
         match family {
             ChainFamily::Evm
@@ -167,15 +170,14 @@ impl Curve {
             | ChainFamily::Vechain
             | ChainFamily::Starknet
             | ChainFamily::Icp
-            | ChainFamily::Neo
             | ChainFamily::Ergo
             | ChainFamily::Icon
             | ChainFamily::Alephium
-            | ChainFamily::Chia
             | ChainFamily::Fuel
             | ChainFamily::Aelf
             | ChainFamily::Obyte
             | ChainFamily::Chromia
+            | ChainFamily::Keeta
             | ChainFamily::BtcFork
             | ChainFamily::Gala => &[Curve::Secp256k1],
             ChainFamily::Bitcoin => &[Curve::Secp256k1, Curve::Secp256k1Tr],
@@ -194,13 +196,14 @@ impl Curve {
             | ChainFamily::Everscale
             | ChainFamily::Radix
             | ChainFamily::Aeternity
+            | ChainFamily::Chia
             | ChainFamily::Starcoin
-            | ChainFamily::Keeta
             | ChainFamily::Namada
             | ChainFamily::Mixin
-            | ChainFamily::Qubic
-            | ChainFamily::Aleo
-            | ChainFamily::Canton => &[Curve::Ed25519],
+            | ChainFamily::Qubic => &[Curve::Ed25519],
+            // Read-only families: NEO signs on P-256 and Aleo/Canton on keys the
+            // core does not derive, so no HD curve applies.
+            ChainFamily::Neo | ChainFamily::Aleo | ChainFamily::Canton => &[],
         }
     }
 }
