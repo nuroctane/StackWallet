@@ -3,7 +3,7 @@ import type { ChainInfo } from './types.js';
 /**
  * The seed endpoints are HTTPS but omit CORS headers (probed 2026-10-16), so
  * the web bundle cannot reach them; the desktop shell can. Barnard was
- * unreachable during the build â€” the wire format is pinned byte-exact against
+ * unreachable during the build — the wire format is pinned byte-exact against
  * the official SDK, and the network is proven via chain.info chain_id.
  */
 export const STARCOIN: ChainInfo[] = [

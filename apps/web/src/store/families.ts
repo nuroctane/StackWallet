@@ -36,7 +36,14 @@ export interface FamilySend {
     normalize?(to: string): string;
     invalid: string;
     /** An optional routing field the recipient may need (an exchange's destination tag). */
-    tag?: { label: string; placeholder: string; validate(tag: string): boolean; invalid: string };
+    tag?: {
+      label: string;
+      placeholder: string;
+      validate(tag: string): boolean;
+      invalid: string;
+      /** Keyboard hint for touch devices; defaults to text since several families carry free-form memos. */
+      inputMode?: 'numeric' | 'text';
+    };
     placeholder: string;
     /** Largest amount in base units the family's encoding carries. */
     maxUnits: bigint;

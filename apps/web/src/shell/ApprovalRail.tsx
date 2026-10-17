@@ -176,6 +176,20 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
   const call = decodeCalldata(evm?.dataHex ?? '');
   const native = chain?.nativeAsset;
   const maxFee = evm ? BigInt(evm.maxFeePerGas) * BigInt(evm.gasLimit) : undefined;
+  const mainnet = chain !== undefined && !chain.testnet;
+  // Families with a dedicated fee row above read the fee from their unsigned tx; the rest
+  // fall back to the simulation's estimate so no approval card is silent about cost.
+  const genericFee = sim && !bitcoin && !cosmos && !solana && !evm ? sim.fee : null;
+  const genericFeeLabel = (() => {
+    if (!genericFee) return null;
+    if (genericFee.amount === '0') return 'none';
+    if (genericFee.assetRef === `${i.chainId}:native` && native)
+      return `${formatUnits(genericFee.amount, native.decimals, native.decimals)} ${native.symbol} estimated`;
+    const token = tokenStore.find(genericFee.assetRef);
+    if (token)
+      return `${formatUnits(genericFee.amount, token.decimals, token.decimals)} ${token.symbol} estimated`;
+    return `${genericFee.amount} · ${genericFee.assetRef.split(':').slice(-1)[0]} estimated`;
+  })();
 
   const walletKind = directoryState.wallets.find((w) => w.id === i.walletId)?.kind;
   const hardware = walletKind === 'hardware';
@@ -220,6 +234,11 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
       <Row label="network">
         <span className="text-muted">{chain?.name ?? i.chainId}</span>
         {chain?.testnet && <Badge className="ml-1">testnet</Badge>}
+        {mainnet && (
+          <Badge tone="danger" className="ml-1">
+            mainnet · real funds
+          </Badge>
+        )}
       </Row>
       {tx.signer && (
         <Row label="from">
@@ -305,6 +324,11 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
           </span>
         </Row>
       )}
+      {genericFeeLabel && (
+        <Row label="fee">
+          <span className="font-mono text-[11px] text-muted">{genericFeeLabel}</span>
+        </Row>
+      )}
       {sim && (
         <Row label="changes">
           <ul className="flex flex-col font-mono text-[11px]">
@@ -332,7 +356,11 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
       )}
       {sim?.warnings.map((w, n) => (
         <p key={n} className="text-[11px] text-warm">
-          {w.kind === 'destinationIsContract' ? 'The recipient is a contract.' : w.kind}
+          {w.kind === 'other'
+            ? w.message
+            : w.kind === 'destinationIsContract'
+              ? 'The recipient is a contract.'
+              : w.kind}
         </p>
       ))}
       {tx.decision?.decision === 'allow' && tx.decision.auditNotes.length > 0 && (
@@ -353,7 +381,9 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
         <div className="flex gap-1.5 pt-1">
           <Button
             size="sm"
-            variant={unknownRecipient || tx.simulationOk === false ? 'danger' : 'primary'}
+            variant={
+              unknownRecipient || tx.simulationOk === false || mainnet ? 'danger' : 'primary'
+            }
             disabled={view.busy}
             title="Both devices sign; connect to the one holding the other share"
             onClick={() =>
@@ -392,14 +422,18 @@ function ApprovalCard({ tx }: { tx: TxRecord }) {
           <Button
             type="submit"
             size="sm"
-            variant={unknownRecipient || tx.simulationOk === false ? 'danger' : 'primary'}
+            variant={
+              unknownRecipient || tx.simulationOk === false || mainnet ? 'danger' : 'primary'
+            }
             disabled={!passphrase || working || view.busy}
             title={
               tx.simulationOk === false
                 ? 'The simulation failed; this is likely to fail on chain'
                 : unknownRecipient
                   ? 'First payment to this address'
-                  : undefined
+                  : mainnet
+                    ? 'Mainnet transaction: real funds move'
+                    : undefined
             }
           >
             {working ? (

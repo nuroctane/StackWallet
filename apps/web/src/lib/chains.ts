@@ -36,8 +36,8 @@ export function listFamilies(registry: ChainRegistry): ChainFamily[] {
 
 export const FAMILY_LABEL: Record<ChainFamily, string> = {
   evm: 'EVM',
-  bitcoin: 'BTC',
-  solana: 'SOL',
+  bitcoin: 'BITCOIN',
+  solana: 'SOLANA',
   cosmos: 'COSMOS',
   tron: 'TRON',
   substrate: 'SUBSTRATE',
@@ -50,9 +50,9 @@ export const FAMILY_LABEL: Record<ChainFamily, string> = {
   cardano: 'CARDANO',
   algorand: 'ALGORAND',
   tezos: 'TEZOS',
-  multiversx: 'MVX',
+  multiversx: 'MULTIVERSX',
   antelope: 'ANTELOPE',
-  hyperliquid: 'HYPERCORE',
+  hyperliquid: 'HYPERLIQUID',
   stacks: 'STACKS',
   vechain: 'VECHAIN',
   starknet: 'STARKNET',
@@ -61,19 +61,19 @@ export const FAMILY_LABEL: Record<ChainFamily, string> = {
   neo: 'NEO',
   ergo: 'ERGO',
   icon: 'ICON',
-  alephium: 'ALPH',
+  alephium: 'ALEPHIUM',
   chia: 'CHIA',
-  everscale: 'EVER',
+  everscale: 'EVERSCALE',
   radix: 'RADIX',
-  aeternity: 'AE',
+  aeternity: 'AETERNITY',
   fuel: 'FUEL',
   aelf: 'AELF',
-  starcoin: 'STC',
+  starcoin: 'STARCOIN',
   obyte: 'OBYTE',
-  chromia: 'CHR',
+  chromia: 'CHROMIA',
   keeta: 'KEETA',
   namada: 'NAMADA',
-  btcfork: 'BTCFORK',
+  btcfork: 'BTC FORKS',
   gala: 'GALA',
   mixin: 'MIXIN',
   qubic: 'QUBIC',
@@ -160,6 +160,43 @@ export function explorerAddressUrl(info: ChainInfo, address: string): string | u
       ? `${root}/#/account/${encodeURIComponent(address)}`
       : undefined;
   }
+  // explorer.qubic.org pages identities under /network/address/, not beside /tx/.
+  if (info.family === 'qubic' && tpl.includes('/tx/')) {
+    const root = tpl.slice(0, tpl.indexOf('/tx/'));
+    return /^https:\/\/[^/]+$/.test(root)
+      ? `${root}/network/address/${encodeURIComponent(address)}`
+      : undefined;
+  }
+  // stcscan keeps the network segment: /<net>/transactions/detail/<h> -> /<net>/address/<a>.
+  if (info.family === 'starcoin' && tpl.includes('/transactions/')) {
+    const prefix = tpl.slice(0, tpl.indexOf('/transactions/'));
+    return /^https:\/\/[^/]+\/[^/]+$/.test(prefix)
+      ? `${prefix}/address/${encodeURIComponent(address)}`
+      : undefined;
+  }
+  // The Alephium explorer pairs /transactions/ with /addresses/.
+  if (info.family === 'alephium' && tpl.includes('/transactions/')) {
+    const root = tpl.slice(0, tpl.indexOf('/transactions/'));
+    return /^https:\/\/[^/]+$/.test(root)
+      ? `${root}/addresses/${encodeURIComponent(address)}`
+      : undefined;
+  }
+  // Dora puts the network after the route: /transaction/neo3/<net>/<h> -> /address/neo3/<net>/<a>.
+  if (info.family === 'neo' && tpl.includes('/transaction/') && tpl.endsWith('/{hash}')) {
+    const idx = tpl.indexOf('/transaction/');
+    const root = tpl.slice(0, idx);
+    const network = tpl.slice(idx + '/transaction/'.length, -'/{hash}'.length);
+    return /^https:\/\/[^/]+$/.test(root) && /^[a-z0-9/]+$/.test(network)
+      ? `${root}/address/${network}/${encodeURIComponent(address)}`
+      : undefined;
+  }
+  // explorer.provable.com pairs /transaction/ with /address/.
+  if (info.family === 'aleo' && tpl.includes('/transaction/')) {
+    const root = tpl.slice(0, tpl.indexOf('/transaction/'));
+    return /^https:\/\/[^/]+$/.test(root)
+      ? `${root}/address/${encodeURIComponent(address)}`
+      : undefined;
+  }
   // Tronscan routes in the fragment: /#/transaction/<id> -> /#/address/<addr>.
   const hashRoute = tpl.indexOf('/#/transaction/');
   if (hashRoute >= 0) {
@@ -198,12 +235,13 @@ export function explorerAddressUrl(info: ChainInfo, address: string): string | u
   return url.toString();
 }
 
-/** The chain's explorer page for a transaction hash, https only. */
+/**
+ * The chain's explorer page for a transaction hash, https only. Hash formats vary too much
+ * across families (prefixed ids, base64 units, short hex) to allowlist each; the charset
+ * check plus URL encoding is what keeps a hash from smuggling in path segments or queries.
+ */
 export function explorerTxUrl(info: ChainInfo, hash: string): string | undefined {
-  if (
-    !info.explorerTxUrl ||
-    !/^(0x)?[0-9a-fA-F]{64}$|^[1-9A-HJ-NP-Za-km-z]{43,90}$|^[A-Z2-7]{52}$/.test(hash)
-  ) {
+  if (!info.explorerTxUrl || !/^[A-Za-z0-9_+/=:\-]{8,128}$/.test(hash)) {
     return undefined;
   }
   const url = info.explorerTxUrl.replace('{hash}', encodeURIComponent(hash));

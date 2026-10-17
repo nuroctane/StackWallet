@@ -5,7 +5,8 @@ Local-first, self-custodial, agentic harness for crypto wallets on every chain.
 - Wallets organized in folders and subfolders, each with policies, automations and agent grants.
 - Real threshold signatures: your devices and your agent each hold a share; no single place ever
   holds a complete key. The agent cannot move funds without a human co-signature.
-- EVM, Bitcoin family, Solana and Cosmos SDK chains behind one adapter contract.
+- 44 chain families, from EVM, Bitcoin, Solana and Cosmos SDK to Qubic and Canton, behind one
+  adapter contract (see `docs/CHAINS.md`).
 - Agent console (BYOK cloud models) whose every proposal goes through simulation, policy and
   the approval queue before a signing ceremony starts.
 - Market data and charts for every asset you hold, fetched directly by the client.

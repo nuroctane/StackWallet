@@ -3,6 +3,7 @@ import type { ChainInfo } from '@stackwallet/chains';
 import { Input, Select } from '@stackwallet/ui';
 
 import { FAMILY_LABEL, FAMILY_ORDER } from '../lib/chains.js';
+import { standardPath } from '../lib/keys.js';
 
 /** Below this many chains a plain list is quicker than typing. */
 const FILTER_FROM = 12;
@@ -32,7 +33,14 @@ export function groupChains(chains: readonly ChainInfo[]): Group[] {
 export function chainMatches(c: ChainInfo, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (q === '') return true;
-  return [c.name, c.nativeAsset.symbol, c.chainId, c.layer ?? '', c.parent ?? '']
+  return [
+    c.name,
+    c.nativeAsset.symbol,
+    c.chainId,
+    FAMILY_LABEL[c.family],
+    c.layer ?? '',
+    c.parent ?? '',
+  ]
     .join(' ')
     .toLowerCase()
     .includes(q);
@@ -43,6 +51,8 @@ export function chainOptionLabel(c: ChainInfo): string {
   if (c.layer && c.layer !== 'L1') parts.push(c.parent ? `${c.layer} on ${c.parent}` : c.layer);
   if (c.halted) parts.push('halted');
   if (c.defaultRpcs.length === 0) parts.push('add an endpoint');
+  // Without a derivation path the core cannot hold a key for the chain, so it only watches.
+  if (standardPath(c) === null) parts.push('watch only');
   return parts.join(' · ');
 }
 

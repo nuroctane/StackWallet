@@ -59,6 +59,8 @@ describe('CHAIN_CATALOG', () => {
       // Canton's only explorer is Cloudflare-challenged and its update route is unverified.
       'canton:mainnet',
       'canton:testnet',
+      // The Namada mainnet explorer does not index Housefire.
+      'namada:cc0d3e0c033be',
     ]);
     for (const entry of CURATED_CATALOG)
       expect(Boolean(entry.explorerTxUrl), entry.chainId).toBe(!noHashExplorer.has(entry.chainId));

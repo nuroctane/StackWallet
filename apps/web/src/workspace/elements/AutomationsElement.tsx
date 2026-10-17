@@ -1,9 +1,11 @@
 import { useId, useState, type FormEvent } from 'react';
 import { nextRunAt, type Action, type Trigger } from '@stackwallet/automations';
+import { shortAddress } from '@stackwallet/chains';
 import { Button, Field, Input, Select } from '@stackwallet/ui';
 
-import { EVM_SIGNING_CHAINS, findChain } from '../../lib/chains.js';
+import { findChain } from '../../lib/chains.js';
 import { parseUnits, relativeTime } from '../../lib/format.js';
+import { canSendFrom } from '../../lib/sendable.js';
 import { automationStore, useAutomations } from '../../store/automations.js';
 import { useDirectory } from '../../store/persist.js';
 import { useRegistry } from '../../store/RegistryContext.js';
@@ -93,13 +95,10 @@ function AddAutomation({ onDone }: { onDone: () => void }) {
     to: useId(),
     amount: useId(),
   };
-  const single = new Set(state.wallets.filter((w) => w.kind === 'single').map((w) => w.id));
-  const accounts = state.accounts.filter(
-    (a) =>
-      single.has(a.walletId) &&
-      a.derivationPath &&
-      (a.family !== 'evm' || EVM_SIGNING_CHAINS.has(a.chainId)),
+  const single = new Map(
+    state.wallets.filter((w) => w.kind === 'single').map((w) => [w.id, w] as const),
   );
+  const accounts = state.accounts.filter((a) => canSendFrom(a, single.get(a.walletId)));
   const [name, setName] = useState('');
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '');
   const [trigger, setTrigger] = useState<'interval' | 'daily' | 'balanceAbove'>('interval');
@@ -161,7 +160,7 @@ function AddAutomation({ onDone }: { onDone: () => void }) {
         <Select id={ids.account} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
-              {findChain(registry, a.chainId)?.name ?? a.chainId} · {a.address.slice(0, 10)}…
+              {findChain(registry, a.chainId)?.name ?? a.chainId} · {shortAddress(a.address, 10, 4)}
             </option>
           ))}
         </Select>

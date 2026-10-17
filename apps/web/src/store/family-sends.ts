@@ -489,6 +489,7 @@ registerFamilySend({
       placeholder: 'e.g. 12345',
       validate: (tag) => /^(0|[1-9][0-9]{0,9})$/.test(tag) && Number(tag) <= 0xffff_ffff,
       invalid: 'A whole number from 0 to 4294967295',
+      inputMode: 'numeric',
     },
     note: 'Native XRP on XRP Ledger testnet. Exchanges usually need a destination tag; check it before you send. A new account needs at least 1 XRP.',
   },
@@ -984,7 +985,7 @@ registerFamilySend({
   form: {
     validate: (to) => isValidAeternityAddress(to.trim()),
     normalize: (to) => to.trim(),
-    invalid: 'Not an Aeternity account address (ak_â€¦)',
+    invalid: 'Not an Aeternity account address (ak_…)',
     placeholder: 'ak_2nBeEMDjAzFa9Ev2pxwejYrgCRmSLx96SbA24uhdMMTUktJWvK',
     maxUnits: 1_000_000_000_000_000_000_000_000_000_000n,
     note: 'AE transfers carry no memo and cannot be replaced or cancelled once broadcast. A transfer to a fresh address creates the account.',
@@ -1006,10 +1007,10 @@ registerFamilySend({
   form: {
     validate: (to) => isValidChiaAddress(to.trim(), chiaNetworkPrefix(CHIA_TESTNET)),
     normalize: (to) => to.trim(),
-    invalid: 'Not a Chia testnet address (txch1â€¦)',
-    placeholder: 'txch1â€¦',
+    invalid: 'Not a Chia testnet address (txch1…)',
+    placeholder: 'txch1…',
     maxUnits: 9_223_372_036_854_775_807n,
-    note: 'One Chia transfer spends one coin; change returns to you. Chia has no transaction hash â€” the spent coin id tracks the transfer.',
+    note: 'One Chia transfer spends one coin; change returns to you. Chia has no transaction hash — the spent coin id tracks the transfer.',
   },
 });
 
@@ -1272,7 +1273,7 @@ registerFamilySend({
     placeholder:
       'XIN8AJMgQUD11jZYN9ggbQDqkmozrha3zPEZxEkKxVFBufZpEVMtrR6PjtmgtNAH6jrg8dTUQFb9waqqw9euU7Ea8AC6DEu8',
     maxUnits: 18_446_744_073_709_551_615n,
-    note: 'Transfers run on the Mixin main kernel â€” real XIN, no test network exists. The kernel charges no fee; your inputs must cover the amount and change returns to you.',
+    note: 'Transfers run on the Mixin main kernel — real XIN, no test network exists. The kernel charges no fee; your inputs must cover the amount and change returns to you.',
   },
 });
 
@@ -1295,6 +1296,6 @@ registerFamilySend({
     invalid: 'Not a Qubic identity (60 uppercase letters)',
     placeholder: 'BZBQFLLBNCXEMGLOBHUVFTLUPLVCPQUASSILFABOFFBCADQSSUPNWLZBQEXK',
     maxUnits: 9_223_372_036_854_775_807n,
-    note: 'Transfers are fee-free and execute at a target tick about a minute after preparation; if that tick passes unexecuted the transfer is dead and must be prepared again.',
+    note: 'Transfers run on Qubic mainnet: real QUBIC, no test network exists. Transfers are fee-free and execute at a target tick about a minute after preparation; if that tick passes unexecuted the transfer is dead and must be prepared again.',
   },
 });

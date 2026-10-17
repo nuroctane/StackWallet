@@ -211,7 +211,7 @@ function GettingStarted({ state }: { state: DirectoryState }) {
           n={3}
           done={funded}
           title="Receive coins"
-          body="Share an address or QR code. Testnet accounts link to a free faucet."
+          body="Share an address or QR code. Most testnet accounts link to a free faucet."
           action={
             keyed &&
             !funded && (

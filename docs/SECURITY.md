@@ -184,7 +184,7 @@ Unresolved Signed, Broadcast and Pending records offer an explicit original-broa
 The Rust core verifies the passphrase, checks the current policy and local-device approval
 requirements, validates the saved intent binding, and seals a hash-chained retry authorization
 before the browser can send. The action reuses the core's original signed bytes and hash on
-EVM, Bitcoin, Solana and Cosmos; it never prepares a replacement or creates a signature.
+every signing family; it never prepares a replacement or creates a signature.
 Terminal and incomplete records cannot be retried. Uncertain retry responses keep the original
 signature tracked and its spend reserved; polling resolves the outcome. Retrying is not a
 transaction cancellation, fee replacement, or automatic rebroadcast on restart.

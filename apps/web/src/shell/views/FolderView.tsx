@@ -248,6 +248,9 @@ function Stat({ label, value, hint }: { label: string; value: number; hint?: str
   );
 }
 
+/** A default wallet spans dozens of families; the row shows a few and tucks the rest in a tooltip. */
+const CHAIN_CELL_LIMIT = 4;
+
 function WalletRow({
   state,
   wallet,
@@ -260,7 +263,7 @@ function WalletRow({
   registry: ReturnType<typeof useRegistry>;
 }) {
   const accounts = state.accounts.filter((a) => a.walletId === wallet.id);
-  const families = walletFamilies(state, wallet.id);
+  const familyLabels = walletFamilies(state, wallet.id).map((f) => FAMILY_LABEL[f]);
   const first = accounts[0];
   const entry = first ? balances.get(first.id) : undefined;
   const info = first ? findChain(registry, first.chainId) : undefined;
@@ -291,8 +294,16 @@ function WalletRow({
       <td data-label="Kind" className="px-3">
         <Badge>{kindLabel(wallet)}</Badge>
       </td>
-      <td data-label="Chains" className="px-3 text-[10px] tracking-[0.06em] text-faint uppercase">
-        {families.map((f) => FAMILY_LABEL[f]).join(' · ') || '—'}
+      <td
+        data-label="Chains"
+        className="px-3 text-[10px] tracking-[0.06em] text-faint uppercase"
+        title={familyLabels.join(' · ') || undefined}
+      >
+        {familyLabels.length === 0
+          ? '—'
+          : familyLabels.length <= CHAIN_CELL_LIMIT
+            ? familyLabels.join(' · ')
+            : `${familyLabels.slice(0, CHAIN_CELL_LIMIT).join(' · ')} +${familyLabels.length - CHAIN_CELL_LIMIT}`}
       </td>
       <td
         data-label="Balance"
