@@ -842,6 +842,19 @@ client for which folder a wallet sits in; the wallet key is bound to the wallet 
    stale (over 15 minutes) or divergent quotes evaluate to unknown and never fire. Alerts only
    notify (toast, optional desktop notification); they never propose or sign. Remaining: DEX
    Screener and Pyth sources, the other §11.1 elements, alerts as automation triggers.
+   Third increment: Chainlink as an on-chain source. A committed registry
+   (`packages/market/src/chainlink-feeds.ts`, regenerated from Chainlink's reference data by
+   `scripts/sync-chainlink.ts`) carries the aggregator proxy addresses, and the reader calls
+   them through the user's own EVM endpoints: the latest round is cross-checked across two
+   independent RPC operators, decimals are verified against the proxy once per session, and
+   non-positive or malformed rounds are rejected. Round history is walked with batched
+   `eth_call` pages across aggregator phases and bucketed into candles, so the `candles`
+   element keeps working when no price API is reachable; the trade-off is oracle-round
+   granularity (heartbeat/deviation driven, with market-hours gaps on forex and commodity
+   feeds) rather than trade-level candles. The canvas chart grew scroll/pinch/keyboard zoom
+   anchored at the cursor, drag pan, edge-triggered backfill, log scale, step/bars/OHLC/
+   hollow/Heikin-Ashi series, SMA/EMA/Bollinger overlays and RSI/MACD subpanes with a synced
+   crosshair, decimated to the pixel budget.
 8. **Desktop polish + packaging**: Tauri bundles, background scheduler, OS keychain unlock,
    hardware wallet signer (Ledger EVM signing is in, through WebHID in the shared bundle). The
    desktop window runs the bundled wasm core, so it has the same

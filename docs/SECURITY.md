@@ -231,10 +231,13 @@ agreement alone is not chain identity or cryptographic proof of balance/finality
 - No telemetry, analytics or crash reporting. No remote fonts.
 - Market data requests reveal which assets you look at to the data provider; the UI says so in
   Settings and lets you choose providers per family or disable them. Requests carry coin ids
-  only, never addresses or amounts. The market elements' sources panel turns CoinGecko and
-  DefiLlama on or off (DefiLlama is off by default); a disabled source is never contacted.
-  Coin search sends the typed query to CoinGecko. Portfolio value history is computed locally
-  from the ledger and public price history, so holdings never leave the device.
+  only, never addresses or amounts. The market elements' sources panel turns CoinGecko,
+  DefiLlama and the on-chain Chainlink source on or off (DefiLlama is off by default); a
+  disabled source is never contacted. The Chainlink source talks only to the EVM endpoints the
+  user already configured and names feed contracts, never wallet addresses; its answers are
+  cross-checked across two independent RPC operators and rejected when they disagree. Coin
+  search sends the typed query to CoinGecko. Portfolio value history is computed locally from
+  the ledger and public price history, so holdings never leave the device.
 - Price alerts are evaluated locally. A stale or divergent quote never fires an alert, and an
   alert can only notify; it has no path to proposing or signing a transaction.
 - RPC requests reveal your addresses to the RPC provider; users can supply their own endpoints.
