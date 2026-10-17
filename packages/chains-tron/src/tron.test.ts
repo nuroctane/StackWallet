@@ -64,7 +64,9 @@ describe('tron addresses', () => {
   it('derives the base58check address of private key 1', () => {
     expect(tronAddressFromPublicKey(hexToBytes(KEY_ONE))).toBe(DERIVED_ADDRESS_VECTOR);
     const a = new TronAdapter();
-    expect(a.deriveAddress({ curve: 'secp256k1', hex: KEY_ONE }, TRON_NILE)).toBe(DERIVED_ADDRESS_VECTOR);
+    expect(a.deriveAddress({ curve: 'secp256k1', hex: KEY_ONE }, TRON_NILE)).toBe(
+      DERIVED_ADDRESS_VECTOR,
+    );
     expect(() => a.deriveAddress({ curve: 'ed25519', hex: '00'.repeat(32) }, TRON_NILE)).toThrow();
   });
 
@@ -73,7 +75,9 @@ describe('tron addresses', () => {
     expect(isValidTronAddress(USDT.slice(0, -1) + 'u')).toBe(false);
     expect(isValidTronAddress('0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf')).toBe(false);
     expect(isValidTronAddress('T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb')).toBe(false);
-    expect(tronAddressFromHex('417e5f4552091a69125d5dfcb7b8c2659029395bdf')).toBe(DERIVED_ADDRESS_VECTOR);
+    expect(tronAddressFromHex('417e5f4552091a69125d5dfcb7b8c2659029395bdf')).toBe(
+      DERIVED_ADDRESS_VECTOR,
+    );
     expect(tronAddressFromHex('7e5f4552091a69125d5dfcb7b8c2659029395bdf')).toBeUndefined();
   });
 
@@ -119,7 +123,9 @@ describe('tron transfers', () => {
       }),
       '/wallet/getaccountresource': () => ({ freeNetLimit: 600 }),
       '/wallet/getaccount': (b) =>
-        b.address === DERIVED_ADDRESS_VECTOR ? { address: DERIVED_ADDRESS_VECTOR, balance: 5_000_000 } : {},
+        b.address === DERIVED_ADDRESS_VECTOR
+          ? { address: DERIVED_ADDRESS_VECTOR, balance: 5_000_000 }
+          : {},
     });
     const a = adapter(fetchImpl);
     const intent = {
@@ -203,7 +209,10 @@ describe('tron transfers', () => {
         constant_result: ['00'.repeat(31) + '2a'],
       }),
     });
-    const holdings = await adapter(fetchImpl).getBalances(DERIVED_ADDRESS_VECTOR, 'tron:0x2b6653dc');
+    const holdings = await adapter(fetchImpl).getBalances(
+      DERIVED_ADDRESS_VECTOR,
+      'tron:0x2b6653dc',
+    );
     expect(holdings[0]!.amount).toBe('95000000000000001');
     expect(holdings[1]).toMatchObject({ assetRef: `tron:0x2b6653dc:trc20:${USDT}`, amount: '42' });
   });

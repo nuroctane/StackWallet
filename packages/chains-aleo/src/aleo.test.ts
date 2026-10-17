@@ -30,9 +30,7 @@ const TXID = 'at1zkpde5rsukkekjd44vymy0m6t9jnw9zl4pzkczjzlm2m2m56uyxqdwx3yq';
 const RPC_A = 'https://rpc-a.test';
 const RPC_B = 'https://rpc-b.test';
 
-const CHAINS: ChainInfo[] = [
-  { ...ALEO_CHAINS[0]!, defaultRpcs: [RPC_A, RPC_B] },
-];
+const CHAINS: ChainInfo[] = [{ ...ALEO_CHAINS[0]!, defaultRpcs: [RPC_A, RPC_B] }];
 
 type Route = (url: URL) => Response;
 
@@ -41,8 +39,7 @@ function node(net: string, routes: Record<string, Route>, genesis = ALEO_GENESIS
   const fetchImpl = (async (input: RequestInfo | URL) => {
     const url = new URL(String(input));
     calls.push(url.pathname);
-    if (url.pathname === `/v1/${net}/block/0`)
-      return Response.json({ block_hash: genesis });
+    if (url.pathname === `/v1/${net}/block/0`) return Response.json({ block_hash: genesis });
     if (url.pathname === `/v1/${net}/latest/height`) return Response.json(20_554_425);
     const route = routes[url.pathname];
     if (!route) return Response.json({ statusCode: 404, message: 'Not Found' }, { status: 404 });
@@ -82,9 +79,9 @@ describe('aleo addresses', () => {
   });
   it('cannot derive from any key the core holds', () => {
     const a = adapter(node('mainnet', {}).fetchImpl);
-    expect(() =>
-      a.deriveAddress({ curve: 'ed25519', hex: '11'.repeat(32) }, ALEO_MAINNET),
-    ).toThrow(UnsupportedKeyError);
+    expect(() => a.deriveAddress({ curve: 'ed25519', hex: '11'.repeat(32) }, ALEO_MAINNET)).toThrow(
+      UnsupportedKeyError,
+    );
   });
 });
 
@@ -161,9 +158,9 @@ describe('aleo misc', () => {
     expect(ALEO_MAINNET).toBe('aleo:mainnet');
     expect(ALEO_TESTNET).toBe('aleo:testnet');
     expect(ALEO_GENESIS[ALEO_MAINNET]).toMatch(/^ab1/);
-    expect(
-      createAleoAdapter({ rpc: new MemoryRpcPool(CHAINS) }).chains()[0]!.chainId,
-    ).toBe(ALEO_MAINNET);
+    expect(createAleoAdapter({ rpc: new MemoryRpcPool(CHAINS) }).chains()[0]!.chainId).toBe(
+      ALEO_MAINNET,
+    );
   });
   it('reads the latest height', async () => {
     const height = await adapter(node('mainnet', {}).fetchImpl).latestHeight(ALEO_MAINNET);

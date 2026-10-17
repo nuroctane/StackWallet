@@ -71,7 +71,10 @@ describe('addresses', () => {
     const adapter = new NamadaAdapter();
     expect(adapter.chains().map((c) => c.chainId)).toContain(NAMADA_MAINNET);
     expect(
-      adapter.deriveAddress({ curve: 'ed25519', hex: Buffer.from(PUB).toString('hex') }, NAMADA_MAINNET),
+      adapter.deriveAddress(
+        { curve: 'ed25519', hex: Buffer.from(PUB).toString('hex') },
+        NAMADA_MAINNET,
+      ),
     ).toBe(SENDER);
     expect(adapter.validateAddress(SENDER, NAMADA_HOUSEFIRE)).toBe(true);
     expect(() => adapter.validateAddress(SENDER, 'namada:unknown')).toThrow();
@@ -98,10 +101,7 @@ describe('wire format', () => {
   it('fresh signatures over the same fields reproduce the same shape', () => {
     const hashes = sighashes(TX, new Uint8Array(64), PUB);
     const inner = ed25519.sign(hexToBytes(hashes.inner), SECRET);
-    const wrapper = ed25519.sign(
-      hexToBytes(sighashes(TX, inner, PUB).wrapper),
-      SECRET,
-    );
+    const wrapper = ed25519.sign(hexToBytes(sighashes(TX, inner, PUB).wrapper), SECRET);
     const parts = encodeSignedTransfer(TX, inner, wrapper, PUB);
     expect(parts.wire.length).toBe(hexToBytes(WIRE).length);
     expect(namadaApprovalValid(TX, Buffer.from(parts.wire).toString('hex'), PUB)).toBe(true);
@@ -124,8 +124,7 @@ function mockFetch(balanceNamnam = '200000000'): typeof fetch {
     const url = String(input);
     if (url.includes('indexer.namada.net/api/v1/gas-price/'))
       return new Response(JSON.stringify([{ token: NAM_TOKEN, minDenomAmount: '1' }]));
-    if (url.includes('indexer.namada.net'))
-      return new Response('not found', { status: 404 });
+    if (url.includes('indexer.namada.net')) return new Response('not found', { status: 404 });
     const body = JSON.parse(String(init?.body));
     const result = (() => {
       switch (body.method) {
@@ -136,8 +135,7 @@ function mockFetch(balanceNamnam = '200000000'): typeof fetch {
           };
         case 'abci_query': {
           const path = body.params.path as string;
-          if (path.includes('wasm/hash/'))
-            return { code: 0, value: b64(WASM_HASH) };
+          if (path.includes('wasm/hash/')) return { code: 0, value: b64(WASM_HASH) };
           const amount = new Uint8Array(32);
           new DataView(amount.buffer).setBigUint64(0, BigInt(balanceNamnam), true);
           return { code: 0, value: Buffer.from(amount).toString('base64') };
@@ -185,12 +183,7 @@ describe('send flow', () => {
 
   it('flags an unaffordable transfer in the simulation', async () => {
     const adapter = new NamadaAdapter({ fetch: mockFetch('100') });
-    const { simulation } = await prepareNamada(
-      adapter,
-      intent('1000000') as never,
-      SENDER,
-      PUB,
-    );
+    const { simulation } = await prepareNamada(adapter, intent('1000000') as never, SENDER, PUB);
     expect(simulation.ok).toBe(false);
     expect(simulation.error).toMatch(/Balance/);
   });

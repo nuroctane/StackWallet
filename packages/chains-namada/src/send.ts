@@ -47,9 +47,7 @@ export const NamadaTx = z.strictObject({
   feePerGas: CanonicalAmount,
   gasLimit: z.number().int().positive().max(1_000_000),
   wasmCodeHash: Hash32,
-  timestamp: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{9}\+00:00$/),
+  timestamp: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{9}\+00:00$/),
   codeSalt: Salt,
   dataSalt: Salt,
 });
@@ -196,11 +194,7 @@ export function encodeSignedTransfer(
   ];
   const wrapperAuth = concat(
     Uint8Array.of(3),
-    authBorsh(
-      sectionHashes,
-      concat(Uint8Array.of(1), u32le(1), Uint8Array.of(0), pub),
-      wrapperSig,
-    ),
+    authBorsh(sectionHashes, concat(Uint8Array.of(1), u32le(1), Uint8Array.of(0), pub), wrapperSig),
   );
 
   const borsh = concat(
@@ -294,7 +288,12 @@ export async function prepareNamada(
     await adapter.withNode(intent.chainId, async (call) => {
       const res = await call(
         'abci_query',
-        { path: `/shell/value/#${PARAMETERS_ADDR}/wasm/hash/${TRANSFER_TAG}`, data: '', height: '0', prove: false },
+        {
+          path: `/shell/value/#${PARAMETERS_ADDR}/wasm/hash/${TRANSFER_TAG}`,
+          data: '',
+          height: '0',
+          prove: false,
+        },
         AbciValue,
       );
       if (res.code !== 0 || !res.value) throw new Error('transfer wasm hash is not in storage');
@@ -310,10 +309,7 @@ export async function prepareNamada(
   }
   if (!wasmCodeHash) throw new Error('Could not resolve the transfer wasm hash');
   try {
-    const gas = await adapter.indexerGet(
-      `/api/v1/gas-price/${NAM_TOKEN}`,
-      z.array(GasPriceEntry),
-    );
+    const gas = await adapter.indexerGet(`/api/v1/gas-price/${NAM_TOKEN}`, z.array(GasPriceEntry));
     const price = gas.find((g) => g.token === NAM_TOKEN)?.minDenomAmount;
     if (price !== undefined && price !== '0') indexerFeePerGas = price;
   } catch {
@@ -341,8 +337,7 @@ export async function prepareNamada(
   const balance = BigInt(holdings[0]?.amount ?? '0');
   const fee = BigInt(feePerGas) * BigInt(gasLimit);
   const total = BigInt(intent.amount) + fee;
-  const error =
-    balance < total ? 'Balance does not cover the transfer and fee' : undefined;
+  const error = balance < total ? 'Balance does not cover the transfer and fee' : undefined;
   return {
     unsigned,
     simulation: {
@@ -363,11 +358,7 @@ export async function prepareNamada(
  * spliced out of the signed bytes; any other byte that differs is tampering.
  * Also verify both ed25519 signatures against the digests the fields imply.
  */
-export function namadaApprovalValid(
-  tx: NamadaTx,
-  wireHex: string,
-  pub: Uint8Array,
-): boolean {
+export function namadaApprovalValid(tx: NamadaTx, wireHex: string, pub: Uint8Array): boolean {
   const parsed = NamadaTx.parse(tx);
   const hex = wireHex.replace(/^0x/, '').toLowerCase();
   if (!/^[0-9a-f]+$/.test(hex)) return false;

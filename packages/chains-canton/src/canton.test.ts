@@ -41,8 +41,7 @@ function node(routes: Record<string, Route>, dso = DSO) {
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    if (url.pathname === '/api/scan/v0/dso-party-id')
-      return Response.json({ dso_party_id: dso });
+    if (url.pathname === '/api/scan/v0/dso-party-id') return Response.json({ dso_party_id: dso });
     const route = routes[url.pathname];
     if (!route) return new Response('not found', { status: 404 });
     return route(url, body);
@@ -106,7 +105,8 @@ describe('canton adapter reads', () => {
   });
   it('reports zero for a party with no holdings', async () => {
     const routes: Record<string, Route> = {
-      '/api/scan/v0/state/acs/snapshot-timestamp': summaryRoute['/api/scan/v0/state/acs/snapshot-timestamp']!,
+      '/api/scan/v0/state/acs/snapshot-timestamp':
+        summaryRoute['/api/scan/v0/state/acs/snapshot-timestamp']!,
       '/api/scan/v1/holdings/summary': () =>
         Response.json({ record_time: 't', migration_id: 4, summaries: [] }),
     };

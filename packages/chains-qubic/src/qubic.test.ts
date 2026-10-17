@@ -13,7 +13,13 @@ import {
   qubicIdentityFromPublicKey,
   qubicTxId,
 } from './qubic.js';
-import { broadcastQubic, prepareQubic, qubicApprovalValid, qubicRawBytes, qubicTransferStatus } from './send.js';
+import {
+  broadcastQubic,
+  prepareQubic,
+  qubicApprovalValid,
+  qubicRawBytes,
+  qubicTransferStatus,
+} from './send.js';
 
 const hexToBytes = (h: string) => Uint8Array.from(h.match(/../g)!, (b) => parseInt(b, 16));
 const bytesToHex = (b: Uint8Array) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
@@ -45,9 +51,7 @@ const TX1 = { chainId: QUBIC_MAINNET, from: ID_A, to: ID_Z, qu: '987654321', tic
 const RPC_A = 'https://rpc-a.test';
 const RPC_B = 'https://rpc-b.test';
 
-const CHAINS: ChainInfo[] = [
-  { ...QUBIC_CHAINS[0]!, defaultRpcs: [RPC_A, RPC_B] },
-];
+const CHAINS: ChainInfo[] = [{ ...QUBIC_CHAINS[0]!, defaultRpcs: [RPC_A, RPC_B] }];
 
 class TestAdapter extends QubicAdapter {
   override chains(): ChainInfo[] {
@@ -63,7 +67,9 @@ function node(routes: Record<string, Route>, tick = 85_222_476) {
     const url = new URL(String(input));
     calls.push(url.pathname);
     if (url.pathname === '/v1/tick-info')
-      return Response.json({ tickInfo: { tick, duration: 0, epoch: 235, initialTick: 84_770_000 } });
+      return Response.json({
+        tickInfo: { tick, duration: 0, epoch: 235, initialTick: 84_770_000 },
+      });
     const route = routes[url.pathname];
     if (!route) return new Response('not found', { status: 404 });
     return route(url, init);
@@ -137,7 +143,9 @@ describe('qubic adapter reads', () => {
     expect(holdings[0]!.assetRef).toBe(`${QUBIC_MAINNET}:native`);
   });
   it('rejects invalid identities', async () => {
-    await expect(adapter(node({}).fetchImpl).getBalances(ID_A.toLowerCase(), QUBIC_MAINNET)).rejects.toThrow();
+    await expect(
+      adapter(node({}).fetchImpl).getBalances(ID_A.toLowerCase(), QUBIC_MAINNET),
+    ).rejects.toThrow();
     expect(adapter(node({}).fetchImpl).validateAddress(ID_Z, QUBIC_MAINNET)).toBe(true);
   });
   it('derives an address from a 32-byte public key', () => {
@@ -155,7 +163,9 @@ describe('qubic status', () => {
   it('confirms an executed transaction', async () => {
     const { fetchImpl } = node({
       [`/v1/transactions/${TXID}`]: () =>
-        Response.json({ transaction: { sourceId: ID_A, destId: ID_Z, amount: '1', tickNumber: 85_222_470 } }),
+        Response.json({
+          transaction: { sourceId: ID_A, destId: ID_Z, amount: '1', tickNumber: 85_222_470 },
+        }),
       [`/v1/tx-status/${TXID}`]: () =>
         Response.json({ transactionStatus: { txId: TXID, moneyFlew: true } }),
     });
@@ -165,7 +175,9 @@ describe('qubic status', () => {
   it('flags moneyFlew false as failed', async () => {
     const { fetchImpl } = node({
       [`/v1/transactions/${TXID}`]: () =>
-        Response.json({ transaction: { sourceId: ID_A, destId: ID_Z, amount: '1', tickNumber: 85_222_470 } }),
+        Response.json({
+          transaction: { sourceId: ID_A, destId: ID_Z, amount: '1', tickNumber: 85_222_470 },
+        }),
       [`/v1/tx-status/${TXID}`]: () =>
         Response.json({ transactionStatus: { txId: TXID, moneyFlew: false } }),
     });
@@ -193,11 +205,7 @@ describe('qubic send path', () => {
       [`/v1/balances/${ID_A}`]: () =>
         Response.json({ balance: { id: ID_A, balance: '5000', validForTick: 85_222_480 } }),
     });
-    const { unsigned, simulation } = await prepareQubic(
-      adapter(fetchImpl),
-      intent as never,
-      ID_A,
-    );
+    const { unsigned, simulation } = await prepareQubic(adapter(fetchImpl), intent as never, ID_A);
     expect(unsigned.tick).toBe(85_222_476 + 20);
     expect(unsigned.qu).toBe('1000');
     expect(simulation.ok).toBe(true);

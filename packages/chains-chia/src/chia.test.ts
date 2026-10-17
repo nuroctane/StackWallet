@@ -142,13 +142,15 @@ describe('addresses', () => {
     expect(isValidChiaAddress(V.txch0, 'txch')).toBe(true);
     // Prefix binds the network: an xch address is not a txch address.
     expect(isValidChiaAddress(V.xch0, 'txch')).toBe(false);
-    expect(isValidChiaAddress('txch1vjktd8jmx6ez9yf2j3dg03gkvrf8k50sayf2erztpc2kpd895z3sgv6hx4')).toBe(
-      false,
-    );
+    expect(
+      isValidChiaAddress('txch1vjktd8jmx6ez9yf2j3dg03gkvrf8k50sayf2erztpc2kpd895z3sgv6hx4'),
+    ).toBe(false);
     expect(isValidChiaAddress('')).toBe(false);
-    expect(isValidChiaAddress('xch1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq')).toBe(
-      false,
-    );
+    expect(
+      isValidChiaAddress(
+        'xch1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
+      ),
+    ).toBe(false);
   });
 
   it('derives addresses through the adapter for a bls12-381 public key', () => {
@@ -165,8 +167,7 @@ describe('transaction validation', () => {
   });
 
   it('rejects hostile fields', () => {
-    const bad = (over: Partial<ChiaUnsignedTx>) => () =>
-      validateChiaTx({ ...sampleTx, ...over });
+    const bad = (over: Partial<ChiaUnsignedTx>) => () => validateChiaTx({ ...sampleTx, ...over });
     expect(bad({ mojos: '0' })).toThrow(/positive/);
     expect(bad({ mojos: '1.5' })).toThrow();
     expect(bad({ mojos: '010' })).toThrow();
@@ -204,7 +205,15 @@ describe('node interactions', () => {
         success: true,
         coin_records: [
           coinRecord(),
-          coinRecord({ coin: { parent_coin_info: `0x${'11'.repeat(32)}`, puzzle_hash: `0x${V.ph0}`, amount: 5 }, spent: true, spent_block_index: 200 }),
+          coinRecord({
+            coin: {
+              parent_coin_info: `0x${'11'.repeat(32)}`,
+              puzzle_hash: `0x${V.ph0}`,
+              amount: 5,
+            },
+            spent: true,
+            spent_block_index: 200,
+          }),
         ],
       }),
     });
@@ -220,7 +229,11 @@ describe('node interactions', () => {
         coin_records: [
           coinRecord(),
           coinRecord({
-            coin: { parent_coin_info: `0x${'22'.repeat(32)}`, puzzle_hash: `0x${V.ph0}`, amount: 9_000_000 },
+            coin: {
+              parent_coin_info: `0x${'22'.repeat(32)}`,
+              puzzle_hash: `0x${V.ph0}`,
+              amount: 9_000_000,
+            },
           }),
         ],
       }),
@@ -282,7 +295,10 @@ describe('node interactions', () => {
 
   it('treats ALREADY_INCLUDING_TRANSACTION as success', async () => {
     const adapter = adapterWith({
-      '/push_tx': () => ({ success: false, error: 'Failed to include transaction x, error ALREADY_INCLUDING_TRANSACTION' }),
+      '/push_tx': () => ({
+        success: false,
+        error: 'Failed to include transaction x, error ALREADY_INCLUDING_TRANSACTION',
+      }),
     });
     await expect(broadcastChia(adapter, sampleTx, wire)).resolves.toBe(V.tx.bundleName);
   });

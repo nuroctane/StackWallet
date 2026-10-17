@@ -73,8 +73,7 @@ export async function prepareQubic(
   const [sender] = await adapter.getBalances(from, intent.chainId);
   const balance = BigInt(sender?.amount ?? '0');
   const amount = BigInt(intent.amount);
-  const error =
-    balance < amount ? 'Balance does not cover the transfer' : undefined;
+  const error = balance < amount ? 'Balance does not cover the transfer' : undefined;
   return {
     unsigned,
     simulation: {
@@ -105,10 +104,7 @@ export async function broadcastQubic(
   if (unsigned.chainId !== QUBIC_MAINNET) throw new Error('Only mainnet broadcasts are enabled');
   const pkg = base64.decode(signedWireBase64);
   const expected = qubicRawBytes(unsigned);
-  if (
-    pkg.length !== 144 ||
-    expected.some((b, i) => pkg[i] !== b)
-  )
+  if (pkg.length !== 144 || expected.some((b, i) => pkg[i] !== b))
     throw new Error('Signed bytes are not this QU transfer');
   const txid = qubicTxId(pkg);
   const res = await adapter.broadcastRaw(unsigned.chainId, signedWireBase64);

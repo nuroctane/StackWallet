@@ -53,9 +53,7 @@ export const CANTON_MAINNET_SCANS = [
   'https://scan.sv-1.global.canton.network.sync.global',
   'https://scan.sv-2.global.canton.network.digitalasset.com',
 ];
-export const CANTON_TESTNET_SCANS = [
-  'https://scan.sv-1.test.global.canton.network.sync.global',
-];
+export const CANTON_TESTNET_SCANS = ['https://scan.sv-1.test.global.canton.network.sync.global'];
 
 const FINGERPRINT = /^1220[0-9a-f]{64}$/;
 const HINT = /^[a-z0-9-]{1,64}$/;

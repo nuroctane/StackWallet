@@ -183,7 +183,10 @@ export async function prepareChia(
  * goes by the sender's puzzle hash because coinset's name-indexed endpoints
  * do not serve stock `get_coin_record_by_name` lookups.
  */
-export async function chiaApprovalValid(adapter: ChiaAdapter, tx: ChiaUnsignedTx): Promise<boolean> {
+export async function chiaApprovalValid(
+  adapter: ChiaAdapter,
+  tx: ChiaUnsignedTx,
+): Promise<boolean> {
   const { coinId, fromPuzzleHash } = validateChiaTx(tx);
   return adapter.withNode(tx.chainId, async (call) => {
     const res = await call(
