@@ -440,7 +440,11 @@ stale, which is reported as `expired`. Mainnet is read-only (balances, history, 
 issued token).
 
 **Radix (`radix:mainnet`, `radix:stokenet`, `chains-radix`).** Ed25519 CAP-26 at
-`m/44'/1022'/2'/525'/1460'/i'` (network 2 = Stokenet is baked into the path). Babylon transfers
+`m/44'/1022'/<network>'/525'/1460'/i'`, where the third level is the Babylon network id the
+catalog carries in `extra.networkId` (1 mainnet, 2 Stokenet), 525 the account entity and 1460
+the transaction-signing key. The core pins the derivation (mnemonic to private key, public key
+and `account_rdx1…` address) against the Radix Wallet's own Sargon test vectors, so a phrase
+exported from the Radix Wallet restores the same accounts here and the reverse. Babylon transfers
 are `NotarizedTransactionV1`s, byte-exact against the Radix Engine Toolkit. The Gateway API
 (balances, history, status, submit) is run by RDX Works only, so provenance is `single` until
 community gateways are configured. Sends are native XRD on Stokenet; 5 XRD is locked as a fee

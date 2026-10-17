@@ -68,7 +68,13 @@ export function accountPath(chain: ChainInfo, index: number): StandardPath | nul
  * Ed25519 paths are hardened at every level (SLIP-10).
  */
 const FAMILY_PATHS: Partial<
-  Record<ChainFamily, { curve: StandardPath['curve']; at(i: number, coin: number | null): string }>
+  Record<
+    ChainFamily,
+    {
+      curve: StandardPath['curve'];
+      at(i: number, coin: number | null, chain: ChainInfo): string | null;
+    }
+  >
 > = {
   // BIP44 multi-chain wallets (Ledger, Trust) for Polkadot; sr25519 wallets derive differently.
   substrate: { curve: 'ed25519', at: (i) => `m/44'/354'/0'/0'/${i}'` },
@@ -110,8 +116,15 @@ const FAMILY_PATHS: Partial<
   everscale: { curve: 'ed25519', at: (i, coin) => `m/44'/${coin ?? 396}'/0'/0'/${i}'` },
   // SLIP-44 5741564, all hardened; the Waves key is derived from the seed, not the point.
   waves: { curve: 'ed25519', at: (i) => `m/44'/5741564'/0'/0'/${i}'` },
-  // CAP-26, the official Radix Wallet path; network 2 is Stokenet (1 is mainnet).
-  radix: { curve: 'ed25519', at: (i) => `m/44'/1022'/2'/525'/1460'/${i}'` },
+  // CAP-26, the Radix Wallet path, verified against Sargon's vectors. The third level is
+  // the network id (1 mainnet, 2 Stokenet), 525 the account entity, 1460 the signing key.
+  radix: {
+    curve: 'ed25519',
+    at: (i, _coin, chain) => {
+      const network = chain.extra?.networkId;
+      return typeof network === 'number' ? `m/44'/1022'/${network}'/525'/1460'/${i}'` : null;
+    },
+  },
   // SLIP-44 223 (Plug and most ICP wallets); the account id comes from the SEC1 key.
   icp: { curve: 'secp256k1', at: (i) => `m/44'/223'/0'/0/${i}` },
   // SLIP-44 877, all-hardened, matching the official wallet's transparent accounts.
@@ -159,7 +172,8 @@ function familyPath(chain: ChainInfo, index: number): StandardPath | null {
   const p = FAMILY_PATHS[chain.family];
   const coin = typeof chain.extra?.coinType === 'number' ? chain.extra.coinType : null;
   if (!p || (chain.family === 'btcfork' && coin === null)) return null;
-  return { curve: p.curve, path: p.at(index, coin) };
+  const path = p.at(index, coin, chain);
+  return path === null ? null : { curve: p.curve, path };
 }
 
 /** The lowest account index on `chainId` that the wallet does not use yet. */

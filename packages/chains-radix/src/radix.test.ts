@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   NETWORKS,
+  RADIX_MAINNET,
   RADIX_STOKENET,
   RadixAdapter,
   attosToXrd,
@@ -141,6 +142,20 @@ describe('radix addresses', () => {
     expect(() =>
       a.deriveAddress({ curve: 'secp256k1', hex: '02' + '11'.repeat(32) }, RADIX_STOKENET),
     ).toThrow();
+  });
+
+  it('derives the mainnet account the Radix Wallet derives', () => {
+    // Sargon `cap26_tests`: account 0 of `Mnemonic::sample_device_other()` on mainnet.
+    const sargon = hexToBytes('f3d0210f6c2cecbdc977b7aae19d468a6c363e73a055bc877248f8318f0122e8');
+    expect(radixAddressFromPublicKey(sargon, RADIX_MAINNET)).toBe(
+      'account_rdx12xek3geay25lktmk5zyplc7z7mg5xe8ldh48ta4mkcd9q0v0q6l8y6',
+    );
+    expect(
+      isValidRadixAddress(
+        'account_rdx12xek3geay25lktmk5zyplc7z7mg5xe8ldh48ta4mkcd9q0v0q6l8y6',
+        RADIX_MAINNET,
+      ),
+    ).toBe(true);
   });
 
   it('accepts canonical Stokenet accounts only', () => {

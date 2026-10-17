@@ -32,6 +32,9 @@ describe('account paths', () => {
     // TronLink steps the address index under coin type 195.
     expect(accountPath(c('tron:0x2b6653dc'), 0)?.path).toBe("m/44'/195'/0'/0/0");
     expect(accountPath(c('tron:0xcd8690dc'), 2)?.path).toBe("m/44'/195'/0'/0/2");
+    // CAP-26 carries the Radix network id in the path, so mainnet and Stokenet keys differ.
+    expect(accountPath(c('radix:mainnet'), 0)?.path).toBe("m/44'/1022'/1'/525'/1460'/0'");
+    expect(accountPath(c('radix:stokenet'), 3)?.path).toBe("m/44'/1022'/2'/525'/1460'/3'");
     expect(accountPath(c('eip155:8453'), 0)).toEqual(standardPath(c('eip155:8453')));
     expect(accountPath(c('eip155:8453'), -1)).toBeNull();
     expect(nextAccountIndex(c('eip155:8453'), ["m/44'/60'/0'/0/0", "m/44'/60'/0'/0/1"])).toBe(2);

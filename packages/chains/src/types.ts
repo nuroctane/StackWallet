@@ -41,6 +41,8 @@ export const ChainExtra = z.object({
   wifVersion: z.number().int().min(0).max(255).optional(),
   /** Bitcoin family: whether bech32 segwit addresses are valid on this network. */
   segwit: z.boolean().optional(),
+  /** Radix: the Babylon network byte, which CAP-26 places in the derivation path. */
+  networkId: z.number().int().min(0).max(255).optional(),
 });
 export type ChainExtra = z.infer<typeof ChainExtra>;
 

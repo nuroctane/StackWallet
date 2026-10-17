@@ -98,6 +98,11 @@ pub fn address_bytes(address: &str) -> Result<[u8; 30]> {
 /// The Stokenet `account_tdx_2_…` address of a 32-byte Ed25519 public key:
 /// entity byte 0x51 followed by bytes 3..32 of its blake2b-256.
 pub fn address(public: &[u8]) -> Result<String> {
+    address_under(public, ACCOUNT_HRP)
+}
+
+/// The virtual Ed25519 account address of `public` under a network's account HRP.
+fn address_under(public: &[u8], account_hrp: &str) -> Result<String> {
     if public.len() != 32 {
         return Err(invalid("Ed25519 public key must be 32 bytes"));
     }
@@ -105,7 +110,7 @@ pub fn address(public: &[u8]) -> Result<String> {
     let mut node = [0u8; 30];
     node[0] = ENTITY_VIRTUAL_ED25519_ACCOUNT;
     node[1..].copy_from_slice(&hash[3..]);
-    let hrp = Hrp::parse(ACCOUNT_HRP).map_err(|_| invalid("bad hrp"))?;
+    let hrp = Hrp::parse(account_hrp).map_err(|_| invalid("bad hrp"))?;
     bech32::encode::<Bech32m>(hrp, &node).map_err(|_| invalid("address encoding failed"))
 }
 
@@ -493,6 +498,63 @@ mod tests {
             .unwrap(),
             addr
         );
+    }
+
+    /// Sargon (the Radix Wallet's core) `Mnemonic::sample_device_other()` and the
+    /// mainnet accounts its `cap26_tests` derive from it: CAP-26
+    /// `m/44'/1022'/<network>'/525'/1460'/<i>'` by SLIP-10 Ed25519, address from
+    /// `AccountAddress::new_from_public_key`.
+    const SARGON_MNEMONIC: &str = "device phone sign source sample other device sample other device sample other device sample other device sample other device sample other device other paddle";
+    const SARGON_MAINNET: [(u32, &str, &str, &str); 3] = [
+        (
+            0,
+            "5b82120ec4763f8bacff71c8e529894fea1e735a5698ff400364a913f7b20c00",
+            "f3d0210f6c2cecbdc977b7aae19d468a6c363e73a055bc877248f8318f0122e8",
+            "account_rdx12xek3geay25lktmk5zyplc7z7mg5xe8ldh48ta4mkcd9q0v0q6l8y6",
+        ),
+        (
+            1,
+            "da5e924c716a05b616940dd7828e3020de4dc09c371ab03966e00e95c68cb439",
+            "df49129a10aa88c76837611a4ecda794ac5f650e4401037e1ff275e52bc784c5",
+            "account_rdx128mh2ae9dsrwa0t8l37ayjrxxf0p84e6qm227ytxtcu447f5uw5m8w",
+        ),
+        (
+            0x7fff_ffff,
+            "7eae6f235206329561b09fc2235d35e017c3f28b54fd3b4f6525e601257c4ce7",
+            "87a2f84f826da0c62052fbe7b385ab78883c02d1fa5472c55a06aa529a0701e9",
+            "account_rdx128258pxhges8rmva0a2egr0tzqd8x8clsl5d90a8qv3zqggc4jr2ss",
+        ),
+    ];
+    /// Sargon `fixtures/vector/cap26_curve25519.json`: a 12-word phrase on network 12.
+    const SARGON_FIXTURE_MNEMONIC: &str =
+        "equip will roof matter pink blind book anxiety banner elbow sun young";
+    const SARGON_FIXTURE_PUBLIC: [&str; 4] = [
+        "451152a1cef7be603205086d4ebac0a0b78fda2ff4684b9dea5ca9ef003d4e7d",
+        "0a4b894208a1f6b1bd7e823b59909f01aae0172b534baa2905b25f1bcbbb4f0a",
+        "235c27aafa83376d475040a7eb53ea889ae93bda005ef7f445f221f73b43313e",
+        "cc294e8c43be93012f827cd54a11a2f836e5934c2361d61b5a737adbd42bf030",
+    ];
+
+    #[test]
+    fn cap26_derivation_matches_the_radix_wallet() {
+        use crate::hd::{derive_ed25519, parse_path, Mnemonic};
+
+        let seed = Mnemonic::parse(SARGON_MNEMONIC).unwrap().to_seed("");
+        for (index, secret, public, account) in SARGON_MAINNET {
+            let path = parse_path(&format!("m/44'/1022'/1'/525'/1460'/{index}'")).unwrap();
+            let key = derive_ed25519(&*seed, &path).unwrap();
+            assert_eq!(hex::encode(key.secret()), secret);
+            assert_eq!(key.public_hex(), public);
+            assert_eq!(address_under(&key.public, "account_rdx").unwrap(), account);
+        }
+
+        let seed = Mnemonic::parse(SARGON_FIXTURE_MNEMONIC)
+            .unwrap()
+            .to_seed("");
+        for (index, public) in SARGON_FIXTURE_PUBLIC.iter().enumerate() {
+            let path = parse_path(&format!("m/44'/1022'/12'/525'/1460'/{index}'")).unwrap();
+            assert_eq!(derive_ed25519(&*seed, &path).unwrap().public_hex(), *public);
+        }
     }
 
     #[test]
