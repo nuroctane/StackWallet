@@ -34,12 +34,27 @@ const quote = (id: string, usd: number, at: number): Quote => ({
 afterEach(() => vi.restoreAllMocks());
 
 describe('market settings and watchlist', () => {
-  it('defaults to CoinGecko only and persists toggles', () => {
+  it('defaults to CoinGecko and Chainlink, and persists toggles', () => {
     const s = memory();
     const a = new MarketSettingsStore(s);
     expect(a.getSnapshot()).toEqual(DEFAULT_MARKET_SETTINGS);
     a.toggle('defillama', true);
-    expect(new MarketSettingsStore(s).getSnapshot()).toEqual({ coingecko: true, defillama: true });
+    expect(new MarketSettingsStore(s).getSnapshot()).toEqual({
+      coingecko: true,
+      defillama: true,
+      chainlink: true,
+    });
+  });
+
+  it('keeps settings saved before Chainlink existed', () => {
+    const s = memory({
+      [MARKET_SETTINGS_KEY]: '{"coingecko":false,"defillama":false}',
+    });
+    expect(new MarketSettingsStore(s).getSnapshot()).toEqual({
+      coingecko: false,
+      defillama: false,
+      chainlink: true,
+    });
   });
 
   it('ignores a corrupted settings blob', () => {

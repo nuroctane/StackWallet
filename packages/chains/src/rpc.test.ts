@@ -4,6 +4,7 @@ import {
   HttpError,
   JsonRpcError,
   MAX_BODY_BYTES,
+  MAX_JSONRPC_BATCH,
   MalformedResponseError,
   MemoryRpcPool,
   NoRpcEndpointsError,
@@ -11,6 +12,7 @@ import {
   RpcTimeoutError,
   fetchJson,
   fetchJsonRpc,
+  fetchJsonRpcBatch,
   operatorOf,
   withCrossCheck,
   withFailover,
@@ -486,5 +488,58 @@ describe('fetchJsonRpc / fetchJson', () => {
     await expect(
       fetchJson('https://a.example/x', { fetch: hanging, timeoutMs: 10 }),
     ).rejects.toBeInstanceOf(RpcTimeoutError);
+  });
+});
+
+describe('fetchJsonRpcBatch', () => {
+  const calls = [
+    { method: 'eth_call', params: [{ to: '0x1', data: '0xaa' }, 'latest'] },
+    { method: 'eth_call', params: [{ to: '0x1', data: '0xbb' }, 'latest'] },
+  ];
+
+  it('sends one batch envelope and matches replies by id, even reordered', async () => {
+    let body: { id: number; method: string }[] = [];
+    const fake: typeof fetch = async (_input, init) => {
+      body = JSON.parse(String(init?.body));
+      // Reply in reverse order on purpose.
+      return jsonResponse(
+        [...body].reverse().map((r, i) => ({ jsonrpc: '2.0', id: r.id, result: `0x${i}` })),
+      );
+    };
+    const out = await fetchJsonRpcBatch('https://a.example', calls, { fetch: fake });
+    expect(body).toHaveLength(2);
+    expect(body.map((b) => b.method)).toEqual(['eth_call', 'eth_call']);
+    // First reply (id 2) is 0x0, second (id 1) is 0x1: slots follow the request order.
+    expect(out.map((r) => (r.ok ? r.result : null))).toEqual(['0x1', '0x0']);
+  });
+
+  it('keeps per-call failures as error slots instead of failing the batch', async () => {
+    const fake: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as { id: number }[];
+      return jsonResponse([
+        { jsonrpc: '2.0', id: body[0]!.id, error: { code: -32000, message: 'execution reverted' } },
+        { jsonrpc: '2.0', id: body[1]!.id, result: '0x10' },
+      ]);
+    };
+    const out = await fetchJsonRpcBatch('https://a.example', calls, { fetch: fake });
+    expect(out[0]).toMatchObject({ ok: false, error: { code: -32000 } });
+    expect(out[1]).toMatchObject({ ok: true, result: '0x10' });
+  });
+
+  it('rejects non-array replies and batches over the cap', async () => {
+    const single: typeof fetch = async () => jsonResponse({ jsonrpc: '2.0', id: 1, result: '0x0' });
+    await expect(fetchJsonRpcBatch('https://a.example', calls, { fetch: single })).rejects.toThrow(
+      MalformedResponseError,
+    );
+    await expect(
+      fetchJsonRpcBatch(
+        'https://a.example',
+        Array.from({ length: MAX_JSONRPC_BATCH + 1 }, () => ({ method: 'm' })),
+        { fetch: single },
+      ),
+    ).rejects.toThrow(/exceeds/);
+    await expect(fetchJsonRpcBatch('https://a.example', [], { fetch: single })).resolves.toEqual(
+      [],
+    );
   });
 });

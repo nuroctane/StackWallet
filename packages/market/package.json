@@ -12,6 +12,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@noble/hashes": "^1.8.0",
     "@stackwallet/chains": "workspace:*",
     "zod": "^4.0.0"
   },

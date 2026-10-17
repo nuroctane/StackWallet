@@ -17,9 +17,17 @@ export const MAX_WATCHLIST = 50;
 export const MarketSettings = z.object({
   coingecko: z.boolean(),
   defillama: z.boolean(),
+  // Default-filled so settings saved before Chainlink existed survive an upgrade.
+  chainlink: z.boolean().default(true),
 });
 export type MarketSettings = z.infer<typeof MarketSettings>;
-export const DEFAULT_MARKET_SETTINGS: MarketSettings = { coingecko: true, defillama: false };
+export const DEFAULT_MARKET_SETTINGS: MarketSettings = {
+  coingecko: true,
+  defillama: false,
+  // On-chain reads through the user's own EVM endpoints name a feed contract,
+  // never an address, so Chainlink is on unless the user turns it off.
+  chainlink: true,
+};
 
 export const WatchItem = z.object({
   id: z.string().regex(/^[a-z0-9-]{1,80}$/),

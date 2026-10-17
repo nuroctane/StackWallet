@@ -44,14 +44,40 @@ export {
 export {
   CanvasChart,
   SERIES_RAMP,
+  decimateCandles,
+  decimateLine,
+  logTicks,
   nearestPoint,
   niceTicks,
   scaleLinear,
+  visibleSlice,
   type CanvasChartProps,
   type ChartPadding,
   type Point,
   type Series,
+  type SeriesKind,
 } from './CanvasChart.js';
+export {
+  bollinger,
+  ema,
+  heikinAshi,
+  macd,
+  rsi,
+  sma,
+  toPoints,
+  type BollingerBand,
+  type MacdResult,
+  type NullableSeries,
+} from './chartIndicators.js';
+export {
+  clampViewport,
+  fitViewport,
+  minGapOf,
+  panViewport,
+  spanOf,
+  zoomViewport,
+  type Viewport,
+} from './chartViewport.js';
 export {
   Toast,
   ToastProvider,

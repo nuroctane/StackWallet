@@ -44,6 +44,7 @@ import { StatusBar } from './shell/StatusBar.js';
 import { ThemeStudio } from './shell/ThemeStudio.js';
 import { VaultDialog } from './shell/VaultDialog.js';
 import { balanceCache } from './store/balances.js';
+import { chainlinkStore } from './store/chainlink.js';
 import { devicesQuarantinedKey } from './store/devices.js';
 import { mixinScanStore } from './store/mixinScan.js';
 import { directory, directoryQuarantinedKey, useDirectory } from './store/persist.js';
@@ -85,6 +86,7 @@ function buildRegistry(): { registry: ChainRegistry; error?: string } {
     namesStore.configure(registry);
     collectiblesStore.configure(registry);
     approvalsStore.configure(registry);
+    chainlinkStore.configure(registry);
     return { registry };
   } catch (err) {
     return {

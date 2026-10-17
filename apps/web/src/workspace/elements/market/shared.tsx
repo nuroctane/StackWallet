@@ -95,11 +95,12 @@ export function QuoteProvenance({ quote, now }: { quote: Quote; now: number }) {
   );
 }
 
-const SOURCES: readonly MarketSource[] = ['coingecko', 'defillama'];
+const SOURCES: readonly MarketSource[] = ['coingecko', 'defillama', 'chainlink'];
 
 const SOURCE_NOTE: Readonly<Record<MarketSource, string>> = {
   coingecko: 'prices, 24h change, candles, history and search',
   defillama: 'second price for a cross-check',
+  chainlink: 'on-chain oracle prices and candle history through your EVM endpoints',
 };
 
 /**

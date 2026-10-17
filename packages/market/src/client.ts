@@ -7,17 +7,21 @@ import { fetchJson, HttpError, type FetchOptions } from '@stackwallet/chains';
  * hammering it. A source the user turned off is never contacted.
  */
 
-export type MarketSource = 'coingecko' | 'defillama';
+export type MarketSource = 'coingecko' | 'defillama' | 'chainlink';
 
 export const SOURCE_LABEL: Readonly<Record<MarketSource, string>> = {
   coingecko: 'CoinGecko',
   defillama: 'DefiLlama',
+  chainlink: 'Chainlink (on-chain)',
 };
 
 /** Minimum gap between two requests to the same source. */
 export const SOURCE_SPACING_MS: Readonly<Record<MarketSource, number>> = {
   coingecko: 2_500,
   defillama: 500,
+  // Chainlink reads ride the EVM RPC pool, which paces itself; this only
+  // spaces the reader's own cache misses.
+  chainlink: 250,
 };
 
 export const RATE_LIMIT_COOLDOWN_MS = 60_000;
@@ -58,8 +62,12 @@ interface Entry {
 export class MarketClient {
   private cache = new Map<string, Entry>();
   private inflight = new Map<string, Promise<unknown>>();
-  private nextSlot: Record<MarketSource, number> = { coingecko: 0, defillama: 0 };
-  private cooldownUntil: Record<MarketSource, number> = { coingecko: 0, defillama: 0 };
+  private nextSlot: Record<MarketSource, number> = { coingecko: 0, defillama: 0, chainlink: 0 };
+  private cooldownUntil: Record<MarketSource, number> = {
+    coingecko: 0,
+    defillama: 0,
+    chainlink: 0,
+  };
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly maxEntries: number;

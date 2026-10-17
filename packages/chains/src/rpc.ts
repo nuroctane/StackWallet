@@ -582,6 +582,67 @@ export async function fetchText(
   )) as string;
 }
 
+export interface JsonRpcBatchResult {
+  ok: boolean;
+  result?: unknown;
+  error?: JsonRpcError;
+}
+
+/**
+ * POST a JSON-RPC 2.0 batch and return one slot per call, in call order. A
+ * call whose method reverts (an unset Chainlink round, an empty storage slot)
+ * comes back as `ok: false` instead of failing the batch; only a transport or
+ * envelope-level failure throws. Batches beyond this size are rejected so a
+ * caller cannot exceed the body limit by accident.
+ */
+export const MAX_JSONRPC_BATCH = 400;
+
+export async function fetchJsonRpcBatch(
+  url: string,
+  calls: readonly { method: string; params?: unknown[] }[],
+  opts: FetchOptions = {},
+): Promise<JsonRpcBatchResult[]> {
+  if (calls.length === 0) return [];
+  if (calls.length > MAX_JSONRPC_BATCH)
+    throw new Error(`batch of ${calls.length} exceeds ${MAX_JSONRPC_BATCH}`);
+  const raw = await fetchJsonBody(
+    url,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(
+        calls.map((c, i) => ({
+          jsonrpc: '2.0',
+          id: i + 1,
+          method: c.method,
+          params: c.params ?? [],
+        })),
+      ),
+    },
+    opts,
+  );
+  if (!Array.isArray(raw)) throw new MalformedResponseError(url, 'batch answer is not an array');
+  const byId = new Map<number, z.infer<typeof JsonRpcEnvelope>>();
+  for (const entry of raw) {
+    const parsed = JsonRpcEnvelope.safeParse(entry);
+    if (!parsed.success) throw new MalformedResponseError(url, 'batch entry is not an envelope');
+    const id = typeof parsed.data.id === 'number' ? parsed.data.id : NaN;
+    if (!Number.isInteger(id) || id < 1 || id > calls.length || byId.has(id)) {
+      throw new MalformedResponseError(url, 'batch entry has a bad id');
+    }
+    byId.set(id, parsed.data);
+  }
+  return calls.map((_, i) => {
+    const entry = byId.get(i + 1);
+    if (!entry) throw new MalformedResponseError(url, `batch answer misses id ${i + 1}`);
+    if (entry.error) {
+      const { code, message, data } = entry.error;
+      return { ok: false, error: new JsonRpcError(url, code, message, data) };
+    }
+    return { ok: true, result: entry.result };
+  });
+}
+
 /** POST a JSON-RPC 2.0 call and return `result`. The caller validates the shape with zod. */
 export async function fetchJsonRpc(
   url: string,

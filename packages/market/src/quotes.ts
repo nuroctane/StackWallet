@@ -116,10 +116,20 @@ export interface QuoteResult {
   errors: { source: MarketSource; message: string }[];
 }
 
+export interface QuoteDeps {
+  /**
+   * On-chain Chainlink answers by coin id, supplied by the caller because the
+   * reader needs an RPC pool the market package does not own. Only consulted
+   * when the `chainlink` source is enabled.
+   */
+  chainlink?: (ids: readonly string[]) => Promise<Map<string, SourcePrice>>;
+}
+
 export async function fetchQuotes(
   client: MarketClient,
   ids: readonly string[],
   now: () => number = Date.now,
+  deps: QuoteDeps = {},
 ): Promise<QuoteResult> {
   const unique = validIds(ids);
   const errors: QuoteResult['errors'] = [];
@@ -152,7 +162,15 @@ export async function fetchQuotes(
         })
     : Promise.resolve(null);
 
-  const [g, l] = await Promise.all([gecko, llama]);
+  const onchain =
+    deps.chainlink && client.isEnabled('chainlink')
+      ? deps.chainlink(unique).catch((err: unknown) => {
+          errors.push({ source: 'chainlink', message: messageOf(err) });
+          return null;
+        })
+      : Promise.resolve(null);
+
+  const [g, l, c] = await Promise.all([gecko, llama, onchain]);
   const at = now();
   const quotes: Quote[] = [];
   for (const id of unique) {
@@ -161,6 +179,8 @@ export async function fetchQuotes(
     if (gq) sources.push(gq.price);
     const lq = l?.get(id);
     if (lq) sources.push(lq);
+    const cq = c?.get(id);
+    if (cq) sources.push(cq);
     const q = mergeQuote(id, sources, gq?.change ?? null, at);
     if (q) quotes.push(q);
   }

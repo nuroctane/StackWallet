@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { fetchQuotes, type MarketSource, type Quote, type QuoteResult } from '@stackwallet/market';
 
+import { chainlinkStore } from './chainlink.js';
 import { marketClient } from './market.js';
 
 /**
@@ -21,7 +22,9 @@ class PriceStore {
 
   constructor(
     private readonly fetcher: (ids: string[]) => Promise<QuoteResult> = (ids) =>
-      fetchQuotes(marketClient, ids),
+      fetchQuotes(marketClient, ids, Date.now, {
+        chainlink: (want) => chainlinkStore.quotes(want),
+      }),
     private readonly now: () => number = Date.now,
   ) {}
 

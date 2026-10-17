@@ -8,7 +8,10 @@ import { parseSearch, searchAssets } from './search.js';
 
 type Handler = (url: string) => Response;
 
-function harness(handler: Handler, enabled = { coingecko: true, defillama: true }) {
+function harness(
+  handler: Handler,
+  enabled = { coingecko: true, defillama: true, chainlink: false },
+) {
   const urls: string[] = [];
   let t = 1_000_000;
   const sleeps: number[] = [];
@@ -55,7 +58,7 @@ describe('market client', () => {
   });
 
   it('never contacts a disabled source and parks a rate-limited one', async () => {
-    const off = harness(() => json({}), { coingecko: false, defillama: true });
+    const off = harness(() => json({}), { coingecko: false, defillama: true, chainlink: false });
     await expect(off.client.getJson('coingecko', 'https://x', 1)).rejects.toBeInstanceOf(
       SourceDisabledError,
     );
