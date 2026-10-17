@@ -2,9 +2,17 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Badge, Button, EmptyState, Input, Panel, useToasts } from '@stackwallet/ui';
 
 import { FAMILY_LABEL } from '../lib/chains.js';
+import { walletReach } from '../lib/key-siblings.js';
 import { directory, useDirectory } from '../store/persist.js';
+import { useRegistry } from '../store/RegistryContext.js';
 import type { DirectoryState } from '../store/schema.js';
-import { flattenTree, kindLabel, walletFamilies, type TreeRow } from '../store/selectors.js';
+import {
+  accountsOf,
+  flattenTree,
+  kindLabel,
+  walletFamilies,
+  type TreeRow,
+} from '../store/selectors.js';
 import { openDirectoryItem, openTaxFor } from '../workspace/open.js';
 import { useShell } from './ShellContext.js';
 import { SetTags, UserTags, WalletTags } from './ProvenanceTags.js';
@@ -278,6 +286,17 @@ function Row({
 }: RowProps) {
   const wallet = row.kind === 'wallet' ? state.wallets.find((w) => w.id === row.id) : undefined;
   const families = wallet ? walletFamilies(state, wallet.id) : [];
+  const registry = useRegistry();
+  const reach = useMemo(
+    () => (wallet ? walletReach(registry, accountsOf(state, wallet.id)) : []),
+    [registry, state, wallet],
+  );
+  const familiesTitle = [
+    families.map((f) => FAMILY_LABEL[f]).join(' · '),
+    reach.length > 0 ? `same keys also reach ${reach.map((f) => FAMILY_LABEL[f]).join(', ')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   return (
     <div
@@ -348,9 +367,10 @@ function Row({
           {families.length > 0 && (
             <span
               className="min-w-0 shrink truncate text-[10px] tracking-[0.06em] text-faint uppercase"
-              title={families.map((f) => FAMILY_LABEL[f]).join(' · ')}
+              title={familiesTitle}
             >
               {families.map((f) => FAMILY_LABEL[f]).join('·')}
+              {reach.length > 0 && <span className="text-faint/70"> +{reach.length}</span>}
             </span>
           )}
           <Badge className="shrink-0">{kindLabel(wallet)}</Badge>

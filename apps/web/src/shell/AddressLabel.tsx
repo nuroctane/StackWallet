@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'react';
+import { shortAddress } from '@stackwallet/chains';
 import { chainFamilyOf, type Account } from '@stackwallet/core-client';
 import type { NameRecord } from '@stackwallet/names';
 
@@ -67,7 +68,7 @@ export function AddressLabel({
     <span className="inline-flex min-w-0 flex-col">
       <span className="inline-flex min-w-0 items-baseline gap-1.5">
         <span className={`truncate ${SOURCE_TONE[l.source]}`}>
-          {l.label ?? (full ? 'unknown address' : `${address.slice(0, 6)}…${address.slice(-4)}`)}
+          {l.label ?? (full ? 'unknown address' : shortAddress(address))}
         </span>
         <span className="shrink-0 text-[10px] tracking-[0.06em] text-faint uppercase">
           {l.sourceText}

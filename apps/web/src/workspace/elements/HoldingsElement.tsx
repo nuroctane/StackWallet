@@ -8,6 +8,7 @@ import { useBalances, type BalanceEntry } from '../../store/balances.js';
 import { useNames, walletLabel } from '../../store/names.js';
 import { useDirectory } from '../../store/persist.js';
 import { useRegistry } from '../../store/RegistryContext.js';
+import { KeyLinksById } from '../../shell/KeyLinks.js';
 import { openDirectoryItem } from '../open.js';
 import type { ElementBodyProps } from './types.js';
 
@@ -134,8 +135,9 @@ export function HoldingsElement({ pane, width, height }: ElementBodyProps) {
         header: 'address',
         width: 'minmax(96px,1.4fr)',
         render: (r) => (
-          <span className="text-muted" title={r.address}>
+          <span className="inline-flex items-center gap-1 text-muted" title={r.address}>
             {shortAddress(r.address)}
+            {r.key === r.accountId && <KeyLinksById accountId={r.accountId} />}
           </span>
         ),
       },

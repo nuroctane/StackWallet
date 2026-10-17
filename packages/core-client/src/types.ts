@@ -121,7 +121,6 @@ export function chainFamilyOf(chainId: ChainId): ChainFamily | undefined {
       return 'keeta';
     case 'icon':
       return 'icon';
-    case 'alph':
     case 'alephium':
       return 'alephium';
     case 'chia':
@@ -139,18 +138,6 @@ export function chainFamilyOf(chainId: ChainId): ChainFamily | undefined {
       return 'aelf';
     case 'starcoin':
       return 'starcoin';
-    case 'obyte':
-      return 'obyte';
-    case 'chromia':
-      return 'chromia';
-    case 'keeta':
-      return 'keeta';
-    case 'chromia':
-      return 'chromia';
-    case 'keeta':
-      return 'keeta';
-    case 'keeta':
-      return 'keeta';
     case 'btcfork':
       return 'btcfork';
     case 'gala':

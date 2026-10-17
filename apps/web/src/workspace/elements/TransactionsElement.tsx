@@ -8,6 +8,7 @@ import { explorerTxUrl, findChain } from '../../lib/chains.js';
 import { formatUnits } from '../../lib/format.js';
 import { useDirectory } from '../../store/persist.js';
 import { useRegistry } from '../../store/RegistryContext.js';
+import { KeyLinksHint } from '../../shell/KeyLinks.js';
 import { useHeadline } from '../../shell/ApprovalRail.js';
 import { TransactionRecovery } from '../../shell/TransactionRecovery.js';
 import { auditEventLabel } from '../../lib/audit.js';
@@ -320,7 +321,8 @@ export function TransactionsElement({ pane, setProps }: ElementBodyProps) {
           )}
           {account && (
             <p className="my-2 select-text break-all text-[11px] text-muted">
-              {chain?.name ?? account.chainId} · {account.address}
+              {chain?.name ?? account.chainId} · {account.address}{' '}
+              <KeyLinksHint account={account} className="align-middle" />
             </p>
           )}
           <p className="my-2 text-[11px] leading-relaxed text-faint">

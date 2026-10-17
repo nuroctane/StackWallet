@@ -1,9 +1,23 @@
 import type { Amount } from '@stackwallet/core-client';
 
-/** `0x7E5F…5Bdf` style truncation for dense UI; returns short inputs unchanged. */
+/** Readable account names (NEAR, ENS, Antelope) that truncation would only obscure. */
+const NAMED_ACCOUNT = /^[a-z0-9][a-z0-9._-]{0,30}\.[a-z]{2,}$/i;
+/** A bech32 human-readable part (`cosmos1`, `account_rdx1`, `tnam1`) or an underscore tag (`ak_`, `keeta_`). */
+const PREFIX = /^(?:[a-z][a-z0-9_]{0,15}1(?=[a-z0-9]{20,}$)|[a-z]{1,8}_)/;
+
+/**
+ * `0x7E5F…5Bdf` style truncation for dense UI; returns short inputs and named
+ * accounts unchanged. The head always keeps the network prefix plus a few
+ * characters, so `account_rdx1…`, `cosmos1…` and `ak_…` stay recognisable
+ * instead of collapsing to their prefix alone.
+ */
 export function shortAddress(addr: string, head = 6, tail = 4): string {
   if (addr.length <= head + tail + 1) return addr;
-  return `${addr.slice(0, head)}…${addr.slice(addr.length - tail)}`;
+  if (NAMED_ACCOUNT.test(addr)) return addr;
+  const prefix = PREFIX.exec(addr)?.[0] ?? '';
+  const keep = Math.max(head, prefix.length + 3);
+  if (addr.length <= keep + tail + 1) return addr;
+  return `${addr.slice(0, keep)}…${addr.slice(addr.length - tail)}`;
 }
 
 export interface FormatAmountOptions {

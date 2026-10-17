@@ -9,6 +9,7 @@ import {
   type BitcoinAdapter,
   type BitcoinPrepareOptions,
 } from '@stackwallet/chains-bitcoin';
+import { shortAddress } from '@stackwallet/chains';
 import type { TxRecord } from '@stackwallet/core-client';
 import { Button, Dialog, Field, Input, LoadingWord, Select } from '@stackwallet/ui';
 
@@ -134,14 +135,14 @@ function SendForm({
     return (
       <div className="flex flex-col gap-3 p-4 text-[12px] text-faint">
         <p>
-          This build signs on testnets only: Sepolia and the other EVM test networks, Bitcoin
-          Signet, Solana Devnet, Osmosis Testnet, Tron Nile, Westend, and the Stellar, Aptos, Sui
-          and XRP Ledger testnets. Mainnet accounts receive and show balances, but cannot send yet.
+          This build sends on one test network per chain family ({SENDABLE_TESTNETS.length}{' '}
+          networks). ICP, Mixin and Qubic sign on mainnet because they have no public testnet. Other
+          mainnet accounts receive and show balances, but cannot send yet.
         </p>
         <p>
           {keyed
-            ? `Add a testnet account to "${keyed.name}" to send from it.`
-            : 'Create a wallet first; new wallets include one testnet account per chain family.'}
+            ? `Add a sendable account to "${keyed.name}" to send from it.`
+            : 'Create a wallet first; new wallets include a sendable account for each chain family.'}
         </p>
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
@@ -299,7 +300,7 @@ function SendForm({
             return (
               <option key={a.id} value={a.id}>
                 {findChain(registry, a.chainId)?.name ?? a.chainId} · {w.name} ·{' '}
-                {a.address.slice(0, 6)}…{a.address.slice(-4)}
+                {shortAddress(a.address)}
               </option>
             );
           })}
@@ -402,7 +403,7 @@ function SendForm({
             disabled={working}
             onChange={(e) => setTag(e.target.value)}
             placeholder={familyForm.tag.placeholder}
-            inputMode="numeric"
+            inputMode={familyForm.tag.inputMode ?? 'text'}
             spellCheck={false}
             autoComplete="off"
           />

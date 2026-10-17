@@ -6,7 +6,7 @@ import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
 import { adapterOrNull, FAMILY_LABEL, FAMILY_ORDER, listChains } from '../lib/chains.js';
 import { standardPath } from '../lib/keys.js';
-import { SENDABLE_TESTNETS } from '../lib/sendable.js';
+import { DEFAULT_SENDABLE_TESTNETS } from '../lib/sendable.js';
 import { directory, useDirectory } from '../store/persist.js';
 import { rootOf } from '../store/reducers.js';
 import { useRegistry } from '../store/RegistryContext.js';
@@ -21,7 +21,7 @@ const DEFAULT_CHAINS = [
   'bip122:000000000019d6689c085ae165831e93',
   'cosmos:cosmoshub-4',
   'tron:0x2b6653dc',
-  ...SENDABLE_TESTNETS,
+  ...DEFAULT_SENDABLE_TESTNETS,
 ];
 
 export function NewWalletDialog({
@@ -239,9 +239,11 @@ function NewWalletForm({
           show testnets
         </label>
         <p className="text-[11px] text-faint">
-          Sending works on testnets in this build (Sepolia and other EVM test networks, Bitcoin
-          Signet, Solana Devnet, Osmosis Testnet, Tron Nile). Mainnet accounts receive and show
-          balances.
+          Sending works on one test network per family in this build (
+          {DEFAULT_SENDABLE_TESTNETS.length} preselected, marked “can send” in the account list;
+          ICP, Mixin and Qubic have no testnet, so those three sign on mainnet with real funds).
+          Other mainnet accounts receive and show balances. Every account's key also owns addresses
+          on other families; the ⇄ marker on a row lists them.
         </p>
       </fieldset>
 

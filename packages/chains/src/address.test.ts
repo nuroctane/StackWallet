@@ -11,6 +11,26 @@ describe('shortAddress', () => {
     );
     expect(shortAddress('short')).toBe('short');
   });
+
+  it('keeps network prefixes and account names recognisable', () => {
+    expect(shortAddress('account_rdx128y6j78mt0aqv6372evz28hrxp8mn06ccddkr7xppc88hyvynvjdwr')).toBe(
+      'account_rdx128y…jdwr',
+    );
+    expect(shortAddress('cosmos1p3ucd3ptpw902fluyjzhq3ffgq4ntddac9sa3s')).toBe('cosmos1p3u…sa3s');
+    expect(
+      shortAddress(
+        'addr1qx2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer3n0d3vllmyqwsx5wktcd8cc3sq835lu7drv2xwl2wywfgse35a3x',
+      ),
+    ).toBe('addr1qx2…5a3x');
+    expect(shortAddress('tnam1q9gr66cvu4hrzm0sd5kmlnjje82gs3xlfg3v6nu7')).toBe('tnam1q9g…6nu7');
+    expect(shortAddress('ak_2a1j2Mk9YSmC1gioUq4PWRm3bsv887MbuRVwyv4KaUGoR1eiKi')).toBe(
+      'ak_2a1…eiKi',
+    );
+    expect(shortAddress('alice.near')).toBe('alice.near');
+    expect(shortAddress('vitalik.eth')).toBe('vitalik.eth');
+    expect(shortAddress('eosio.token')).toBe('eosio.token');
+    expect(shortAddress('7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU')).toBe('7xKXtg…gAsU');
+  });
 });
 
 describe('formatAmount', () => {

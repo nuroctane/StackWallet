@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
 import { Button, Dialog, Field, Input, LoadingWord, useToasts } from '@stackwallet/ui';
 
 import { ChainSelect, chainOptionLabel } from './ChainSelect.js';
+import { KeyReach } from './KeyLinks.js';
 
 import { vault } from '../core/bridge.js';
 import { useVaultView } from '../core/vault.js';
@@ -152,6 +153,16 @@ function AddAccountForm({
               index {index} · <span className="font-mono">{preview.path}</span>
             </p>
             <p className="mt-1 font-mono break-all text-ink">{preview.address}</p>
+            {chain && (
+              <KeyReach
+                className="mt-1"
+                account={{
+                  family: chain.family,
+                  chainId: chain.chainId,
+                  publicKeyHex: preview.hex,
+                }}
+              />
+            )}
           </>
         ) : error ? (
           <p className="text-danger">{error}</p>

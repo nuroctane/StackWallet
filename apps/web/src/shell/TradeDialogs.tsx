@@ -17,6 +17,7 @@ import {
   type Delegation,
   type Validator,
 } from '@stackwallet/chains-cosmos';
+import { shortAddress } from '@stackwallet/chains';
 import type { Account, TxRecord } from '@stackwallet/core-client';
 import { Button, Dialog, Field, Input, LoadingWord, Select } from '@stackwallet/ui';
 
@@ -70,7 +71,7 @@ function AccountPicker({
       <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
         {accounts.map((a) => (
           <option key={a.id} value={a.id}>
-            {findChain(registry, a.chainId)?.name ?? a.chainId} · {a.address.slice(0, 10)}…
+            {findChain(registry, a.chainId)?.name ?? a.chainId} · {shortAddress(a.address, 10, 4)}
           </option>
         ))}
       </Select>

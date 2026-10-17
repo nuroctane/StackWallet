@@ -4,6 +4,7 @@ import { shortAddress } from '@stackwallet/chains';
 import { Button } from '@stackwallet/ui';
 
 import { nameKey, namesStore, useNames } from '../../store/names.js';
+import { KeyLinksHint } from '../KeyLinks.js';
 
 /**
  * Every verified name attached to this wallet's addresses, grouped by address.
@@ -63,6 +64,7 @@ export function NamesSection({ accounts }: { accounts: readonly Account[] }) {
               <span className="truncate font-mono text-[11px] text-faint" title={account.address}>
                 {shortAddress(account.address)}
               </span>
+              <KeyLinksHint account={account} />
             </li>
           ))}
         </ul>

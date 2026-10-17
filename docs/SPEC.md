@@ -9,7 +9,7 @@ Version 1. Companion documents: `SECURITY.md` (threat model), `DESIGN.md` (visua
 StackWallet is an agentic harness for crypto wallets. It looks like any other agent harness
 (a console where a model plans and calls tools, with the operator approving what matters), but
 the tools act on wallets, and the wallets exist on every chain family: EVM, Bitcoin, Solana,
-Cosmos, and whatever comes next.
+Cosmos and the forty further families behind the same adapter contract (`docs/CHAINS.md`).
 
 Three ideas make it different from a wallet with a chatbot bolted on:
 
@@ -35,7 +35,7 @@ same Rust core (UniFFI).
 | D2  | Rust core owns key material, encryption, TSS, the policy engine, transport and the audit log. WASM for web, native for Tauri, UniFFI later. TypeScript owns UI and chain-SDK glue only.                     |
 | D3  | No server. Device-to-device sync and ceremonies (LAN discovery + WebRTC, QR pairing). Client-side market data.                                                                                              |
 | D4  | BYOK cloud model providers (Anthropic, OpenAI, Google, OpenRouter) via the Vercel AI SDK. Keys live in the vault. Local models are a later provider.                                                        |
-| D5  | V1 chain families: EVM (any chain via registry), Bitcoin family (BTC, LTC, DOGE), Solana, Cosmos SDK (+IBC).                                                                                                |
+| D5  | V1 chain families: EVM (any chain via registry), Bitcoin family (BTC, LTC, DOGE), Solana, Cosmos SDK (+IBC). Later phases added forty more as additive `ChainAdapter` implementations (`docs/CHAINS.md`).   |
 | D6  | The agent cannot move funds alone: at most one TSS party, and every agent-inclusive threshold requires a non-agent share. Enforced by the core at wallet creation and re-checked by policy at signing time. |
 | D7  | Night glass design family by default; user themes (NurCLI presets, per-token edits, per layout) are opt-in (see `DESIGN.md`).                                                                               |
 | D8  | No telemetry, analytics or remote fonts. Reproducible builds.                                                                                                                                               |
@@ -601,7 +601,17 @@ Implementation (core `hd`, `provenance`, `transfer`):
   restores the same addresses in other wallets. A restored phrase starts `imported`.
 - The provenance table is sealed in the vault under `provenance`; saves are refused unless they
   only add history. `reveal` re-verifies the passphrase, seals the exposure, then returns the
-  secret. The browser mirrors the table to `localStorage` for display while locked.
+  secret. A private-key reveal returns the key the account was derived from (the Stark key,
+  Chia BLS scalar, Waves Curve25519 key, Mixin kernel seed or Qubic subseed where a family
+  does not sign with the plain SLIP-10 secret) together with the public key the account shows,
+  so the export always matches the address. The browser mirrors the table to `localStorage`
+  for display while locked.
+- One key is one owner on every family whose address is a pure function of the curve point
+  (EVM, Bitcoin, Cosmos, Tron, Solana, Sui and the rest listed in `POINT_DERIVED`). The UI
+  derives those sibling addresses from the stored public key alone, shows them as a hover hint
+  and a dialog on every element that carries an address, and can add one to the same wallet
+  under the same path; families that bind testnet signing to coin-type-1 paths (Bitcoin,
+  Bitcoin forks, Everscale) are added as receive-only there.
 - Every export passes the export gate (§12.4): a fresh session proof (passphrase or passkey,
   never a PIN), the parent directory's export key, and for a single wallet its own export key.
 - A set bundle (`stackwallet-set:`) is sealed with ephemeral X25519 to the recipient's pinned

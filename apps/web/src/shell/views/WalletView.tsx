@@ -5,6 +5,7 @@ import { Badge, Button, Kbd, useToasts } from '@stackwallet/ui';
 
 import { explorerAddressUrl, FAMILY_LABEL, findChain } from '../../lib/chains.js';
 import { formatUnits, relativeTime } from '../../lib/format.js';
+import { walletReach } from '../../lib/key-siblings.js';
 import { canSendFrom } from '../../lib/sendable.js';
 import { useBalances, type BalanceEntry } from '../../store/balances.js';
 import { directory } from '../../store/persist.js';
@@ -19,6 +20,7 @@ import { useScanApprovals } from '../../store/approvals.js';
 import { ApprovalsSection } from './ApprovalsSection.js';
 import { nameTitle, useWalletLabel } from '../WalletName.js';
 import { KeysSection } from './KeysSection.js';
+import { KeyLinksHint } from '../KeyLinks.js';
 import { canStake, canSwap } from '../TradeDialogs.js';
 import { CollectiblesGrid } from './CollectiblesGrid.js';
 import { NamesSection } from './NamesSection.js';
@@ -70,6 +72,7 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
     [accounts, balances.byAccount, registry],
   );
   const firstSendable = accounts.find((a) => canSendFrom(a, wallet));
+  const reach = useMemo(() => walletReach(registry, accounts), [registry, accounts]);
 
   return (
     <div className="flex flex-col gap-5 p-5">
@@ -185,6 +188,14 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
             <span>
               {accounts.length} {accounts.length === 1 ? 'account' : 'accounts'}
             </span>
+            {reach.length > 0 && (
+              <span
+                className="text-faint/80"
+                title={`The keys behind these accounts also own addresses on ${reach.map((f) => FAMILY_LABEL[f]).join(', ')}. The ⇄ marker on a row lists them.`}
+              >
+                · keys reach +{reach.length}
+              </span>
+            )}
             <Button
               size="sm"
               variant="ghost"
@@ -434,6 +445,7 @@ function HoldingRow({
             ↗
           </a>
         )}
+        {row.native && <KeyLinksHint account={account} className="ml-1 align-middle" />}
       </td>
       <td
         data-label="Asset"

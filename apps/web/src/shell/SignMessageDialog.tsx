@@ -7,6 +7,7 @@ import { useVaultView, type SessionChoice } from '../core/vault.js';
 import { useDirectory } from '../store/persist.js';
 import { accountsOf } from '../store/selectors.js';
 import { SessionField, sessionReady } from './ExportGateFields.js';
+import { KeyReach } from './KeyLinks.js';
 
 /**
  * Sign a message with a single wallet's EVM key: plain text (EIP-191, e.g.
@@ -125,6 +126,7 @@ function SignForm({ walletId }: { walletId: string }) {
             </option>
           ))}
         </Select>
+        <KeyReach account={account} className="mt-1" />
       </Field>
       <Field label="Kind" htmlFor={ids.kind}>
         <Select

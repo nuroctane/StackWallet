@@ -49,15 +49,6 @@ function AddWatchWalletForm({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [extra, setExtra] = useState<string[]>([]);
   const primary = chains.find((c) => c.chainId === chainId);
-  const siblings =
-    primary?.family === 'evm'
-      ? POPULAR_EVM.flatMap((id) => {
-          const c = chains.find((x) => x.chainId === id);
-          return c && c.chainId !== chainId && c.testnet === primary.testnet ? [c] : [];
-        })
-      : [];
-  const extraChainIds = extra.filter((id) => siblings.some((c) => c.chainId === id));
-
   const trimmedAddress = address.trim();
   const adapter = chainId ? adapterOrNull(registry, chainId) : null;
   const addressState: 'empty' | 'valid' | 'invalid' | 'no-adapter' =
@@ -68,6 +59,27 @@ function AddWatchWalletForm({
         : safeValidate(adapter.validateAddress.bind(adapter), trimmedAddress, chainId)
           ? 'valid'
           : 'invalid';
+  // Other networks of the same family where this exact string is the same
+  // owner: the curated EVM list, or any sibling chain whose adapter accepts
+  // the address (Sui/IOTA, Aptos/Movement, SS58 prefixes shared by testnets).
+  // A watch wallet has no public key, so other families cannot be derived.
+  const siblings = useMemo(() => {
+    if (!primary) return [];
+    if (primary.family === 'evm') {
+      return POPULAR_EVM.flatMap((id) => {
+        const c = chains.find((x) => x.chainId === id);
+        return c && c.chainId !== chainId && c.testnet === primary.testnet ? [c] : [];
+      });
+    }
+    if (addressState !== 'valid') return [];
+    return chains.filter((c) => {
+      if (c.family !== primary.family || c.chainId === chainId || c.testnet !== primary.testnet)
+        return false;
+      const a = adapterOrNull(registry, c.chainId);
+      return !!a && safeValidate(a.validateAddress.bind(a), trimmedAddress, c.chainId);
+    });
+  }, [primary, chains, chainId, addressState, trimmedAddress, registry]);
+  const extraChainIds = extra.filter((id) => siblings.some((c) => c.chainId === id));
 
   const addressError =
     addressState === 'invalid'
@@ -153,7 +165,14 @@ function AddWatchWalletForm({
         </div>
       )}
       {siblings.length > 0 && (
-        <Field label="Also watch on" hint="The same address exists on every EVM network.">
+        <Field
+          label="Also watch on"
+          hint={
+            primary?.family === 'evm'
+              ? 'The same address exists on every EVM network.'
+              : 'Networks of the same family where this address is the same account.'
+          }
+        >
           <div className="flex flex-wrap gap-1.5">
             {siblings.map((c) => {
               const on = extraChainIds.includes(c.chainId);

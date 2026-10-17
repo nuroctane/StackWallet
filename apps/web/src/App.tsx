@@ -31,6 +31,7 @@ import {
 } from './shell/SetTransferDialogs.js';
 import { ReceiveDialog } from './shell/ReceiveDialog.js';
 import { AddAccountDialog } from './shell/AddAccountDialog.js';
+import { KeyAddressesDialog } from './shell/KeyAddressesDialog.js';
 import { ContactsDialog } from './shell/ContactsDialog.js';
 import { SignMessageDialog } from './shell/SignMessageDialog.js';
 import { HardwareWalletDialog } from './shell/HardwareWalletDialog.js';
@@ -390,6 +391,11 @@ function Shell({ registryError }: { registryError?: string | undefined }) {
       <ReceiveDialog
         open={dialog?.kind === 'receive'}
         walletId={dialog?.kind === 'receive' ? dialog.walletId : undefined}
+        onClose={closeDialog}
+      />
+      <KeyAddressesDialog
+        open={dialog?.kind === 'keyAddresses'}
+        accountId={dialog?.kind === 'keyAddresses' ? dialog.accountId : undefined}
         onClose={closeDialog}
       />
       <SendDialog
