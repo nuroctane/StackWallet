@@ -302,14 +302,22 @@ export async function prepareNamada(
       wasmCodeHash = bytesToHex(bytes);
     });
   } catch {
-    const params = await adapter.indexerGet('/api/v1/chain/parameters', IndexerParameters);
+    const params = await adapter.indexerGet(
+      intent.chainId,
+      '/api/v1/chain/parameters',
+      IndexerParameters,
+    );
     wasmCodeHash = params.checksums[TRANSFER_TAG];
     if (params.nativeTokenAddress && params.nativeTokenAddress !== NAM_TOKEN)
       throw new Error('Unexpected native token address');
   }
   if (!wasmCodeHash) throw new Error('Could not resolve the transfer wasm hash');
   try {
-    const gas = await adapter.indexerGet(`/api/v1/gas-price/${NAM_TOKEN}`, z.array(GasPriceEntry));
+    const gas = await adapter.indexerGet(
+      intent.chainId,
+      `/api/v1/gas-price/${NAM_TOKEN}`,
+      z.array(GasPriceEntry),
+    );
     const price = gas.find((g) => g.token === NAM_TOKEN)?.minDenomAmount;
     if (price !== undefined && price !== '0') indexerFeePerGas = price;
   } catch {

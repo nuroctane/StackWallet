@@ -26,7 +26,7 @@ export const NAMADA: ChainInfo[] = [
     nativeAsset: { ref: 'namada:cc0d3e0c033be:native', symbol: 'NAM', decimals: 6 },
     testnet: true,
     // The mainnet explorer does not index Housefire; a wrong link is worse than none.
-    defaultRpcs: ['https://rpc.housefire.namada.tech'],
+    defaultRpcs: ['https://rpc.testnet.namada.net', 'https://rpc.housefire.namada.tech'],
     extra: { coinType: 877 },
     layer: 'L1',
   },

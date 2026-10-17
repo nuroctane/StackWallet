@@ -70,9 +70,10 @@ export const NAMADA_CHAINS: ChainInfo[] = [
     name: 'Namada Housefire',
     nativeAsset: { ref: `${NAMADA_HOUSEFIRE}:native`, symbol: 'NAM', decimals: 6 },
     testnet: true,
-    // Documented by namada.net but unreachable (NXDOMAIN); kept so the
-    // testnet configuration stays visible until a community RPC revives.
-    defaultRpcs: ['https://rpc.housefire.namada.tech'],
+    // Heliax's documented Housefire host first, the older community host
+    // second; both were NXDOMAIN when probed. Kept so the testnet
+    // configuration stays visible until an RPC revives.
+    defaultRpcs: ['https://rpc.testnet.namada.net', 'https://rpc.housefire.namada.tech'],
     extra: { coinType: 877 },
     layer: 'L1',
   },
@@ -80,7 +81,8 @@ export const NAMADA_CHAINS: ChainInfo[] = [
 
 const INDEXER: Record<string, string> = {
   [NAMADA_MAINNET]: 'https://indexer.namada.net',
-  // Housefire indexer was hosted at indexer.housefire...; dead with the RPCs.
+  // Heliax's documented Housefire indexer resolves but answers 404 on every
+  // route; left empty so Housefire fails closed instead of borrowing mainnet.
   [NAMADA_HOUSEFIRE]: '',
 };
 
@@ -279,9 +281,14 @@ export class NamadaAdapter extends BaseAdapter<'namada'> {
     return base;
   }
 
-  /** Schema-checked indexer GET, using the adapter's fetch implementation. */
-  async indexerGet<T>(path: string, schema: z.ZodType<T>): Promise<T> {
-    return schema.parse(await fetchJson(`${INDEXER[NAMADA_MAINNET]}${path}`, this.fetchOptions()));
+  /**
+   * Schema-checked indexer GET, using the adapter's fetch implementation.
+   * Wasm checksums and gas prices are chain state, so the indexer must be the
+   * one tracking `chainId`; a chain without a live indexer fails here rather
+   * than borrowing mainnet's answers.
+   */
+  async indexerGet<T>(chainId: ChainId, path: string, schema: z.ZodType<T>): Promise<T> {
+    return schema.parse(await fetchJson(`${this.indexer(chainId)}${path}`, this.fetchOptions()));
   }
 
   async status(hash: TxHash, chainId: ChainId): Promise<TxStatus> {

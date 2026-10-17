@@ -544,9 +544,16 @@ social-gated, so no funded send was exercised.
 (`namada.5f5de2dd…` / `housefire-alpaca.cc0d3e0c…`) is pinned in the core because CAIP-2
 references forbid dots. Ed25519 at `m/44'/877'/0'/0'/i'`; bech32m `tnam` addresses. Mainnet reads
 pair CometBFT `abci_query` storage proofs with the official indexer (both CORS `*`). Signing is
-gated to Housefire (`namada:cc0d3e0c033be`), but every documented Housefire RPC was dead at
-wiring time — the dead entries are kept so a revival needs no code change. Wrapper transactions
-carry no expiration, so Namada never reports `Expired`.
+gated to Housefire (`namada:cc0d3e0c033be`, still `housefire-alpaca.cc0d3e0c033be` per
+docs.namada.net, binaries v201.0.7). Heliax now documents `rpc.testnet.namada.net` and
+`indexer.testnet.namada.net` as the official Housefire hosts; re-probed, the RPC has no DNS
+record and the indexer host answers 404 on every route, and the older community hosts
+(`rpc.housefire.namada.tech`, tududes, ITRocket, Mandragora) are all NXDOMAIN. The catalog lists
+the Heliax RPC first and the old host second so a revival needs no code change; the Housefire
+indexer entry stays empty so a send fails closed ("No live Namada indexer") instead of borrowing
+mainnet's transfer-wasm checksum and gas price, which the indexer helper used to do for every
+chain. No funded Housefire send has been exercised. Wrapper transactions carry no expiration, so
+Namada never reports `Expired`.
 
 **Bitcoin forks (`btcfork:<name>-mainnet|testnet`, `chains-btcfork`).** Bitcoin Cash (145), Dash
 (5), Zcash (133), DefiChain (1129) and Verus (141) share one module: secp256k1 at
@@ -611,6 +618,41 @@ tick about a minute after preparation; a passed tick is a real expiry. A core-si
 was accepted and relayed by the live mainnet (rejection-level proof only; no funded execution).
 Qubic has no mempool view, so a broadcast transfer is `unknown` until its tick.
 
+### Threshold signing coverage
+
+Shared (`tss`) wallets sign exactly one thing today: a native SOL transfer from the FROST
+Ed25519 group address on Solana Devnet. The ledger's `begin_threshold` and `complete_threshold`
+match `UnsignedTx::Solana` only, the stored `ThresholdAccount` carries a single `solana_address`,
+and the co-signer's core re-derives the message with Solana's `message()`/`assemble()`. Every
+other family answers "threshold signing is Solana only" and proposes from local keys. What it
+would take to widen this, by group:
+
+- **Plain Ed25519 chains** (Substrate, Stellar, Aptos, Sui, NEAR, Algorand, TON, MultiversX,
+  Everscale, Aeternity, Starcoin, Tezos `edpk`, Namada) verify an ordinary Ed25519 signature
+  over the bytes the family already hashes, so a FROST group key is a valid account key. Each
+  needs a per-family group-address derivation stored beside `solana_address`, a `message()` /
+  `assemble()` arm in the threshold driver, and the co-signer's byte-for-byte intent
+  reconstruction extended to that family's `UnsignedTx`. No new cryptography.
+- **Cardano** verifies plain Ed25519 too, but a base address binds a payment key and a stake
+  key; a threshold account would need either two group keys or an enterprise (stake-less)
+  address, which is a product decision before it is code.
+- **Radix** signs an intent and a notary signature with the same key; the Babylon
+  `assemble()` would need both FROST signatures over different hashes, two ceremonies per
+  transaction.
+- **secp256k1 ECDSA families** (EVM, Cosmos, Tron, XRPL, Antelope, Stacks, VeChain,
+  Hyperliquid, ICON, ICP, Ergo, Alephium, Fuel, aelf, Obyte, Chromia, Keeta, Bitcoin forks,
+  Gala, Bitcoin P2WPKH) wait on CGGMP21. The maintained `cggmp21` crate links GMP and the
+  pure-Rust `cggmp24` is alpha, so no ECDSA threshold ceremony is wired (SPEC §5.1). Bitcoin
+  P2TR is FROST secp256k1-tr and is the next tractable target once the Taproot input path is
+  verified against Signet.
+- **Not threshold-capable at all**: Waves (hash-and-clamp Curve25519 "axolotl" signatures),
+  Mixin (kernel Schnorr over spend/view keys), Qubic (FourQ/SchnorrQ), Chia (BLS12-381), NEO
+  (P-256), Starknet (STARK curve, a secp256k1 seed only feeds grinding). A FROST group key is
+  not a valid key under any of these schemes, so the wallet keeps them local-key only.
+
+No re-sharing, no refresh and no 2-of-3 yet; losing either paired device loses the wallet,
+which is why shared wallets stay gated to a testnet.
+
 ### Read-only families
 
 **NEO N3 (`neo3:mainnet|testnet3`, `chains-neo`).** Signing is out: NEO uses P-256, the core has
@@ -625,14 +667,27 @@ proof (snarkVM), and even key derivation runs through Poseidon, so `deriveAddres
 keyed accounts exist yet; the bech32m address codec and oracle vectors are pinned for a future
 proving slice. Read-only public-credit balances come from the Provable explorer API with a pinned
 genesis hash; record-held (private) balances are invisible to any API by design, and there is no
-keyless history endpoint.
+keyless history endpoint. What signing would take, and why it is not here: the account key
+(`sk_sig`, `r_sig`, view key, address) is Poseidon over BLS12-377 on the Edwards-BLS12 curve, so
+even the address needs the `snarkvm-console` crates, and a `credits.aleo/transfer_public` is a
+Varuna proof that needs the function's proving key (hundreds of megabytes, fetched from Provable
+and so a remote asset D8 would have to pin by hash) and tens of seconds of proving in a worker.
+That is a vendored snarkVM in the core and a proving pipeline in the shell, not an adapter; it
+stays out until a slice is planned for it.
 
 **Canton (`canton:mainnet|testnet`, `chains-canton`).** Self-custody needs validator-node
 credentials (topology onboarding) plus a reimplementation of Canton's `signTransactionHash`
 wrapping and DAML encoding, and every public SV scan route answers 403 RBAC without CORS, so
 Canton ships as a read-only scaffold with the ed25519 party-id codec
 (`hint::1220<sha256 fingerprint>`) ready. The adapter implements the official scan OpenAPI shapes
-and reports the 403 gap until a keyless scan answers.
+and reports the 403 gap until a keyless scan answers (re-probed: `sv-1`, `sv-2` and the test
+scan all still 403 on `/api/scan/v0/dso-party-id`). The signing path exists in the protocol: an
+external party onboards its Ed25519 key through a validator, the validator's Ledger API prepares
+a transaction (`interactive_submission/prepare`), the wallet signs the prepared-transaction hash
+(the versioned hashing scheme over the protobuf `PreparedTransaction`) and the validator executes
+it. StackWallet would need a user-supplied validator Ledger API with a bearer token and the hash
+scheme in the core; no credential-free validator exists to validate either against, so this stays
+read-only rather than shipping unverified signing code.
 
 ## Names and collectibles
 
