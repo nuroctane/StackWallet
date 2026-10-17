@@ -112,6 +112,26 @@ export async function proposeSend(
 }
 
 /**
+ * Propose a family's one-time activation step (Chromia's FT4 registration).
+ * It is recorded as a zero native transfer to the account itself, the shape
+ * the core binds to the registration body, and waits for approval like any
+ * other transaction.
+ */
+export async function proposeActivation(
+  registry: ChainRegistry,
+  account: Account,
+): Promise<Result<TxRecord>> {
+  const family = familySendFor(account);
+  if (!family?.activation)
+    return { ok: false, error: `${account.family} accounts need no activation step` };
+  return proposeIntent(
+    registry,
+    { account },
+    { kind: 'transfer', to: account.address, asset: `${account.chainId}:native`, amount: '0' },
+  );
+}
+
+/**
  * Propose an EVM contract call (a revoke, an NFT transfer). The core checks
  * the unsigned transaction's destination, value and calldata byte for byte.
  */

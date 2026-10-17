@@ -57,6 +57,8 @@ export function useHeadline(): (tx: TxRecord) => string {
   return (tx: TxRecord) => {
     const i = tx.intent;
     const chain = findChain(registry, i.chainId);
+    if (tx.unsigned && 'register' in tx.unsigned && 'signer' in tx.unsigned)
+      return `Register the ${chain?.name ?? i.chainId} account and claim its pending transfers`;
     if (i.kind === 'transfer') {
       const token = erc20Of(i.asset, i.chainId);
       if (!token) {

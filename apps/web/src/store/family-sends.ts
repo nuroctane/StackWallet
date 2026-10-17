@@ -256,10 +256,12 @@ import {
 import {
   broadcastChromia,
   CHROMIA_TESTNET,
+  CHROMIA_UNREGISTERED_NOTICE,
   chromiaApprovalValid,
   chromiaTransferStatus,
   isValidChromiaAddress,
   prepareChromia,
+  prepareChromiaRegistration,
   type ChromiaAdapter,
 } from '@stackwallet/chains-chromia';
 import {
@@ -361,6 +363,7 @@ import {
   StarcoinTx,
   ObyteTx,
   ChromiaTx,
+  ChromiaRegisterTx,
   KeetaTx,
   NamadaTx,
   BtcForkTx,
@@ -370,7 +373,7 @@ import {
   TonTx,
 } from '@stackwallet/core-client';
 
-import { registerFamilySend } from './families.js';
+import { isActivationIntent, registerFamilySend } from './families.js';
 
 const U128_MAX = (1n << 128n) - 1n;
 const I64_MAX = (1n << 63n) - 1n;
@@ -1109,11 +1112,31 @@ registerFamilySend({
   },
 });
 
+/** Either Chromia shape: a transfer (`uchr`) or the one-time account registration. */
+const chromiaUnsigned = (tx: object) =>
+  'uchr' in tx ? ChromiaTx.parse(tx) : ChromiaRegisterTx.parse(tx);
+
 registerFamilySend({
   family: 'chromia',
   unit: 'uchr',
   signingChains: [CHROMIA_TESTNET],
+  matches: (tx) => 'register' in tx && 'signer' in tx,
+  activation: {
+    label: 'register',
+    title:
+      'Create the FT4 account for this id and claim the CHR already sent to it; the one-time registration waits in the approval queue until you sign it',
+    needed: (holding) => holding.notice === CHROMIA_UNREGISTERED_NOTICE,
+    proposed: 'Account registration proposed; approve it to claim the pending CHR',
+  },
   prepare: async (a, intent, account) => {
+    if (isActivationIntent(intent, account)) {
+      const r = await prepareChromiaRegistration(
+        a as unknown as ChromiaAdapter,
+        account.address,
+        account.publicKeyHex,
+      );
+      return { ...r, unsigned: ChromiaRegisterTx.parse(r.unsigned) };
+    }
     const r = await prepareChromia(
       a as unknown as ChromiaAdapter,
       intent,
@@ -1123,12 +1146,12 @@ registerFamilySend({
     return { ...r, unsigned: ChromiaTx.parse(r.unsigned) };
   },
   approvalValid: (a, tx) =>
-    chromiaApprovalValid(a as unknown as ChromiaAdapter, ChromiaTx.parse(tx)),
+    chromiaApprovalValid(a as unknown as ChromiaAdapter, chromiaUnsigned(tx)),
   expiredReason: 'The sender account changed; propose a fresh transfer',
   broadcast: (a, tx, raw) =>
-    broadcastChromia(a as unknown as ChromiaAdapter, ChromiaTx.parse(tx), raw),
+    broadcastChromia(a as unknown as ChromiaAdapter, chromiaUnsigned(tx), raw),
   status: (a, tx, hash) =>
-    chromiaTransferStatus(a as unknown as ChromiaAdapter, ChromiaTx.parse(tx), hash),
+    chromiaTransferStatus(a as unknown as ChromiaAdapter, chromiaUnsigned(tx), hash),
   form: {
     validate: (to) => isValidChromiaAddress(to.trim().toLowerCase()),
     normalize: (to) => to.trim().toLowerCase(),

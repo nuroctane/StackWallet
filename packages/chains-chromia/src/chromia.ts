@@ -33,6 +33,10 @@ import { z } from 'zod';
 export const CHROMIA_MAINNET = 'chromia:0x15c0ca99bee60a3b';
 export const CHROMIA_TESTNET = 'chromia:0x090bcd47149fbb66';
 
+/** Balance notice for an account id without an FT4 account; the UI offers registration on it. */
+export const CHROMIA_UNREGISTERED_NOTICE =
+  'No FT4 account exists for this id yet; the first incoming transfer stays pending until the account is registered.';
+
 export interface ChromiaNetwork {
   /** Full 32-byte blockchain rid, uppercase hex as the REST API expects. */
   brid: string;
@@ -505,9 +509,7 @@ export class ChromiaAdapter extends BaseAdapter<'chromia'> {
       { equal: (a, b) => a.balance === b.balance && a.registered === b.registered },
     );
     const holding = nativeHolding(chain, value.balance, provenance);
-    if (!value.registered)
-      holding.notice =
-        'No FT4 account exists for this id yet; the first incoming transfer stays pending until the account is registered.';
+    if (!value.registered) holding.notice = CHROMIA_UNREGISTERED_NOTICE;
     return [holding];
   }
 

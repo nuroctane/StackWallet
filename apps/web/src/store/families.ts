@@ -1,4 +1,10 @@
-import type { ChainAdapter, ChainRegistry, Simulation, TxStatus } from '@stackwallet/chains';
+import type {
+  ChainAdapter,
+  ChainRegistry,
+  Holding,
+  Simulation,
+  TxStatus,
+} from '@stackwallet/chains';
 import type { Account, ChainFamily, LedgerUnsignedTx, TxIntent } from '@stackwallet/core-client';
 
 /**
@@ -12,6 +18,25 @@ export interface FamilySend {
   unit: string;
   /** Networks the core signs on; everything else in the family is receive-only. */
   signingChains: readonly string[];
+  /**
+   * Recognises this family's unsigned transactions when `unit` alone cannot (a family
+   * with a second transaction shape, such as an account registration).
+   */
+  matches?(unsigned: object): boolean;
+  /**
+   * A one-time on-chain step an account needs before it can transact (Chromia's FT4
+   * registration). It is proposed as a zero-amount native transfer to the account
+   * itself, which `prepare` recognises and the core binds to the registration body.
+   */
+  activation?: {
+    /** Verb shown on the account row. */
+    label: string;
+    title: string;
+    /** Whether the native holding reports the step as still pending. */
+    needed(holding: Holding): boolean;
+    /** Toast once the proposal sits in the approval queue. */
+    proposed: string;
+  };
   prepare(
     adapter: ChainAdapter,
     intent: TxIntent,
@@ -65,7 +90,20 @@ export function familySendFor(account: Pick<Account, 'family'>): FamilySend | un
 
 export function familySendOf(unsigned: unknown): FamilySend | undefined {
   if (!unsigned || typeof unsigned !== 'object') return undefined;
-  return registered.find((r) => r.unit in unsigned);
+  return registered.find((r) => r.unit in unsigned || r.matches?.(unsigned) === true);
+}
+
+/** Whether an intent is the self-addressed zero transfer that proposes an activation step. */
+export function isActivationIntent(
+  intent: Pick<TxIntent, 'kind' | 'chainId'> & { to?: string; amount?: string; asset?: string },
+  account: Pick<Account, 'address' | 'chainId'>,
+): boolean {
+  return (
+    intent.kind === 'transfer' &&
+    intent.to === account.address &&
+    intent.amount === '0' &&
+    intent.asset === `${account.chainId}:native`
+  );
 }
 
 export function familyAdapter(

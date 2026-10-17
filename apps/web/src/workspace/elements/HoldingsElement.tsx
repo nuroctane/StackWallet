@@ -74,6 +74,7 @@ export function buildHoldingRows(
     };
     const readError = e?.error ?? native?.error;
     if (readError) row.error = readError;
+    if (native?.notice) row.notice = native.notice;
     rows.push(row);
     for (const holding of e?.holdings ?? []) {
       if (holding.assetRef === info?.nativeAsset.ref) continue;

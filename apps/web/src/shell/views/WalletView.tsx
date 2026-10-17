@@ -8,7 +8,9 @@ import { formatUnits, relativeTime } from '../../lib/format.js';
 import { walletReach } from '../../lib/key-siblings.js';
 import { canSendFrom } from '../../lib/sendable.js';
 import { useBalances, type BalanceEntry } from '../../store/balances.js';
+import { familySendFor } from '../../store/families.js';
 import { directory } from '../../store/persist.js';
+import { proposeActivation } from '../../store/txs.js';
 import { useRegistry } from '../../store/RegistryContext.js';
 import type { DirectoryState } from '../../store/schema.js';
 import { accountsOf, kindLabel, pathTo } from '../../store/selectors.js';
@@ -73,6 +75,18 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
   );
   const firstSendable = accounts.find((a) => canSendFrom(a, wallet));
   const reach = useMemo(() => walletReach(registry, accounts), [registry, accounts]);
+
+  const activate = async (account: Account) => {
+    const step = familySendFor(account)?.activation;
+    if (!step) return;
+    const r = await proposeActivation(registry, account);
+    if (!r.ok) {
+      toasts.push(r.error, 'danger');
+      return;
+    }
+    toasts.push(r.value.state === 'rejected' ? 'Policy denied the registration' : step.proposed);
+    void balances.refresh();
+  };
 
   return (
     <div className="flex flex-col gap-5 p-5">
@@ -258,6 +272,12 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
                             })
                         : undefined
                     }
+                    activation={
+                      row.native && row.holding && canSendFrom(row.account, wallet)
+                        ? activationFor(row.account, row.holding)
+                        : undefined
+                    }
+                    onActivate={() => void activate(row.account)}
                   />
                 ))}
               </tbody>
@@ -377,16 +397,29 @@ function buildRows(
   return rows;
 }
 
+/** The family's pending one-time step for this account, if its native holding reports one. */
+function activationFor(
+  account: Account,
+  holding: Holding,
+): { label: string; title: string } | undefined {
+  const step = familySendFor(account)?.activation;
+  return step && step.needed(holding) ? { label: step.label, title: step.title } : undefined;
+}
+
 function HoldingRow({
   row,
   now,
   onCopy,
   onSend,
+  activation,
+  onActivate,
 }: {
   row: HoldingRowData;
   now: number;
   onCopy: () => void;
   onSend?: (() => void) | undefined;
+  activation?: { label: string; title: string } | undefined;
+  onActivate?: (() => void) | undefined;
 }) {
   const { account, info, entry, holding } = row;
   const explorer = info ? explorerAddressUrl(info, account.address) : undefined;
@@ -471,6 +504,16 @@ function HoldingRow({
         {holding ? relativeTime(holding.updatedAtMs, now) : entry?.error ? 'failed' : ''}
       </td>
       <td className="px-4 text-right whitespace-nowrap">
+        {activation && onActivate && (
+          <button
+            type="button"
+            onClick={onActivate}
+            title={activation.title}
+            className="sw-pressable mr-2 rounded-sw-sm px-1 text-[11px] text-accent-2 underline"
+          >
+            {activation.label}
+          </button>
+        )}
         {onSend && (
           <button
             type="button"

@@ -521,9 +521,12 @@ serves the FT4 economy chain, found through the directory chain. Secp256k1 at th
 `m/44'/60'/0'/0/i`, deliberately — Chromia has no SLIP-44 coin type and its official wallet is
 EVM-key-centric. The account id is `gtvHash(pubkey)` as 64 hex. Endpoints prove themselves with
 the merkle-hash-version feature probe. Sends are native CHR on testnet; a GTX has no deadline,
-so there is no `Expired` state. A brand-new account id needs a one-time registration transaction,
-which the ledger and package support but the web send form does not offer yet. No accepted
-on-chain send yet (the faucet is social-gated).
+so there is no `Expired` state. A brand-new account id needs a one-time registration transaction
+(`ft4.ras_transfer_open` + `ft4.register_account`, claiming the transfers already addressed to
+it): while the balance read reports the account missing, the wallet view offers `register` on the
+row, which proposes a zero native transfer to the account itself — the only intent the core binds
+to the registration body — and the approval queue signs it like any send. No accepted on-chain
+send yet (the faucet is social-gated).
 
 **Keeta (`keeta:main`, `keeta:test`, `chains-keeta`).** Secp256k1 at `m/44'/9797'/0'/0/i` — 9797
 is unregistered and documented as ours, because Keeta's own scheme (HKDF-SHA3) is not BIP-32.
