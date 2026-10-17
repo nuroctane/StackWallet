@@ -34,6 +34,8 @@ import {
   Hex32,
   KeyGroup,
   Ledger,
+  MixinCandidateOutput,
+  MixinOwnedOutput,
   PairingOffer,
   Policy,
   PolicyContext,
@@ -114,6 +116,16 @@ export interface VaultHandle {
   importPhrase(walletId: string, phrase: string, nowMs: number): Promise<void>;
   hasSingleKey(walletId: string): Promise<boolean>;
   singlePublicKey(walletId: string, curve: Curve, path: string): Promise<string>;
+  /**
+   * Which Mixin kernel outputs the account at `path` can spend. The kernel has
+   * no address index, so discovery walks outputs and asks the core's view key;
+   * the key never leaves the core.
+   */
+  mixinOwnedOutputs(
+    walletId: string,
+    path: string,
+    candidates: MixinCandidateOutput[],
+  ): Promise<MixinOwnedOutput[]>;
   /**
    * Gated reveal (session, parent directory key, wallet key); the core marks
    * this wallet exposed before returning the secret.
@@ -390,6 +402,7 @@ export interface WasmVaultObject {
   import_phrase(walletId: string, phrase: string, nowMs: number): void;
   has_single_key(walletId: string): boolean;
   single_public_key(walletId: string, curve: string, path: string): string;
+  mixin_owned_outputs(walletId: string, path: string, candidatesJson: string): string;
   reveal(
     walletId: string,
     sessionSlot: string | undefined,
@@ -747,6 +760,12 @@ class WasmVaultHandle implements VaultHandle {
   }
   async singlePublicKey(walletId: string, curve: Curve, path: string) {
     return this.raw.single_public_key(walletId, Curve.parse(curve), path);
+  }
+  async mixinOwnedOutputs(walletId: string, path: string, candidates: MixinCandidateOutput[]) {
+    const json = JSON.stringify(MixinCandidateOutput.array().parse(candidates));
+    return MixinOwnedOutput.array().parse(
+      JSON.parse(this.raw.mixin_owned_outputs(walletId, path, json)),
+    );
   }
   async reveal(
     walletId: string,

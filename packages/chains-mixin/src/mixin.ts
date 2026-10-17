@@ -3,9 +3,9 @@
  * Safe/Messenger APIs). Addresses are `XIN` + base58(spendPub || viewPub ||
  * sha3-256 checksum); the kernel RPC is a small POST envelope at
  * https://kernel.mixin.dev (CORS reflects the Origin; probed live). The
- * kernel has no address-balance RPC: UTXO discovery requires view-key
- * scanning, which lives in the Rust core and is not wired yet, so balances
- * and preparation need an injected UTXO provider (see .nur/wiring/mixin.md).
+ * kernel has no address-balance RPC: UTXO discovery walks snapshots and asks
+ * the core's view key which outputs are ours (`scanMixinOutputs`), so balances
+ * and preparation read from an injected UTXO provider fed by that scan.
  */
 import { sha3_256 } from '@noble/hashes/sha3.js';
 import { base58 } from '@scure/base';
@@ -105,7 +105,8 @@ export type MixinUtxoProvider = (address: Address) => Promise<MixinUtxo[]>;
 export interface MixinAdapterOptions extends BaseAdapterOptions {
   /**
    * Source of the user's spendable UTXOs (hash, index, ghost key, mask,
-   * amount). The kernel itself cannot enumerate them; see the wiring doc.
+   * amount). The kernel itself cannot enumerate them; `scanMixinOutputs`
+   * builds this set with the core's view key.
    */
   utxos?: MixinUtxoProvider;
 }
@@ -141,11 +142,16 @@ export const UtxoResult = z
   .loose();
 
 export class MixinAdapter extends BaseAdapter {
-  readonly utxos: MixinUtxoProvider | undefined;
+  utxos: MixinUtxoProvider | undefined;
 
   constructor(opts: MixinAdapterOptions = {}) {
     super(MIXIN_FAMILY, { ...opts, rpc: opts.rpc ?? new MemoryRpcPool(MIXIN_CHAINS) });
     this.utxos = opts.utxos;
+  }
+
+  /** Swap the UTXO source; the app binds it to the view-key scan once the vault exists. */
+  setUtxoProvider(utxos: MixinUtxoProvider | undefined): void {
+    this.utxos = utxos;
   }
 
   override chains(): ChainInfo[] {
@@ -204,8 +210,8 @@ export class MixinAdapter extends BaseAdapter {
     if (!isValidMixinAddress(addr)) throw new TypeError(`invalid mixin address ${addr}`);
     if (!this.utxos)
       throw new Error(
-        'The Mixin kernel has no address-balance RPC and UTXO discovery needs ' +
-          'view-key scanning in the core (not wired yet); provide MixinAdapterOptions.utxos.',
+        'The Mixin kernel has no address-balance RPC; provide MixinAdapterOptions.utxos ' +
+          'from a view-key scan (scanMixinOutputs).',
       );
     let endpoint = '';
     const total = await withFailover(this.rpc, chainId, async (url) => {
@@ -224,7 +230,7 @@ export class MixinAdapter extends BaseAdapter {
       {
         ...nativeHolding(chain, total, { kind: 'single', endpoint }),
         notice:
-          'Summed over the injected UTXO set only; the kernel cannot enumerate address balances.',
+          'Summed over the outputs the view-key scan has found; the kernel cannot enumerate address balances.',
       },
     ];
   }
@@ -240,7 +246,7 @@ export class MixinAdapter extends BaseAdapter {
     return {
       items: [],
       coverage:
-        'The kernel indexes outputs by ghost key, not by address; history needs view-key scanning, which is not wired yet.',
+        'The kernel indexes outputs by ghost key, not by address; history comes from the view-key scan, not from the node.',
     };
   }
 

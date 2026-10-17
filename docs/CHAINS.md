@@ -588,10 +588,18 @@ custom Schnorr-like scheme over spend/view keys, so threshold wallets cannot sig
 single HTTPS kernel endpoint means `single` provenance. Signing is gated to the main network
 deliberately — no public test kernel exists — and the send form says plainly that real XIN moves.
 Transfers are fee-free, spend one to eight ghost-key inputs and return change; they never expire
-(approval re-verifies every input instead). The honest gap: the kernel indexes outputs by ghost
-key, not address, so balances and prepare need an injected `utxos` provider until a core-side
-view-key UTXO scanner lands; without it those calls throw and history is an empty page with a
-coverage note.
+(approval re-verifies every input instead). The kernel indexes outputs by ghost key, not address,
+so UTXO discovery is a view-key scan: `scanMixinOutputs` walks `listsnapshots` (500 per page, full
+transactions) and asks the core which outputs it owns (`VaultHandle.mixinOwnedOutputs`, which
+recomputes `spendPub + Hs(view·mask, index)·G` with the private view key that never leaves the
+core), keeping a per-address cursor of topology reached plus unspent outputs. The web binds the
+adapter's `utxos` provider to that scan: a new address starts at the kernel head, each balance
+refresh walks up to 20 pages, and the cursor persists. The limits are real: the main kernel is past
+83 million snapshots and grows by roughly one per second, so a scan from genesis is an hours-long
+job against the one public endpoint; an account that received XIN before it was added here must be
+rewound (`mixinScanStore.rewind`) to a topology before its first receipt, and there is no UI for
+that yet. Balances carry a notice that they cover only what the scan has found; history is still an
+empty page with a coverage note.
 
 **Qubic (`qubic:mainnet`, `chains-qubic`).** No testnet exists, so mainnet is the signing network
 deliberately. The derivation is ed25519 SLIP-10 at `m/44'/83293'/0'/0'/i'`, but the signing curve

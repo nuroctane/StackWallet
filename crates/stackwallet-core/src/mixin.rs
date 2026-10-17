@@ -20,6 +20,7 @@ use curve25519_dalek::scalar::Scalar;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 use sha3::Sha3_256;
+use zeroize::Zeroizing;
 
 use crate::intent::{TxIntent, TxIntentKind};
 use crate::{CoreError, Result};
@@ -224,6 +225,53 @@ pub(crate) fn ghost_public_for_test(
 fn ghost_private_key(mask: &[u8; 32], view: &Scalar, spend: &Scalar, index: u64) -> Result<Scalar> {
     let mask_point = check_point(mask)?;
     Ok(hash_scalar(&(mask_point * view), index) + spend)
+}
+
+/// One kernel output as `listsnapshots` and `gettransaction` report it, with
+/// its position in the transaction (ghost keys are bound to that index).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CandidateOutput {
+    pub index: u16,
+    /// 32-byte hex output mask (`r·G`).
+    pub mask: String,
+    /// The output's ghost keys, 32-byte hex each.
+    pub keys: Vec<String>,
+}
+
+/// A candidate the account's view key recognises: its position in the
+/// candidate list and the index of the matching ghost key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnedOutput {
+    pub position: usize,
+    pub key: usize,
+}
+
+/// Which of `candidates` this account can spend. The kernel indexes outputs by
+/// ghost key, so the only way to find an account's UTXOs is to walk outputs and
+/// recompute `spendPub + Hs(view·mask, index)·G` with the private view key,
+/// which must not leave the core. Malformed masks or keys are not an error,
+/// just outputs nobody can own.
+pub fn owned_outputs(secret: &[u8; 32], candidates: &[CandidateOutput]) -> Vec<OwnedOutput> {
+    let seed = Zeroizing::new(seed_from_secret(secret));
+    let (spend, view) = keys_from_seed64(&seed);
+    let spend_point = spend * ED25519_BASEPOINT_POINT;
+    candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(position, candidate)| {
+            let mask = fixed_hex::<32>(&candidate.mask, "mask").ok()?;
+            let mask_point = check_point(&mask).ok()?;
+            let shared = hash_scalar(&(mask_point * view), u64::from(candidate.index));
+            let expected = point_bytes(&(spend_point + shared * ED25519_BASEPOINT_POINT));
+            let key = candidate
+                .keys
+                .iter()
+                .position(|k| fixed_hex::<32>(k, "key").ok() == Some(expected))?;
+            Some(OwnedOutput { position, key })
+        })
+        .collect()
 }
 
 /// Go `Key.Sign`: the kernel's Ed25519 variant (no clamping; nonce and
@@ -597,6 +645,54 @@ mod tests {
         let b = public_from_secret(&secret);
         assert_eq!(a, b);
         assert!(address(&a).is_ok());
+    }
+
+    #[test]
+    fn view_key_recognises_only_the_accounts_own_outputs() {
+        let secret = [7u8; 32];
+        let mine = public_from_secret(&secret);
+        let theirs = public_from_secret(&[8u8; 32]);
+        let candidate = |public: &[u8; 64], r: u8, index: u16, extra_first: bool| {
+            let (key, mask) = ghost_public_for_test(&[r; 64], public, u64::from(index));
+            let foreign = hex::encode(ghost_public_for_test(&[r ^ 0x55; 64], &theirs, 0).0);
+            let mut keys = vec![hex::encode(key)];
+            if extra_first {
+                keys.insert(0, foreign);
+            }
+            CandidateOutput {
+                index,
+                mask: hex::encode(mask),
+                keys,
+            }
+        };
+        let mut candidates = vec![
+            candidate(&mine, 1, 0, false),
+            candidate(&theirs, 2, 0, false),
+            candidate(&mine, 3, 1, true),
+        ];
+        // The same ghost key under the wrong output index is not ours.
+        let mut shifted = candidate(&mine, 4, 2, false);
+        shifted.index = 3;
+        candidates.push(shifted);
+        candidates.push(CandidateOutput {
+            index: 0,
+            mask: "zz".into(),
+            keys: vec![hex::encode([0u8; 32])],
+        });
+        assert_eq!(
+            owned_outputs(&secret, &candidates),
+            vec![
+                OwnedOutput {
+                    position: 0,
+                    key: 0
+                },
+                OwnedOutput {
+                    position: 2,
+                    key: 1
+                },
+            ]
+        );
+        assert!(owned_outputs(&[9u8; 32], &candidates).is_empty());
     }
 
     /// Reproduces common/transaction_test.go TestTransactionReferences: the

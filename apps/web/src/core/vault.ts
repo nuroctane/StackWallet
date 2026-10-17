@@ -28,6 +28,8 @@ import {
   type LedgerUnsignedTx,
   type ImportedSet,
   type Ledger,
+  type MixinCandidateOutput,
+  type MixinOwnedOutput,
   type Policy,
   type Revealed,
   type RevealedSecret,
@@ -886,6 +888,15 @@ export class VaultStore {
 
   async publicKey(walletId: string, curve: Curve, path: string): Promise<string> {
     return this.unlockedVault().singlePublicKey(walletId, curve, path);
+  }
+
+  /** Which Mixin kernel outputs the account at `path` owns; the view key stays in the core. */
+  async mixinOwnedOutputs(
+    walletId: string,
+    path: string,
+    candidates: MixinCandidateOutput[],
+  ): Promise<MixinOwnedOutput[]> {
+    return this.unlockedVault().mixinOwnedOutputs(walletId, path, candidates);
   }
 
   /**

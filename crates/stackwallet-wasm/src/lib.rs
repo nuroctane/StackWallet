@@ -266,6 +266,21 @@ impl WasmVault {
         provenance::public_key(&self.inner, wallet_id, curve, path).map_err(core_err)
     }
 
+    /// Which kernel outputs (`[{index, mask, keys}]` JSON) the Mixin account at
+    /// `path` owns, as `[{position, key}]` JSON. The view key stays inside.
+    pub fn mixin_owned_outputs(
+        &self,
+        wallet_id: &str,
+        path: &str,
+        candidates_json: &str,
+    ) -> Result<String, JsError> {
+        let candidates: Vec<stackwallet_core::mixin::CandidateOutput> =
+            serde_json::from_str(candidates_json)?;
+        let owned = provenance::mixin_owned_outputs(&self.inner, wallet_id, path, &candidates)
+            .map_err(core_err)?;
+        Ok(serde_json::to_string(&owned)?)
+    }
+
     /// Gated reveal: session proof, the parent directory's export key and the
     /// wallet's export key. The exposure is sealed before this returns
     /// `{ what, secret, publicHex }`; any failed check reveals and records nothing.

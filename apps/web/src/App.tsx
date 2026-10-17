@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChainRegistry } from '@stackwallet/chains';
 import { ToastProvider, useMediaQuery, useToasts } from '@stackwallet/ui';
 
-import { useCoreStatus } from './core/bridge.js';
+import { useCoreStatus, vault } from './core/bridge.js';
 import { createDefaultRegistry } from './data/registry.js';
 import { AddFolderDialog } from './shell/AddFolderDialog.js';
 import { AddWatchWalletDialog } from './shell/AddWatchWalletDialog.js';
@@ -45,7 +45,8 @@ import { ThemeStudio } from './shell/ThemeStudio.js';
 import { VaultDialog } from './shell/VaultDialog.js';
 import { balanceCache } from './store/balances.js';
 import { devicesQuarantinedKey } from './store/devices.js';
-import { directoryQuarantinedKey, useDirectory } from './store/persist.js';
+import { mixinScanStore } from './store/mixinScan.js';
+import { directory, directoryQuarantinedKey, useDirectory } from './store/persist.js';
 import { RegistryContext, useRegistry } from './store/RegistryContext.js';
 import { applyRpcSettings, rpcSettings, rpcSettingsQuarantinedKey } from './store/rpcSettings.js';
 import { collectiblesStore } from './store/collectibles.js';
@@ -98,12 +99,24 @@ export function App() {
   useEffect(() => {
     if (registryError) return;
     const unconfigure = tokenStore.configure(registry);
+    const unconfigureMixin = mixinScanStore.configure(registry, {
+      accountFor: (address) => {
+        const a = directory
+          .getSnapshot()
+          .accounts.find((x) => x.address === address && x.derivationPath);
+        return a?.derivationPath
+          ? { walletId: a.walletId, derivationPath: a.derivationPath }
+          : undefined;
+      },
+      owned: (walletId, path, candidates) => vault.mixinOwnedOutputs(walletId, path, candidates),
+    });
     const unsubscribe = tokenStore.subscribe(() => balanceCache.invalidate());
     const stopAutomations = startAutomations(registry);
     const stopAlerts = startAlerts();
     void walletConnect.start(registry);
     return () => {
       unconfigure();
+      unconfigureMixin();
       unsubscribe();
       stopAutomations();
       stopAlerts();

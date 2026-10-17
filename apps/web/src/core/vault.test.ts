@@ -146,6 +146,9 @@ class FakeVault implements VaultHandle {
   async singlePublicKey() {
     return '02'.padEnd(66, '1');
   }
+  async mixinOwnedOutputs() {
+    return [];
+  }
   async reveal(
     walletId: string,
     gate: ExportGateInput,

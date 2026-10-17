@@ -184,7 +184,7 @@ describe('mixin transfers', () => {
   it('requires the UTXO provider for balances and preparation', async () => {
     const adapter = kernel(INFO);
     await expect(adapter.getBalances(GO_ADDRESS, MIXIN_MAINNET)).rejects.toThrow(/utxos/i);
-    await expect(prepareMixin(adapter, intent(), GO_ADDRESS)).rejects.toThrow(/view-key scanning/);
+    await expect(prepareMixin(adapter, intent(), GO_ADDRESS)).rejects.toThrow(/view-key scan/);
   });
 
   it('prepares from provided UTXOs and refuses undercovered amounts', async () => {

@@ -172,7 +172,7 @@ export async function prepareMixin(
     throw new Error('XIN amount must be a positive canonical integer of xinat');
   if (!adapter.utxos)
     throw new Error(
-      'UTXO discovery needs view-key scanning in the core (not wired yet); ' +
+      'UTXO discovery needs a view-key scan (scanMixinOutputs); ' +
         'provide MixinAdapterOptions.utxos to prepare Mixin transfers.',
     );
   const candidates = await adapter.utxos(from);

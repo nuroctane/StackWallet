@@ -403,6 +403,23 @@ pub fn public_key(
     })
 }
 
+/// Which kernel outputs the Mixin account at `path` owns. The private view key
+/// does the matching inside this call and never leaves it.
+pub fn mixin_owned_outputs(
+    vault: &EncryptedVault,
+    wallet_id: &str,
+    path: &str,
+    candidates: &[crate::mixin::CandidateOutput],
+) -> Result<Vec<crate::mixin::OwnedOutput>> {
+    if !path.starts_with("m/44'/2365'/") {
+        return Err(invalid("not a Mixin account path"));
+    }
+    with_mnemonic(vault, wallet_id, |m| {
+        let key = hd::derive(m.to_seed("").as_ref(), Curve::Ed25519, path)?;
+        Ok(crate::mixin::owned_outputs(key.secret(), candidates))
+    })
+}
+
 /// The secret a wallet for that family imports, plus the public key the
 /// account shows. Both halves zeroize on drop.
 struct FamilyKey {

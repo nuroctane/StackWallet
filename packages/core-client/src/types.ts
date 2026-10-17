@@ -1445,6 +1445,22 @@ export const MixinTx = z.strictObject({
   changeSeed: z.string().regex(/^[0-9a-f]{128}$/),
 });
 export type MixinTx = z.infer<typeof MixinTx>;
+/** A kernel output offered to the core's view key: `{index, mask, keys}` as the kernel reports it. */
+export const MixinCandidateOutput = z.strictObject({
+  index: z.number().int().min(0).max(1024),
+  mask: z.string().regex(/^[0-9a-fA-F]{64}$/),
+  keys: z
+    .array(z.string().regex(/^[0-9a-fA-F]{64}$/))
+    .min(1)
+    .max(16),
+});
+export type MixinCandidateOutput = z.infer<typeof MixinCandidateOutput>;
+/** A candidate the account owns: its position in the offered list and the matching ghost key index. */
+export const MixinOwnedOutput = z.strictObject({
+  position: z.number().int().nonnegative(),
+  key: z.number().int().nonnegative(),
+});
+export type MixinOwnedOutput = z.infer<typeof MixinOwnedOutput>;
 const QubicIdentity = z.string().regex(/^[A-Z]{60}$/);
 export const QubicTx = z.strictObject({
   chainId: z.literal('qubic:mainnet'),
