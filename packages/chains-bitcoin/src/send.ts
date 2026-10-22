@@ -1,4 +1,5 @@
-import { Transaction, address, networks } from 'bitcoinjs-lib';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { Transaction } from 'bitcoinjs-lib';
 import { BitcoinTx, type TxIntent } from '@stackwallet/core-client';
 import type { Simulation, TxStatus } from '@stackwallet/chains';
 import { z } from 'zod';
@@ -19,7 +20,7 @@ const Utxos = z
     }),
   )
   .max(10000);
-const Outspend = z.object({ spent: z.boolean() });
+const Outspend = z.object({ spent: z.boolean(), txid: Hash.optional() });
 const Hex = z
   .string()
   .regex(/^(?:[0-9a-f]{2})+$/)
@@ -53,7 +54,7 @@ export async function readBitcoinCoins(
   adapter: BitcoinAdapter,
   from: string,
 ): Promise<BitcoinCoin[]> {
-  if (!isSignetSender(from)) throw new Error('Only Signet P2WPKH senders are enabled');
+  if (!signetSender(from)) throw new Error('Only Signet P2WPKH and P2TR senders are enabled');
   return adapter.withSignet(BITCOIN_SIGNET, async (query) => {
     const coins = await query(`/address/${from}/utxo`, Utxos);
     if (!coins) throw new Error('UTXO endpoint unavailable');
@@ -77,18 +78,40 @@ export function signetRecipient(text: string): {
     return { kind: d.version === 0 ? 'P2WSH' : 'P2TR', dustSats: 330, outputBytes: 43 };
   return null;
 }
-function isSignetSender(text: string): boolean {
+/**
+ * Single keys spend P2WPKH; threshold (FROST) wallets spend a P2TR key path.
+ * The figures mirror the core's fee and change bounds for each.
+ */
+export function signetSender(text: string): {
+  kind: 'P2WPKH' | 'P2TR';
+  inputVbytes: number;
+  changeBytes: number;
+  changeDustSats: number;
+} | null {
   const d = decodeSegwit(text);
-  return (
-    text === text.toLowerCase() && d?.hrp === 'tb' && d.version === 0 && d.program.length === 20
-  );
+  if (text !== text.toLowerCase() || d?.hrp !== 'tb') return null;
+  if (d.version === 0 && d.program.length === 20)
+    return { kind: 'P2WPKH', inputVbytes: 69, changeBytes: 31, changeDustSats: 294 };
+  // 41 non-witness bytes plus a 64-byte signature witness.
+  if (d.version === 1 && d.program.length === 32)
+    return { kind: 'P2TR', inputVbytes: 58, changeBytes: 43, changeDustSats: 330 };
+  return null;
+}
+/**
+ * The sender's scriptPubKey. bitcoinjs needs an ECC library to decode P2TR
+ * addresses, so the witness program is laid out directly.
+ */
+function senderScript(from: string): Uint8Array {
+  const d = decodeSegwit(from);
+  if (!signetSender(from) || !d) throw new Error('Unsupported sender');
+  return Uint8Array.from([d.version === 0 ? 0 : 0x50 + d.version, d.program.length, ...d.program]);
 }
 function funding(input: BitcoinTx['inputs'][number], from: string) {
   const previous = Transaction.fromHex(input.previousTxHex);
   if (previous.getId() !== input.txid || previous.isCoinbase())
     throw new Error('Invalid funding transaction');
   const output = previous.outs[input.vout];
-  if (!output || !BufferlessEqual(output.script, address.toOutputScript(from, networks.testnet)))
+  if (!output || !BufferlessEqual(output.script, senderScript(from)))
     throw new Error('Funding output differs from sender');
   return output.value;
 }
@@ -106,15 +129,18 @@ export async function prepareBitcoin(
   const requestedKeys = requested.inputs?.map((u) => `${u.txid}:${u.vout}`);
   if (requestedKeys && new Set(requestedKeys).size !== requestedKeys.length)
     throw new Error('Duplicate selected input');
+  const sender = signetSender(from);
   if (
     intent.chainId !== BITCOIN_SIGNET ||
     intent.kind !== 'transfer' ||
     intent.asset !== `${BITCOIN_SIGNET}:native` ||
-    !isSignetSender(from) ||
+    !sender ||
     !isSignetRecipient(intent.to) ||
     intent.to === from
   )
-    throw new Error('Only Signet P2WPKH senders and native SegWit/Taproot recipients are enabled');
+    throw new Error(
+      'Only Signet P2WPKH/P2TR senders and native SegWit/Taproot recipients are enabled',
+    );
   const recipient = signetRecipient(intent.to)!;
   if (
     !/^[1-9][0-9]*$/.test(intent.amount) ||
@@ -164,12 +190,19 @@ export async function prepareBitcoin(
       selected.push(input);
       total += value;
       fee =
-        BigInt(11 + 69 * selected.length + 31 + recipient.outputBytes) * BigInt(fees.halfHourFee);
+        BigInt(
+          11 + sender.inputVbytes * selected.length + sender.changeBytes + recipient.outputBytes,
+        ) * BigInt(fees.halfHourFee);
       const change = total - BigInt(intent.amount) - fee;
-      if (!requestedKeys && (change === 0n || change >= 294n)) break;
+      if (!requestedKeys && (change === 0n || change >= BigInt(sender.changeDustSats))) break;
     }
     const change = total - BigInt(intent.amount) - fee;
-    if (!selected.length || change < 0n || (change > 0n && change < 294n) || fee > 100000n)
+    if (
+      !selected.length ||
+      change < 0n ||
+      (change > 0n && change < BigInt(sender.changeDustSats)) ||
+      fee > 100000n
+    )
       throw new Error(
         'Confirmed inputs cannot cover amount, fee and non-dust change within limits',
       );
@@ -201,19 +234,152 @@ export async function prepareBitcoin(
     };
   });
 }
+/**
+ * Build the BIP125 replacement of a broadcast transfer: the same inputs again,
+ * either paying the same recipient with a higher fee (`speedUp`) or sweeping
+ * everything back to the sender (`cancel`). The fee is the larger of the
+ * current rate and the floor BIP125 relay demands (old fee plus 1 sat/vB of
+ * the new size, at a strictly higher rate); the core rechecks all of it.
+ */
+export async function planBitcoinReplacement(
+  adapter: BitcoinAdapter,
+  original: { id: string; hash: string; unsigned: BitcoinTx },
+  mode: 'speedUp' | 'cancel',
+  feeRate?: number,
+): Promise<{ unsigned: BitcoinTx; simulation: Simulation }> {
+  const old = BitcoinTx.parse(original.unsigned);
+  Hash.parse(original.hash);
+  const sender = signetSender(old.from);
+  if (!sender) throw new Error('Only Signet P2WPKH/P2TR transfers can be replaced');
+  const to = mode === 'cancel' ? old.from : old.to;
+  const recipient = signetRecipient(to);
+  if (!recipient) throw new Error('Unsupported recipient');
+  const size = (n: number, outputBytes: number) =>
+    BigInt(11 + sender.inputVbytes * n + sender.changeBytes + outputBytes);
+  const oldSize = size(old.inputs.length, signetRecipient(old.to)!.outputBytes);
+  const newSize = size(old.inputs.length, recipient.outputBytes);
+  return adapter.withSignet(old.chainId, async (query) => {
+    const status = await query(`/tx/${original.hash}/status`, Status);
+    if (!status) throw new Error('Cannot see the original transaction');
+    if (status.confirmed) throw new Error('The original transaction already confirmed');
+    for (const input of old.inputs) {
+      const out = await query(`/tx/${input.txid}/outspend/${input.vout}`, Outspend);
+      if (!out) throw new Error('Cannot verify input spend status');
+      if (out.spent && out.txid !== original.hash)
+        throw new Error('An input was spent by another transaction; refresh its status');
+    }
+    const rate =
+      feeRate ??
+      (
+        await query(
+          '/v1/fees/recommended',
+          z.object({ fastestFee: z.number().int().min(1).max(100) }),
+        )
+      )?.fastestFee;
+    if (rate === undefined) throw new Error('Fee endpoint unavailable');
+    const oldFee = BigInt(old.fee);
+    const floor = [oldFee + newSize, (oldFee * newSize) / oldSize + 1n].reduce((a, b) =>
+      a > b ? a : b,
+    );
+    const fee = newSize * BigInt(rate) > floor ? newSize * BigInt(rate) : floor;
+    if (fee > 100000n || fee > newSize * 100n)
+      throw new Error('The replacement fee would exceed the 100 sat/vB or 100,000 sat limits');
+    const total = old.inputs.reduce((sum, input) => sum + funding(input, old.from), 0n);
+    const amount = mode === 'cancel' ? total - fee : BigInt(old.amount);
+    const change = total - amount - fee;
+    if (amount < BigInt(recipient.dustSats) || change < 0n)
+      throw new Error('The inputs cannot cover a higher fee');
+    if (change > 0n && change < BigInt(sender.changeDustSats))
+      throw new Error('Raising the fee would leave dust change; cancel instead');
+    const unsigned = BitcoinTx.parse({
+      chainId: old.chainId,
+      from: old.from,
+      to,
+      amount: amount.toString(),
+      fee: fee.toString(),
+      replaces: original.id,
+      inputs: old.inputs,
+    });
+    return {
+      unsigned,
+      simulation: {
+        ok: false,
+        assetDeltas: [
+          {
+            assetRef: `${old.chainId}:native`,
+            amount: `-${mode === 'cancel' ? fee : amount + fee}`,
+          },
+        ],
+        fee: { assetRef: `${old.chainId}:native`, amount: fee.toString() },
+        warnings: [
+          {
+            kind: 'other',
+            message:
+              mode === 'cancel'
+                ? `Replaces ${original.hash}: every input returns to the sender minus a ${fee} sat fee. Whichever confirms first settles both.`
+                : `Replaces ${original.hash} with the same payment at a ${fee} sat fee (was ${oldFee}). Whichever confirms first settles both.`,
+          },
+        ],
+        error: 'Bitcoin network simulation is unavailable',
+      },
+    };
+  });
+}
+
+/**
+ * Whether every input is still spendable by `tx`. A replacement's inputs are
+ * already spent by the transaction it replaces (`replacedHash`), which is the
+ * point; a spend by anything else means it can never confirm.
+ */
 export async function bitcoinInputsUnspent(
   adapter: BitcoinAdapter,
   tx: BitcoinTx,
+  replacedHash?: string,
 ): Promise<boolean> {
   return adapter.withSignet(tx.chainId, async (query) => {
     for (const input of tx.inputs) {
       const out = await query(`/tx/${input.txid}/outspend/${input.vout}`, Outspend);
       if (!out) throw new Error('Cannot verify input spend status');
-      if (out.spent) return false;
+      if (out.spent && !(replacedHash !== undefined && out.txid === replacedHash)) return false;
     }
     return true;
   });
 }
+/**
+ * Check a threshold wallet's signed spend with bitcoinjs and noble rather than
+ * the core that produced it: it spends exactly the proposed inputs, in order,
+ * and every input carries one BIP340 signature that verifies against the
+ * sender's output key over its own BIP341 sighash.
+ */
+export function verifyTaprootSpend(tx: BitcoinTx, raw: string): void {
+  if (signetSender(tx.from)?.kind !== 'P2TR') throw new Error('Not a Taproot sender');
+  const sender = senderScript(tx.from);
+  const signed = Transaction.fromHex(raw.replace(/^0x/, ''));
+  if (signed.ins.length !== tx.inputs.length) throw new Error('Signed inputs differ');
+  const scripts: Uint8Array[] = [];
+  const values: bigint[] = [];
+  tx.inputs.forEach((input, i) => {
+    const txin = signed.ins[i]!;
+    const txid = Uint8Array.from(txin.hash).reverse();
+    if (
+      Array.from(txid, (b) => b.toString(16).padStart(2, '0')).join('') !== input.txid ||
+      txin.index !== input.vout
+    )
+      throw new Error('Signed inputs differ');
+    scripts.push(sender);
+    values.push(funding(input, tx.from));
+  });
+  const outputKey = sender.slice(2);
+  signed.ins.forEach((txin, i) => {
+    const [sig, ...rest] = txin.witness;
+    if (!sig || sig.length !== 64 || rest.length)
+      throw new Error(`Input ${i} lacks a key-path signature`);
+    const digest = signed.hashForWitnessV1(i, scripts, values, Transaction.SIGHASH_DEFAULT);
+    if (!schnorr.verify(sig, digest, outputKey))
+      throw new Error(`Input ${i} signature does not verify`);
+  });
+}
+
 export async function broadcastBitcoin(
   adapter: BitcoinAdapter,
   tx: BitcoinTx,
@@ -221,6 +387,7 @@ export async function broadcastBitcoin(
 ): Promise<string> {
   if (!/^0x(?:[0-9a-f]{2})+$/.test(raw) || raw.length > 20000)
     throw new Error('Invalid core transaction bytes');
+  if (signetSender(tx.from)?.kind === 'P2TR') verifyTaprootSpend(tx, raw);
   return adapter.withSignet(tx.chainId, async (query) => {
     const hash = await query('/tx', Hash, true, raw.slice(2));
     if (!hash) throw new Error('Broadcast returned no hash');

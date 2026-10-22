@@ -1,5 +1,7 @@
-//! Intent-bound Signet P2WPKH sends. Funding transactions bind each input's
-//! amount and script; the core constructs the PSBT and all signing digests.
+//! Intent-bound Signet sends. Funding transactions bind each input's amount and
+//! script; the core constructs the PSBT and all signing digests. Single keys
+//! spend P2WPKH; threshold (FROST secp256k1-tr) wallets spend P2TR key paths,
+//! one BIP341 sighash per input, signed together in one ceremony.
 use crate::{
     evm,
     intent::{TxIntent, TxIntentKind},
@@ -9,8 +11,10 @@ use bitcoin::{
     absolute,
     consensus::{deserialize, serialize},
     hashes::Hash,
+    key::TweakedPublicKey,
     psbt::Psbt,
-    sighash::{EcdsaSighashType, SighashCache},
+    secp256k1::{schnorr, Message, Secp256k1, XOnlyPublicKey},
+    sighash::{EcdsaSighashType, Prevouts, SighashCache, TapSighashType},
     transaction::Version,
     Address, Amount, CompressedPublicKey, Network, OutPoint, ScriptBuf, Sequence, Transaction,
     TxIn, TxOut, Witness,
@@ -48,7 +52,7 @@ fn script(address: &str, recipient: bool) -> Result<ScriptBuf> {
         .map_err(|_| invalid("wrong address network"))?;
     let script = checked.script_pubkey();
     if checked.to_string() != address
-        || !(script.is_p2wpkh() || (recipient && (script.is_p2wsh() || script.is_p2tr())))
+        || !(script.is_p2wpkh() || script.is_p2tr() || (recipient && script.is_p2wsh()))
     {
         return Err(invalid("unsupported or non-canonical Signet address"));
     }
@@ -58,6 +62,41 @@ pub fn address(public: &[u8]) -> Result<String> {
     let key =
         CompressedPublicKey::from_slice(public).map_err(|_| invalid("invalid compressed key"))?;
     Ok(Address::p2wpkh(&key, Network::Signet).to_string())
+}
+/// The P2TR address of a FROST secp256k1-tr group. frost applies the BIP341
+/// unspendable-script-path tweak at DKG, so the group key already is the
+/// output key `Q` and is used as is.
+pub fn taproot_address(output_key_xonly: &[u8]) -> Result<String> {
+    let key = XOnlyPublicKey::from_slice(output_key_xonly)
+        .map_err(|_| invalid("invalid x-only output key"))?;
+    Ok(Address::p2tr_tweaked(
+        TweakedPublicKey::dangerous_assume_tweaked(key),
+        Network::Signet,
+    )
+    .to_string())
+}
+/// Size and dust figures for the sender's own script, so fee bounds and change
+/// limits follow what the inputs and change output actually weigh.
+struct SenderShape {
+    input_vbytes: u64,
+    change_bytes: u64,
+    change_dust: u64,
+}
+fn sender_shape(from: &ScriptBuf) -> SenderShape {
+    if from.is_p2tr() {
+        // 41 non-witness bytes plus a 64-byte signature witness (66 WU / 4).
+        SenderShape {
+            input_vbytes: 58,
+            change_bytes: 43,
+            change_dust: 330,
+        }
+    } else {
+        SenderShape {
+            input_vbytes: 69,
+            change_bytes: 31,
+            change_dust: 294,
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -75,23 +114,50 @@ pub struct BitcoinTx {
     pub amount: String,
     pub fee: String,
     pub inputs: Vec<BitcoinInput>,
+    /// The ledger id of a broadcast transaction this one replaces (BIP125).
+    /// Absent on ordinary sends, so their serialization is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaces: Option<String>,
 }
 impl BitcoinTx {
+    /// Upper bound on the virtual size, the figure every fee bound uses.
+    fn max_vsize(&self) -> Result<u64> {
+        let from = script(&self.from, false)?;
+        let to = script(&self.to, true)?;
+        let shape = sender_shape(&from);
+        Ok(11
+            + shape.input_vbytes * self.inputs.len() as u64
+            + shape.change_bytes
+            + 9
+            + to.len() as u64)
+    }
     pub fn psbt(&self) -> Result<Psbt> {
         check_chain(&self.chain_id)?;
         let from = script(&self.from, false)?;
         let to = script(&self.to, true)?;
-        if from == to {
+        // Paying the sender back is only a cancel: it must replace something
+        // and sweep everything into that one output.
+        let cancel = from == to;
+        if cancel && self.replaces.is_none() {
             return Err(invalid("sender and recipient must differ"));
+        }
+        if self
+            .replaces
+            .as_ref()
+            .is_some_and(|r| r.is_empty() || r.len() > 128)
+        {
+            return Err(invalid("bad replaced transaction id"));
         }
         if self.inputs.is_empty() || self.inputs.len() > 8 {
             return Err(invalid("expected one to eight inputs"));
         }
         let amount = number(&self.amount)?;
         let fee = number(&self.fee)?;
+        let shape = sender_shape(&from);
+        let taproot = from.is_p2tr();
         let recipient_bytes = 9 + to.len() as u64;
         let dust = 3 * (recipient_bytes + 67);
-        let max_size = 11 + 69 * self.inputs.len() as u64 + 31 + recipient_bytes;
+        let max_size = self.max_vsize()?;
         if amount < dust || fee == 0 || fee > 100_000 || fee > max_size * 100 {
             return Err(invalid("dust amount or excessive fee"));
         }
@@ -132,8 +198,11 @@ impl BitcoinTx {
             .checked_sub(amount)
             .and_then(|n| n.checked_sub(fee))
             .ok_or_else(|| invalid("inputs do not cover amount and fee"))?;
-        if change > 0 && change < 294 {
+        if change > 0 && change < shape.change_dust {
             return Err(invalid("dust change; select different inputs or amount"));
+        }
+        if cancel && change > 0 {
+            return Err(invalid("a cancel sweeps every input back in one output"));
         }
         let mut output = vec![TxOut {
             value: Amount::from_sat(amount),
@@ -166,9 +235,114 @@ impl BitcoinTx {
         let mut psbt = Psbt::from_unsigned_tx(tx).map_err(|_| invalid("invalid PSBT"))?;
         for (input, output) in psbt.inputs.iter_mut().zip(funding) {
             input.witness_utxo = Some(output);
-            input.sighash_type = Some(EcdsaSighashType::All.into());
+            input.sighash_type = Some(if taproot {
+                TapSighashType::Default.into()
+            } else {
+                EcdsaSighashType::All.into()
+            });
         }
         Ok(psbt)
+    }
+    /// BIP125 against the transaction being replaced: same sender and chain,
+    /// every original input spent again (so at most one of them can confirm),
+    /// a strictly higher fee rate, and an absolute fee that also pays the
+    /// default 1 sat/vB incremental relay fee for the replacement's own size.
+    pub fn check_replaces(&self, original: &BitcoinTx) -> Result<()> {
+        self.psbt()?;
+        original.psbt()?;
+        if self.chain_id != original.chain_id || self.from != original.from {
+            return Err(invalid("a replacement must spend from the same sender"));
+        }
+        let mine: HashSet<_> = self.inputs.iter().map(|i| (&i.txid, i.vout)).collect();
+        if !original
+            .inputs
+            .iter()
+            .all(|i| mine.contains(&(&i.txid, i.vout)))
+        {
+            return Err(invalid("a replacement must spend every original input"));
+        }
+        let (fee, old) = (number(&self.fee)?, number(&original.fee)?);
+        let (size, old_size) = (self.max_vsize()?, original.max_vsize()?);
+        if fee < old.saturating_add(size)
+            || u128::from(fee) * u128::from(old_size) <= u128::from(old) * u128::from(size)
+        {
+            return Err(invalid(
+                "a replacement must raise the fee rate and pay at least 1 sat/vB more",
+            ));
+        }
+        Ok(())
+    }
+    /// Whether the sender is a P2TR key path, i.e. a threshold group.
+    pub fn is_taproot(&self) -> Result<bool> {
+        Ok(script(&self.from, false)?.is_p2tr())
+    }
+    /// The bytes a threshold ceremony is bound to: this transaction as the core
+    /// serializes it. Co-signers decode it with [`BitcoinTx::from_payload`] and
+    /// rebuild every digest themselves.
+    pub fn payload(&self) -> Result<Vec<u8>> {
+        serde_json::to_vec(self).map_err(|_| invalid("unserializable transaction"))
+    }
+    pub fn from_payload(bytes: &[u8]) -> Result<Self> {
+        let tx: Self =
+            serde_json::from_slice(bytes).map_err(|_| invalid("payload is not a transfer"))?;
+        if tx.payload()? != bytes {
+            return Err(invalid("non-canonical payload"));
+        }
+        tx.psbt()?;
+        Ok(tx)
+    }
+    /// One BIP341 key-path sighash (SIGHASH_DEFAULT) per input, in input order.
+    pub fn taproot_sighashes(&self) -> Result<Vec<[u8; 32]>> {
+        if !self.is_taproot()? {
+            return Err(invalid("only a P2TR sender signs with Schnorr"));
+        }
+        let psbt = self.psbt()?;
+        let prevouts: Vec<TxOut> = psbt
+            .inputs
+            .iter()
+            .map(|i| i.witness_utxo.clone().expect("core PSBT funding"))
+            .collect();
+        let mut cache = SighashCache::new(&psbt.unsigned_tx);
+        (0..prevouts.len())
+            .map(|i| {
+                cache
+                    .taproot_key_spend_signature_hash(
+                        i,
+                        &Prevouts::All(&prevouts),
+                        TapSighashType::Default,
+                    )
+                    .map(|h| h.to_byte_array())
+                    .map_err(|_| invalid("invalid taproot sighash"))
+            })
+            .collect()
+    }
+    /// Finalize a P2TR spend from the ceremony's signatures (64 bytes per
+    /// input, concatenated). Each is verified as BIP340 against the sender's
+    /// output key over the core's own sighash before it goes into a witness.
+    pub fn assemble_taproot(&self, signatures: &[u8]) -> Result<(String, String)> {
+        let digests = self.taproot_sighashes()?;
+        if signatures.len() != 64 * digests.len() {
+            return Err(invalid("expected one 64-byte signature per input"));
+        }
+        let from = script(&self.from, false)?;
+        let key = XOnlyPublicKey::from_slice(&from.as_bytes()[2..])
+            .map_err(|_| invalid("invalid sender output key"))?;
+        let secp = Secp256k1::verification_only();
+        let mut psbt = self.psbt()?;
+        for (i, (digest, sig)) in digests.iter().zip(signatures.chunks(64)).enumerate() {
+            let sig =
+                schnorr::Signature::from_slice(sig).map_err(|_| invalid("malformed signature"))?;
+            secp.verify_schnorr(&sig, &Message::from_digest(*digest), &key)
+                .map_err(|_| invalid(format!("input {i} signature does not verify")))?;
+            psbt.inputs[i].final_script_witness = Some(Witness::from_slice(&[sig.as_ref()]));
+        }
+        let tx = psbt
+            .extract_tx()
+            .map_err(|_| invalid("PSBT finalization failed"))?;
+        Ok((
+            format!("0x{}", hex::encode(serialize(&tx))),
+            tx.compute_txid().to_string(),
+        ))
     }
     pub fn check_matches_intent(&self, intent: &TxIntent) -> Result<()> {
         self.psbt()?;
@@ -224,6 +398,38 @@ impl BitcoinTx {
     }
 }
 
+/// One funding transaction per value, each paying `to`.
+#[cfg(test)]
+pub(crate) fn funding(to: &str, values: &[u64]) -> Vec<BitcoinInput> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(i, value)| {
+            let previous = Transaction {
+                version: Version::TWO,
+                lock_time: absolute::LockTime::ZERO,
+                input: vec![TxIn {
+                    previous_output: OutPoint {
+                        txid: bitcoin::Txid::from_byte_array([i as u8 + 1; 32]),
+                        vout: 0,
+                    },
+                    script_sig: ScriptBuf::new(),
+                    sequence: Sequence::MAX,
+                    witness: Witness::new(),
+                }],
+                output: vec![TxOut {
+                    value: Amount::from_sat(*value),
+                    script_pubkey: script(to, false).unwrap(),
+                }],
+            };
+            BitcoinInput {
+                txid: previous.compute_txid().to_string(),
+                vout: 0,
+                previous_tx_hex: hex::encode(serialize(&previous)),
+            }
+        })
+        .collect()
+}
 #[cfg(test)]
 pub(crate) fn fixture(public: &[u8]) -> BitcoinTx {
     let from = address(public).unwrap();
@@ -246,6 +452,7 @@ pub(crate) fn fixture(public: &[u8]) -> BitcoinTx {
         }],
     };
     BitcoinTx {
+        replaces: None,
         chain_id: SIGNET.into(),
         from,
         to: address(recipient.verifying_key().to_encoded_point(true).as_bytes()).unwrap(),
@@ -335,6 +542,44 @@ mod tests {
             .unwrap();
         assert!(tx.sign(&[3; 32]).is_err());
     }
+    #[test]
+    fn taproot_senders_use_their_own_size_and_dust_bounds() {
+        let g = hex::decode("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798");
+        let from = taproot_address(&g.unwrap()).unwrap();
+        assert!(taproot_address(&[0x79; 32]).is_err());
+        assert!(from.starts_with("tb1p"));
+        let key = k256::ecdsa::SigningKey::from_bytes((&[2u8; 32]).into()).unwrap();
+        let mut tx = BitcoinTx {
+            replaces: None,
+            chain_id: SIGNET.into(),
+            from: from.clone(),
+            to: address(key.verifying_key().to_encoded_point(true).as_bytes()).unwrap(),
+            amount: "50000".into(),
+            fee: "500".into(),
+            inputs: funding(&from, &[80_000]),
+        };
+        assert!(tx.is_taproot().unwrap());
+        assert_eq!(tx.taproot_sighashes().unwrap().len(), 1);
+        // 11 + 58 + 43 change + 31 recipient = 143 vB at the 100 sat/vB cap.
+        tx.fee = "14300".into();
+        assert!(tx.psbt().is_ok());
+        tx.fee = "14301".into();
+        assert!(tx.psbt().is_err());
+        // P2TR change below 330 sats is dust.
+        tx.fee = "500".into();
+        tx.amount = "79171".into();
+        assert!(tx.psbt().is_err());
+        tx.amount = "79170".into();
+        assert!(tx.psbt().is_ok());
+        // A single key never signs for a Taproot sender, and a P2WPKH sender
+        // has no Schnorr path.
+        assert!(tx.sign(&[1; 32]).is_err());
+        let p2wpkh = fixture(key.verifying_key().to_encoded_point(true).as_bytes());
+        assert!(p2wpkh.taproot_sighashes().is_err());
+        assert!(tx.assemble_taproot(&[0; 64]).is_err());
+        assert!(tx.assemble_taproot(&[0; 63]).is_err());
+    }
+
     #[test]
     fn funding_hidden_outputs_and_fee_bounds_are_not_trusted() {
         let key = k256::ecdsa::SigningKey::from_bytes((&[1u8; 32]).into()).unwrap();

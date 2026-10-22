@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use stackwallet_core::audit::{Actor, AuditEvent};
-use stackwallet_core::identity::SignedCeremonyMessage;
+use stackwallet_core::identity::{self, SignedCeremonyMessage};
 use stackwallet_core::intent::{SignRequest, Signature};
 use stackwallet_core::model::{Curve, KeyGroup, PartyRef, PartyRole, PublicKey};
 use stackwallet_core::store::{Device, KeyGroupRecord};
@@ -257,6 +257,55 @@ fn identities_of(
         .filter(|p| p.as_str() != self_id)
         .map(|p| pinned(opened, p).map(|d| (p.clone(), d.identity_pub_hex)))
         .collect()
+}
+
+/// The pinned Noise static key of every other participant, which addressed
+/// protocol bodies are sealed to and opened from.
+fn statics_of(
+    opened: &Opened,
+    participants: &[String],
+    self_id: &str,
+) -> Result<BTreeMap<String, String>, String> {
+    participants
+        .iter()
+        .filter(|p| p.as_str() != self_id)
+        .map(|p| pinned(opened, p).map(|d| (p.clone(), d.noise_static_hex)))
+        .collect()
+}
+
+/// Sign an outgoing message, sealing its body first when it is addressed: in
+/// a star the hub carries traffic between two other parties, and a DKG round
+/// 2 body it could read would hand it the sender's polynomial.
+fn sign_out(
+    opened: &Opened,
+    statics: &BTreeMap<String, String>,
+    msg: CeremonyMessage,
+) -> Result<SignedCeremonyMessage, String> {
+    let msg = match &msg.to_device_id {
+        Some(to) if identity::is_sealed(&msg) => {
+            let key = statics
+                .get(to)
+                .ok_or_else(|| format!("no pinned key to seal a message for `{to}`"))?;
+            identity::seal_for(&opened.identity, key, msg).map_err(fmt_err)?
+        }
+        _ => msg,
+    };
+    Ok(SignedCeremonyMessage::sign(&opened.identity, msg))
+}
+
+/// Open an admitted message addressed to this device before its body is used.
+fn open_in(
+    opened: &Opened,
+    statics: &BTreeMap<String, String>,
+    msg: CeremonyMessage,
+) -> Result<CeremonyMessage, String> {
+    if !identity::is_sealed(&msg) {
+        return Ok(msg);
+    }
+    let key = statics
+        .get(&msg.from_device_id)
+        .ok_or_else(|| format!("no pinned key for `{}`", msg.from_device_id))?;
+    identity::open_from(&opened.identity, key, msg).map_err(fmt_err)
 }
 
 /// Admit one envelope that arrived over the network, direct or relayed, to
@@ -514,6 +563,10 @@ fn hub_ceremony(
         .iter()
         .map(|p| (p.device.id.clone(), p.device.identity_pub_hex.clone()))
         .collect();
+    let statics: BTreeMap<String, String> = peers
+        .iter()
+        .map(|p| (p.device.id.clone(), p.device.noise_static_hex.clone()))
+        .collect();
 
     for peer in peers.iter() {
         let msg = proposal.to_message(&self_id, &peer.device.id)?;
@@ -542,7 +595,7 @@ fn hub_ceremony(
         // Anything the local party produced is signed here; anything relayed
         // keeps the author's signature untouched.
         for msg in outbox.drain(..) {
-            let signed = SignedCeremonyMessage::sign(&opened.identity, msg);
+            let signed = sign_out(opened, &statics, msg)?;
             forward(hub, peers, &signed)?;
         }
         if party.state() == CeremonyState::Complete && peers.iter().all(|p| p.done) {
@@ -565,7 +618,8 @@ fn hub_ceremony(
                     .as_ref()
                     .is_none_or(|to| *to == self_id);
                 if for_us {
-                    outbox.extend(handle_locally(party, &session, signed.msg)?);
+                    let msg = open_in(opened, &statics, signed.msg)?;
+                    outbox.extend(handle_locally(party, &session, msg)?);
                 }
             }
             SessionEvent::Relayed(signed) => {
@@ -871,10 +925,11 @@ fn party_ceremony(
         let blob = load_share_at(opened, &share_label(&request.key_group_id, request.curve))?;
         party.import_share(&blob).map_err(fmt_err)?;
     }
+    let statics = statics_of(opened, &session.participants, &self_id)?;
     let mut outbox = proposal.start(party.as_mut())?;
     loop {
         for msg in outbox.drain(..) {
-            let signed = SignedCeremonyMessage::sign(&opened.identity, msg);
+            let signed = sign_out(opened, &statics, msg)?;
             hub.send(conn, Frame::Ceremony(signed))?;
         }
         if party.state() == CeremonyState::Complete {
@@ -897,7 +952,8 @@ fn party_ceremony(
                         ));
                     }
                 }
-                outbox.extend(handle_locally(party.as_mut(), &session, signed.msg)?);
+                let msg = open_in(opened, &statics, signed.msg)?;
+                outbox.extend(handle_locally(party.as_mut(), &session, msg)?);
             }
             SessionEvent::Closed { reason } => {
                 return Err(format!("initiator left: {reason}"));

@@ -139,12 +139,14 @@ field arithmetic in `packages/chains/src/keys.ts`, so no curve library is needed
 - Reads use the mempool.space REST shape (`/address/{addr}`, `/tx/{hash}/status`). Dogecoin
   ships with no default endpoint; the user supplies one.
 - PSBT throughout; coin control; RBF enabled by default; fee estimation from mempool.space.
-- One `SignRequest` per input. Taproot key-path spends use BIP340 sighash with the tweaked key;
-  the FROST implementation applies the taproot tweak to the group key.
+- Taproot key-path spends take one `SignRequest` per transaction whose payload is the core's
+  serialized transaction; each party's core derives one BIP341 SIGHASH_DEFAULT digest per input
+  and the ceremony signs them together. The FROST implementation applies the taproot tweak to
+  the group key at DKG, so the group key is the output key.
 - Status via Electrum subscriptions or mempool.space polling.
 
-Current Bitcoin send coverage uses single-key P2WPKH inputs on Signet only, with canonical
-P2WPKH, P2WSH or P2TR recipient outputs. The endpoint's full
+Current Bitcoin send coverage is Signet only: single-key P2WPKH inputs, or a shared wallet's
+P2TR key-path inputs, with canonical P2WPKH, P2WSH or P2TR recipient outputs. The endpoint's full
 genesis hash is checked before dependent reads. Preparation selects up to eight confirmed UTXOs
 automatically or uses the exact confirmed outpoints chosen in coin control. Manual selection
 never adds or substitutes an input; stale, spent, insufficient or dust-producing selections fail.
@@ -154,8 +156,9 @@ its transaction ID, output script and value, rejects coinbase funding, duplicate
 and excessive fees, and constructs a PSBT with SIGHASH_ALL. Only one recipient and optional
 change to the same sender are produced. The fee rate preview accepts 1–100 sat/vbyte and total
 fees are capped at 100,000 sats. The estimate includes the recipient script's actual output size.
-Sender and change remain canonical `tb1` P2WPKH addresses (294 sats minimum); P2WSH and P2TR
-recipients require 330 sats. Unknown witness versions and legacy outputs are refused.
+A single-key sender and its change are canonical `tb1q` P2WPKH (69 vB per input, 294-sat change
+minimum); a shared wallet's sender and change are its `tb1p` group address (58 vB per input,
+330-sat change minimum). P2WSH and P2TR recipients require 330 sats. Unknown witness versions and legacy outputs are refused.
 These dust bounds follow [Bitcoin Core's default dust policy](https://github.com/bitcoin/bitcoin/blob/master/src/policy/policy.cpp).
 Keys remain in the vault.
 
@@ -164,9 +167,12 @@ Local funding validation is not network simulation. The simulation flag is false
 be observed unspent; active proposals reserve inputs in the core. Broadcast errors and absent
 index entries remain pending under the core transaction ID, with no automatic resend, expiry
 or release of spend reservations. Restart resumes tracking. Six observed confirmations are
-required; RPC observations are not chain proofs. RBF is signaled but replacement is not
-implemented. Funded Signet confirmation, Taproot input signing, threshold signing,
-mainnet and other Bitcoin-family sends remain outside this increment.
+required; RPC observations are not chain proofs. A stuck transfer can be replaced under BIP125
+(Speed up / Cancel on the transaction): `planBitcoinReplacement` reuses exactly the original
+inputs and takes the larger of the market rate and the BIP125 floor (old fee plus 1 sat/vB of
+the new size, at a strictly higher rate); the core holds the replacement to the same rules.
+Funded Signet confirmation is opt-in and not yet run; single-key Taproot inputs, mainnet and
+other Bitcoin-family sends remain outside this increment.
 
 ### Solana (`chains-solana`, @solana/kit)
 
@@ -620,19 +626,20 @@ Qubic has no mempool view, so a broadcast transfer is `unknown` until its tick.
 
 ### Threshold signing coverage
 
-Shared (`tss`) wallets sign exactly one thing today: a native SOL transfer from the FROST
-Ed25519 group address on Solana Devnet. The ledger's `begin_threshold` and `complete_threshold`
-match `UnsignedTx::Solana` only, the stored `ThresholdAccount` carries a single `solana_address`,
-and the co-signer's core re-derives the message with Solana's `message()`/`assemble()`. Every
-other family answers "threshold signing is Solana only" and proposes from local keys. What it
-would take to widen this, by group:
+Shared (`tss`) wallets sign two things today, one per FROST curve: a native SOL transfer from
+the Ed25519 group address on Solana Devnet, and a Signet spend from the secp256k1-tr group's
+P2TR address. A wallet holds one curve. `ThresholdAccount` carries that curve, its chain and the
+group key as that chain's address; the ledger's `begin_threshold` and `complete_threshold` match
+`UnsignedTx::Solana` and P2TR `UnsignedTx::Bitcoin` (`threshold_payload` picks the bound bytes),
+and the co-signer's core decodes the payload per curve. Every other family is refused as a
+threshold signer and proposes from local keys. What it would take to widen this, by group:
 
 - **Plain Ed25519 chains** (Substrate, Stellar, Aptos, Sui, NEAR, Algorand, TON, MultiversX,
   Everscale, Aeternity, Starcoin, Tezos `edpk`, Namada) verify an ordinary Ed25519 signature
   over the bytes the family already hashes, so a FROST group key is a valid account key. Each
-  needs a per-family group-address derivation stored beside `solana_address`, a `message()` /
-  `assemble()` arm in the threshold driver, and the co-signer's byte-for-byte intent
-  reconstruction extended to that family's `UnsignedTx`. No new cryptography.
+  needs a per-family group-address derivation in `account_of`, a payload / `assemble()` arm in
+  the threshold driver, and the co-signer's byte-for-byte intent reconstruction extended to that
+  family's `UnsignedTx`. No new cryptography.
 - **Cardano** verifies plain Ed25519 too, but a base address binds a payment key and a stake
   key; a threshold account would need either two group keys or an enterprise (stake-less)
   address, which is a product decision before it is code.
@@ -643,15 +650,16 @@ would take to widen this, by group:
   Hyperliquid, ICON, ICP, Ergo, Alephium, Fuel, aelf, Obyte, Chromia, Keeta, Bitcoin forks,
   Gala, Bitcoin P2WPKH) wait on CGGMP21. The maintained `cggmp21` crate links GMP and the
   pure-Rust `cggmp24` is alpha, so no ECDSA threshold ceremony is wired (SPEC §5.1). Bitcoin
-  P2TR is FROST secp256k1-tr and is the next tractable target once the Taproot input path is
-  verified against Signet.
+  P2TR is FROST secp256k1-tr and is wired; Bitcoin-fork Taproot (LTC) would reuse it with the
+  fork's own address and network checks.
 - **Not threshold-capable at all**: Waves (hash-and-clamp Curve25519 "axolotl" signatures),
   Mixin (kernel Schnorr over spend/view keys), Qubic (FourQ/SchnorrQ), Chia (BLS12-381), NEO
   (P-256), Starknet (STARK curve, a secp256k1 seed only feeds grinding). A FROST group key is
   not a valid key under any of these schemes, so the wallet keeps them local-key only.
 
-No re-sharing, no refresh and no 2-of-3 yet; losing either paired device loses the wallet,
-which is why shared wallets stay gated to a testnet.
+Groups are t-of-n over two to five devices, and shares can be refreshed in place (SPEC §5.1).
+There is no re-sharing yet: a t-of-n wallet survives losing n−t devices but cannot replace one,
+which is one reason shared wallets stay gated to a testnet.
 
 ### Read-only families
 

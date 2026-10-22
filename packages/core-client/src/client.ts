@@ -14,6 +14,7 @@ import {
   CeremonySession,
   SignRequest,
   CosignSummary,
+  ShareFingerprint,
   ThresholdAccount,
   Curve,
   Decision,
@@ -105,6 +106,10 @@ export interface VaultHandle {
   createIdentity(label: string): Promise<IdentityInfo>;
   identityInfo(label: string): Promise<IdentityInfo>;
   identity(label: string): Promise<IdentityHandle>;
+  /** Open a verified message addressed to this device (sealed bodies only). */
+  openCeremonyMessage(label: string, msg: CeremonyMessage): Promise<CeremonyMessage>;
+  /** Verify a relayed envelope against this vault's pinned author; returns its message. */
+  admitRelayed(signed: SignedCeremonyMessage): Promise<CeremonyMessage>;
   signCeremonyMessage(label: string, msg: CeremonyMessage): Promise<SignedCeremonyMessage>;
   /** The pinned device table sealed in the vault, validated by the core; empty if none. */
   devices(): Promise<Device[]>;
@@ -218,6 +223,27 @@ export interface VaultHandle {
     proposerDeviceId: string;
     nowMs: number;
   }): Promise<ThresholdDriverHandle>;
+  /** Start or join a share refresh; the group key must come out unchanged. */
+  thresholdRefresh(req: {
+    session: SessionProof;
+    ceremony: CeremonySession;
+    nowMs: number;
+  }): Promise<ThresholdDriverHandle>;
+  /** The refresh session (every party, bound to the group key) for a wallet held here. */
+  thresholdRefreshSession(walletId: string, id: string, nowMs: number): Promise<CeremonySession>;
+  /** Which share generation this device holds (public data; safe to send to the peer). */
+  thresholdShareFingerprint(walletId: string): Promise<ShareFingerprint>;
+  /**
+   * Settle a pending refresh against every other party's current fingerprint:
+   * commit if all hold the new share, roll back if one still holds the old one.
+   */
+  thresholdReconcileRefresh(
+    session: SessionProof,
+    walletId: string,
+    peerCurrents: string[],
+    deviceId: string,
+    nowMs: number,
+  ): Promise<'inSync' | 'committed' | 'rolledBack'>;
   /** Threshold approval, first half: `request` is null when policy refused at signing time. */
   txBeginThreshold(
     txId: string,
@@ -302,6 +328,8 @@ export interface ThresholdDriverHandle {
   complete(): Promise<boolean>;
   signatureHex(): Promise<string | null>;
   finishKeygen(vault: VaultHandle, nowMs: number): Promise<ThresholdAccount>;
+  /** Seal the refreshed share beside the previous one until commit or rollback. */
+  finishRefresh(vault: VaultHandle, nowMs: number): Promise<ThresholdAccount>;
   auditEnd(vault: VaultHandle, aborted: string | null, nowMs: number): Promise<void>;
   free(): void;
 }
@@ -396,6 +424,8 @@ export interface WasmVaultObject {
   identity_info(label: string): string;
   identity(label: string): WasmIdentityObject;
   sign_ceremony_message(label: string, msgJson: string): string;
+  open_ceremony_message(label: string, msgJson: string): string;
+  admit_relayed(signedJson: string): string;
   devices_json(): string;
   set_devices_json(devicesJson: string): void;
   create_single(walletId: string, nowMs: number): void;
@@ -490,6 +520,24 @@ export interface WasmVaultObject {
     proposerDeviceId: string,
     nowMs: number,
   ): WasmThresholdDriverObject;
+  threshold_refresh(
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    sessionJson: string,
+    nowMs: number,
+  ): WasmThresholdDriverObject;
+  threshold_refresh_session(walletId: string, sessionId: string, nowMs: number): string;
+  threshold_share_fingerprint(walletId: string): string;
+  threshold_reconcile_refresh(
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    walletId: string,
+    peerCurrentsJson: string,
+    deviceId: string,
+    nowMs: number,
+  ): string;
   tx_begin_threshold(
     txId: string,
     sessionSlot: string | undefined,
@@ -659,6 +707,7 @@ interface WasmThresholdDriverObject {
   complete(): boolean;
   signature_hex(): string | undefined;
   finish_keygen(vault: WasmVaultObject, nowMs: number): string;
+  finish_refresh(vault: WasmVaultObject, nowMs: number): string;
   audit_end(vault: WasmVaultObject, aborted: string | undefined, nowMs: number): void;
   free(): void;
 }
@@ -689,6 +738,9 @@ class WasmThresholdDriver implements ThresholdDriverHandle {
   }
   async finishKeygen(vault: VaultHandle, nowMs: number) {
     return ThresholdAccount.parse(JSON.parse(this.raw.finish_keygen(rawVault(vault), nowMs)));
+  }
+  async finishRefresh(vault: VaultHandle, nowMs: number) {
+    return ThresholdAccount.parse(JSON.parse(this.raw.finish_refresh(rawVault(vault), nowMs)));
   }
   async auditEnd(vault: VaultHandle, aborted: string | null, nowMs: number) {
     this.raw.audit_end(rawVault(vault), aborted ?? undefined, nowMs);
@@ -742,6 +794,16 @@ class WasmVaultHandle implements VaultHandle {
   async signCeremonyMessage(label: string, msg: CeremonyMessage) {
     const out = this.raw.sign_ceremony_message(label, JSON.stringify(CeremonyMessage.parse(msg)));
     return SignedCeremonyMessage.parse(JSON.parse(out));
+  }
+  async openCeremonyMessage(label: string, msg: CeremonyMessage) {
+    return CeremonyMessage.parse(
+      JSON.parse(this.raw.open_ceremony_message(label, JSON.stringify(CeremonyMessage.parse(msg)))),
+    );
+  }
+  async admitRelayed(signed: SignedCeremonyMessage) {
+    return CeremonyMessage.parse(
+      JSON.parse(this.raw.admit_relayed(JSON.stringify(SignedCeremonyMessage.parse(signed)))),
+    );
   }
   async devices() {
     return Device.array().parse(JSON.parse(this.raw.devices_json()));
@@ -939,6 +1001,42 @@ class WasmVaultHandle implements VaultHandle {
         req.nowMs,
       ),
     );
+  }
+  async thresholdRefresh(req: { session: SessionProof; ceremony: CeremonySession; nowMs: number }) {
+    const [slot, secret, device] = sessionArgs(req.session);
+    return new WasmThresholdDriver(
+      this.raw.threshold_refresh(slot, secret, device, JSON.stringify(req.ceremony), req.nowMs),
+    );
+  }
+  async thresholdRefreshSession(walletId: string, id: string, nowMs: number) {
+    return CeremonySession.parse(
+      JSON.parse(this.raw.threshold_refresh_session(walletId, id, nowMs)),
+    );
+  }
+  async thresholdShareFingerprint(walletId: string) {
+    return ShareFingerprint.parse(JSON.parse(this.raw.threshold_share_fingerprint(walletId)));
+  }
+  async thresholdReconcileRefresh(
+    session: SessionProof,
+    walletId: string,
+    peerCurrents: string[],
+    deviceId: string,
+    nowMs: number,
+  ) {
+    const [slot, secret, device] = sessionArgs(session);
+    return z
+      .enum(['inSync', 'committed', 'rolledBack'])
+      .parse(
+        this.raw.threshold_reconcile_refresh(
+          slot,
+          secret,
+          device,
+          walletId,
+          JSON.stringify(peerCurrents),
+          deviceId,
+          nowMs,
+        ),
+      );
   }
   async txBeginThreshold(txId: string, session: SessionProof, deviceId: string, nowMs: number) {
     const [slot, secret, device] = sessionArgs(session);

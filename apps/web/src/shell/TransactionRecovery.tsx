@@ -18,12 +18,15 @@ export function TransactionRecovery({ tx }: { tx: TxRecord }) {
   if (!['signed', 'broadcast', 'pending'].includes(tx.state) || !tx.hash || !tx.rawSignedHex)
     return null;
   const account = accounts.find((a) => a.id === tx.intent.accountId);
-  const replaceable =
-    account?.family === 'evm' &&
-    ['broadcast', 'pending'].includes(tx.state) &&
-    tx.unsigned !== null &&
-    tx.unsigned !== undefined &&
-    'maxFeePerGas' in tx.unsigned;
+  const pendingOnChain = ['broadcast', 'pending'].includes(tx.state) && !!tx.unsigned;
+  const evm = account?.family === 'evm' && pendingOnChain && 'maxFeePerGas' in tx.unsigned!;
+  const bitcoin =
+    account?.family === 'bitcoin' &&
+    pendingOnChain &&
+    'inputs' in tx.unsigned! &&
+    'fee' in tx.unsigned! &&
+    tx.intent.chainId.startsWith('bip122:');
+  const replaceable = evm || bitcoin;
   const replace = async (mode: 'speedUp' | 'cancel') => {
     if (!account) return;
     setWorking(true);
@@ -34,7 +37,7 @@ export function TransactionRecovery({ tx }: { tx: TxRecord }) {
       !r.ok
         ? r.error
         : r.value.state === 'awaiting'
-          ? `${mode === 'cancel' ? 'Cancel' : 'Speed-up'} proposed at the same nonce with higher fees; approve it in the queue.`
+          ? `${mode === 'cancel' ? 'Cancel' : 'Speed-up'} proposed ${bitcoin ? 'over the same inputs' : 'at the same nonce'} with higher fees; approve it in the queue.`
           : 'The replacement was denied by policy.',
     );
   };
@@ -130,7 +133,11 @@ export function TransactionRecovery({ tx }: { tx: TxRecord }) {
             size="sm"
             variant="ghost"
             disabled={working || view.busy || view.status.kind !== 'unlocked'}
-            title="Same transaction, same nonce, fees raised by at least 12.5%"
+            title={
+              bitcoin
+                ? 'Same payment over the same inputs at a higher fee rate (BIP125)'
+                : 'Same transaction, same nonce, fees raised by at least 12.5%'
+            }
             onClick={() => void replace('speedUp')}
           >
             Speed up…
@@ -139,7 +146,11 @@ export function TransactionRecovery({ tx }: { tx: TxRecord }) {
             size="sm"
             variant="ghost"
             disabled={working || view.busy || view.status.kind !== 'unlocked'}
-            title="A zero-value transfer to yourself at the same nonce; if it lands first, the original never will"
+            title={
+              bitcoin
+                ? 'Every input back to your own address at a higher fee; if it lands first, the original never will'
+                : 'A zero-value transfer to yourself at the same nonce; if it lands first, the original never will'
+            }
             onClick={() => void replace('cancel')}
           >
             Cancel transaction…

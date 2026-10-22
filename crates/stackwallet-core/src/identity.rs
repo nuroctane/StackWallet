@@ -182,6 +182,152 @@ pub fn ceremony_message_bytes(msg: &CeremonyMessage) -> Vec<u8> {
     out
 }
 
+const SEAL_INFO: &[u8] = b"stackwallet/v1/ceremony-seal";
+const SEAL_NONCE_LEN: usize = 24;
+
+/// Whether a message's body is sealed end to end to its recipient: every
+/// addressed protocol round. DKG round 2 carries one party's polynomial at the
+/// recipient's index, and a relay that read those could rebuild every
+/// polynomial and so the group key; sealing leaves a hub able to drop or
+/// delay traffic, never to read it. Proposals (round 0) carry nothing secret.
+pub fn is_sealed(msg: &CeremonyMessage) -> bool {
+    msg.to_device_id.is_some() && msg.round != 0
+}
+
+fn seal_key(
+    identity: &DeviceIdentity,
+    peer_static: &[u8; PUBLIC_KEY_LEN],
+    sender_static: &[u8; PUBLIC_KEY_LEN],
+    recipient_static: &[u8; PUBLIC_KEY_LEN],
+) -> Result<Zeroizing<[u8; 32]>> {
+    use sha2_v011::Sha256;
+    let shared = Zeroizing::new(
+        identity
+            .noise_static()
+            .diffie_hellman(&x25519_dalek::PublicKey::from(*peer_static))
+            .to_bytes(),
+    );
+    // A low-order peer key makes the shared secret all zero; refuse it.
+    if shared.iter().all(|b| *b == 0) {
+        return Err(CoreError::Crypto("degenerate ceremony seal key"));
+    }
+    let mut salt = Vec::with_capacity(2 * PUBLIC_KEY_LEN);
+    salt.extend_from_slice(sender_static);
+    salt.extend_from_slice(recipient_static);
+    let mut key = Zeroizing::new([0u8; 32]);
+    hkdf::Hkdf::<Sha256>::new(Some(&salt), shared.as_ref())
+        .expand(SEAL_INFO, key.as_mut())
+        .map_err(|_| CoreError::Crypto("hkdf"))?;
+    Ok(key)
+}
+
+/// The envelope fields a sealed body is bound to: everything but the body.
+fn seal_aad(msg: &CeremonyMessage) -> Vec<u8> {
+    ceremony_message_bytes(&CeremonyMessage {
+        body_hex: String::new(),
+        ..msg.clone()
+    })
+}
+
+/// Encrypt an addressed protocol message's body to the recipient's pinned
+/// Noise static key (static-static X25519, HKDF, XChaCha20-Poly1305 with the
+/// envelope as associated data). Other messages pass through unchanged.
+pub fn seal_for(
+    identity: &DeviceIdentity,
+    recipient_static_hex: &str,
+    msg: CeremonyMessage,
+) -> Result<CeremonyMessage> {
+    use chacha20poly1305::aead::{Aead, Payload};
+    use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce};
+    if !is_sealed(&msg) {
+        return Ok(msg);
+    }
+    let recipient = static_from_hex(recipient_static_hex)?;
+    let key = seal_key(
+        identity,
+        &recipient,
+        &identity.noise_static_public(),
+        &recipient,
+    )?;
+    let nonce: [u8; SEAL_NONCE_LEN] = random_array()?;
+    let body = hex::decode(&msg.body_hex).map_err(|_| CoreError::Invalid {
+        what: "ceremony message",
+        reason: "body is not hex".into(),
+    })?;
+    let ct = XChaCha20Poly1305::new((&*key).into())
+        .encrypt(
+            &XNonce::from(nonce),
+            Payload {
+                msg: &body,
+                aad: &seal_aad(&msg),
+            },
+        )
+        .map_err(|_| CoreError::Crypto("ceremony seal"))?;
+    let mut out = nonce.to_vec();
+    out.extend(ct);
+    Ok(CeremonyMessage {
+        body_hex: hex::encode(out),
+        ..msg
+    })
+}
+
+/// Open a sealed body addressed to this device, from the sender whose pinned
+/// Noise static key is `sender_static_hex`. A body that does not open (a
+/// relay altered it, or it was sealed to someone else) is refused.
+pub fn open_from(
+    identity: &DeviceIdentity,
+    sender_static_hex: &str,
+    msg: CeremonyMessage,
+) -> Result<CeremonyMessage> {
+    use chacha20poly1305::aead::{Aead, Payload};
+    use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce};
+    if !is_sealed(&msg) {
+        return Ok(msg);
+    }
+    if msg.to_device_id.as_deref() != Some(identity.device_id().as_str()) {
+        return Err(CoreError::Invalid {
+            what: "ceremony message",
+            reason: "sealed for another device".into(),
+        });
+    }
+    let sender = static_from_hex(sender_static_hex)?;
+    let key = seal_key(identity, &sender, &sender, &identity.noise_static_public())?;
+    let sealed = hex::decode(&msg.body_hex).map_err(|_| CoreError::Invalid {
+        what: "ceremony message",
+        reason: "body is not hex".into(),
+    })?;
+    if sealed.len() < SEAL_NONCE_LEN + 16 {
+        return Err(CoreError::Invalid {
+            what: "ceremony message",
+            reason: "sealed body too short".into(),
+        });
+    }
+    let (nonce, ct) = sealed.split_at(SEAL_NONCE_LEN);
+    let body = XChaCha20Poly1305::new((&*key).into())
+        .decrypt(
+            &XNonce::from(<[u8; SEAL_NONCE_LEN]>::try_from(nonce).expect("split at nonce length")),
+            Payload {
+                msg: ct,
+                aad: &seal_aad(&msg),
+            },
+        )
+        .map_err(|_| CoreError::Crypto("ceremony body did not open"))?;
+    Ok(CeremonyMessage {
+        body_hex: hex::encode(body),
+        ..msg
+    })
+}
+
+fn static_from_hex(hex_str: &str) -> Result<[u8; PUBLIC_KEY_LEN]> {
+    hex::decode(hex_str)
+        .ok()
+        .and_then(|v| v.try_into().ok())
+        .ok_or_else(|| CoreError::Invalid {
+            what: "noise static key",
+            reason: "expected 32 hex-encoded bytes".into(),
+        })
+}
+
 /// A ceremony message plus the sender's signature over its canonical bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -280,5 +426,70 @@ mod tests {
             ..a.clone()
         };
         assert_ne!(ceremony_message_bytes(&a), ceremony_message_bytes(&b));
+    }
+
+    fn addressed(from: &DeviceIdentity, to: &DeviceIdentity, round: u8) -> CeremonyMessage {
+        CeremonyMessage {
+            session_id: "s".into(),
+            payload_hash_hex: "ab".repeat(32),
+            from_device_id: from.device_id(),
+            to_device_id: Some(to.device_id()),
+            round,
+            body_hex: "0102030405".into(),
+        }
+    }
+
+    #[test]
+    fn addressed_rounds_open_only_for_their_recipient() {
+        let (a, b, hub) = (
+            DeviceIdentity::generate().unwrap(),
+            DeviceIdentity::generate().unwrap(),
+            DeviceIdentity::generate().unwrap(),
+        );
+        let msg = addressed(&a, &b, 2);
+        let sealed = seal_for(&a, &b.noise_static_public_hex(), msg.clone()).unwrap();
+        assert_ne!(sealed.body_hex, msg.body_hex);
+        assert!(!sealed.body_hex.contains("0102030405"));
+        assert_eq!(
+            open_from(&b, &a.noise_static_public_hex(), sealed.clone()).unwrap(),
+            msg
+        );
+        // The relaying hub cannot open it, even claiming to be the recipient.
+        assert!(open_from(&hub, &a.noise_static_public_hex(), sealed.clone()).is_err());
+        let mut rerouted = sealed.clone();
+        rerouted.to_device_id = Some(hub.device_id());
+        assert!(open_from(&hub, &a.noise_static_public_hex(), rerouted).is_err());
+        // Any change to the envelope or body breaks it.
+        let mut moved = sealed.clone();
+        moved.round = 1;
+        assert!(open_from(&b, &a.noise_static_public_hex(), moved).is_err());
+        let mut flipped = sealed.clone();
+        flipped.body_hex.replace_range(60..62, "00");
+        assert!(open_from(&b, &a.noise_static_public_hex(), flipped).is_err());
+        // Wrong sender key: the shared secret differs.
+        assert!(open_from(&b, &hub.noise_static_public_hex(), sealed).is_err());
+    }
+
+    #[test]
+    fn broadcasts_and_proposals_stay_readable() {
+        let (a, b) = (
+            DeviceIdentity::generate().unwrap(),
+            DeviceIdentity::generate().unwrap(),
+        );
+        let proposal = addressed(&a, &b, 0);
+        assert_eq!(
+            seal_for(&a, &b.noise_static_public_hex(), proposal.clone()).unwrap(),
+            proposal
+        );
+        let broadcast = CeremonyMessage {
+            to_device_id: None,
+            ..addressed(&a, &b, 1)
+        };
+        assert_eq!(
+            seal_for(&a, &b.noise_static_public_hex(), broadcast.clone()).unwrap(),
+            broadcast
+        );
+        // A low-order point is refused rather than yielding a zero key.
+        assert!(seal_for(&a, &"00".repeat(32), addressed(&a, &b, 2)).is_err());
     }
 }

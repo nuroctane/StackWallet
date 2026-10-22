@@ -11,6 +11,12 @@
 //! reached us; anything else is refused. A peer that sends two different
 //! bodies for the same round is equivocating and the ceremony aborts, since
 //! frost has no way to tell which one the other parties used.
+//!
+//! A sign ceremony may cover several messages at once (one Taproot sighash per
+//! transaction input), each with its own fresh nonces, so one approval and one
+//! round trip sign the whole transaction. With a single message the round
+//! bodies are the plain frost serializations; with several, each body is the
+//! per-message items, length-prefixed, in message order.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -57,6 +63,10 @@ pub fn identifier_for<C: Ciphersuite>(device_id: &str) -> Result<Identifier<C>> 
     Identifier::<C>::derive(device_id.as_bytes())
         .map_err(|_| CoreError::Crypto("frost identifier derivation"))
 }
+
+/// Most messages one sign ceremony covers; a Bitcoin spend has at most eight
+/// inputs, and anything larger only gives a peer more to make us compute.
+pub const MAX_BATCH: usize = 16;
 
 /// The bytes the group actually signs for `request`.
 ///
@@ -180,6 +190,38 @@ fn decode_hash(hex_str: &str) -> Result<[u8; 32]> {
     })
 }
 
+fn encode_items(items: &[Vec<u8>]) -> Vec<u8> {
+    if let [one] = items {
+        return one.clone();
+    }
+    let mut out = Vec::new();
+    for item in items {
+        out.extend((item.len() as u32).to_be_bytes());
+        out.extend(item);
+    }
+    out
+}
+
+/// Exactly `n` items or nothing: a short, long or padded body is refused.
+fn decode_items(body: &[u8], n: usize) -> Option<Vec<&[u8]>> {
+    if n == 1 {
+        return Some(vec![body]);
+    }
+    let mut rest = body;
+    let mut out = Vec::with_capacity(n);
+    while !rest.is_empty() {
+        let len = u32::from_be_bytes(rest.get(..4)?.try_into().ok()?) as usize;
+        let item = rest.get(4..4usize.checked_add(len)?)?;
+        out.push(item);
+        rest = &rest[4 + len..];
+    }
+    (out.len() == n).then_some(out)
+}
+
+fn decode_all<T>(body: &[u8], n: usize, parse: impl Fn(&[u8]) -> Option<T>) -> Option<Vec<T>> {
+    decode_items(body, n)?.into_iter().map(parse).collect()
+}
+
 fn body_digest(body: &[u8]) -> [u8; 32] {
     Sha256::digest(body).into()
 }
@@ -195,8 +237,8 @@ fn frost_err<C: Ciphersuite>(ctx: &str) -> impl Fn(frost_core::Error<C>) -> Core
 enum Body<C: Ciphersuite> {
     Dkg1(dkg::round1::Package<C>),
     Dkg2(dkg::round2::Package<C>),
-    Commitments(SigningCommitments<C>),
-    Share(SignatureShare<C>),
+    Commitments(Vec<SigningCommitments<C>>),
+    Share(Vec<SignatureShare<C>>),
 }
 
 enum Phase<C: Ciphersuite> {
@@ -210,12 +252,12 @@ enum Phase<C: Ciphersuite> {
         round2: BTreeMap<Identifier<C>, dkg::round2::Package<C>>,
     },
     SignRound1 {
-        nonces: SigningNonces<C>,
-        commitments: BTreeMap<Identifier<C>, SigningCommitments<C>>,
+        nonces: Vec<SigningNonces<C>>,
+        commitments: BTreeMap<Identifier<C>, Vec<SigningCommitments<C>>>,
     },
     SignRound2 {
-        package: SigningPackage<C>,
-        shares: BTreeMap<Identifier<C>, SignatureShare<C>>,
+        packages: Vec<SigningPackage<C>>,
+        shares: BTreeMap<Identifier<C>, Vec<SignatureShare<C>>>,
     },
     Finished,
 }
@@ -224,7 +266,7 @@ struct Ceremony<C: Ciphersuite> {
     session_id: String,
     kind: CeremonyKind,
     binding_hex: String,
-    message: Vec<u8>,
+    messages: Vec<Vec<u8>>,
     sign_request_id: Option<String>,
     /// Every other participant, by device id.
     peers: BTreeMap<String, Identifier<C>>,
@@ -405,7 +447,7 @@ impl<C: FrostCurve> FrostParty<C> {
         Ok(peers)
     }
 
-    /// `signing` carries the message bytes and request id for sign ceremonies;
+    /// `signing` carries the messages and request id for sign ceremonies;
     /// keygen and refresh have neither.
     fn begin(
         &mut self,
@@ -414,14 +456,14 @@ impl<C: FrostCurve> FrostParty<C> {
         binding_hex: String,
         peers: BTreeMap<String, Identifier<C>>,
         phase: Phase<C>,
-        signing: Option<(Vec<u8>, String)>,
+        signing: Option<(Vec<Vec<u8>>, String)>,
     ) {
-        let (message, sign_request_id) = signing.unzip();
+        let (messages, sign_request_id) = signing.unzip();
         self.ceremony = Some(Ceremony {
             session_id: session.id.clone(),
             kind,
             binding_hex,
-            message: message.unwrap_or_default(),
+            messages: messages.unwrap_or_default(),
             sign_request_id,
             peers,
             round: 1,
@@ -451,6 +493,7 @@ impl<C: FrostCurve> FrostParty<C> {
                 return Err(c.abort(format!("round {} body from {sender} is not hex", msg.round)))
             }
         };
+        let n = c.messages.len();
         let parsed = match &c.phase {
             Phase::DkgRound1 { .. } => dkg::round1::Package::<C>::deserialize(&body)
                 .ok()
@@ -458,12 +501,13 @@ impl<C: FrostCurve> FrostParty<C> {
             Phase::DkgRound2 { .. } => dkg::round2::Package::<C>::deserialize(&body)
                 .ok()
                 .map(Body::Dkg2),
-            Phase::SignRound1 { .. } => SigningCommitments::<C>::deserialize(&body)
-                .ok()
-                .map(Body::Commitments),
-            Phase::SignRound2 { .. } => SignatureShare::<C>::deserialize(&body)
-                .ok()
-                .map(Body::Share),
+            Phase::SignRound1 { .. } => {
+                decode_all(&body, n, |b| SigningCommitments::<C>::deserialize(b).ok())
+                    .map(Body::Commitments)
+            }
+            Phase::SignRound2 { .. } => {
+                decode_all(&body, n, |b| SignatureShare::<C>::deserialize(b).ok()).map(Body::Share)
+            }
             Phase::Finished => return Err(ceremony_err("ceremony is not collecting messages")),
         };
         let Some(parsed) = parsed else {
@@ -582,32 +626,47 @@ impl<C: FrostCurve> FrostParty<C> {
                 commitments,
             } => {
                 let (kp, _, _) = self.require_key()?;
-                let package = SigningPackage::new(commitments, &c.message);
-                let share = frost_core::round2::sign(&package, &nonces, kp)
-                    .map_err(frost_err("sign round 2"))?;
                 let own = *kp.identifier();
-                let body = share.serialize();
+                let mut packages = Vec::with_capacity(c.messages.len());
+                let mut mine = Vec::with_capacity(c.messages.len());
+                for (i, (message, nonces)) in c.messages.iter().zip(&nonces).enumerate() {
+                    let round: BTreeMap<_, _> =
+                        commitments.iter().map(|(id, all)| (*id, all[i])).collect();
+                    let package = SigningPackage::new(round, message);
+                    mine.push(
+                        frost_core::round2::sign(&package, nonces, kp)
+                            .map_err(frost_err("sign round 2"))?,
+                    );
+                    packages.push(package);
+                }
+                let bodies: Vec<Vec<u8>> = mine.iter().map(|s| s.serialize()).collect();
+                let body = encode_items(&bodies);
                 c.phase = Phase::SignRound2 {
-                    package,
-                    shares: BTreeMap::from([(own, share)]),
+                    packages,
+                    shares: BTreeMap::from([(own, mine)]),
                 };
                 c.round = 2;
                 Ok(vec![c.envelope(&self.device_id, None, 2, &body)])
             }
-            Phase::SignRound2 { package, shares } => {
+            Phase::SignRound2 { packages, shares } => {
                 let (_, pkp, _) = self.require_key()?;
-                let sig = frost_core::aggregate(&package, &shares, pkp)
-                    .map_err(frost_err("aggregate"))?;
-                pkp.verifying_key()
-                    .verify(&c.message, &sig)
-                    .map_err(frost_err("group signature verification"))?;
-                let bytes = sig
-                    .serialize()
-                    .map_err(frost_err("signature serialization"))?;
+                let mut all = Vec::new();
+                for (i, (package, message)) in packages.iter().zip(&c.messages).enumerate() {
+                    let round: BTreeMap<_, _> = shares.iter().map(|(id, s)| (*id, s[i])).collect();
+                    let sig = frost_core::aggregate(package, &round, pkp)
+                        .map_err(frost_err("aggregate"))?;
+                    pkp.verifying_key()
+                        .verify(message, &sig)
+                        .map_err(frost_err("group signature verification"))?;
+                    all.extend(
+                        sig.serialize()
+                            .map_err(frost_err("signature serialization"))?,
+                    );
+                }
                 c.signature = Some(Signature {
                     sign_request_id: c.sign_request_id.clone().unwrap_or_default(),
                     curve: C::CURVE,
-                    signature_hex: hex::encode(bytes),
+                    signature_hex: hex::encode(all),
                     recovery_id: None,
                 });
                 c.state = CeremonyState::Complete;
@@ -647,6 +706,94 @@ impl FrostParty<frost_secp256k1_tr::Secp256K1Sha256TR> {
         Ok(self
             .verifying_key_bytes()?
             .map(|sec1| hex::encode(&sec1[1..33])))
+    }
+}
+
+impl<C: FrostCurve> FrostParty<C> {
+    /// Sign several messages under one ceremony, each with fresh nonces. The
+    /// caller derives `messages` from the request's payload, which the session
+    /// binds, so every party signs what its own core computed. The result's
+    /// `signature_hex` is the signatures concatenated in message order.
+    pub fn sign_batch_start(
+        &mut self,
+        request: &SignRequest,
+        session: &CeremonySession,
+        messages: Vec<Vec<u8>>,
+    ) -> Result<Vec<CeremonyMessage>> {
+        if messages.is_empty() || messages.len() > MAX_BATCH {
+            return Err(CoreError::Invalid {
+                what: "sign request",
+                reason: format!("expected 1 to {MAX_BATCH} messages"),
+            });
+        }
+        self.require_idle()?;
+        let (kp, pkp, group_id) = self.require_key()?;
+        if request.curve != C::CURVE {
+            return Err(CoreError::Invalid {
+                what: "sign request",
+                reason: format!(
+                    "curve {:?} does not match party {:?}",
+                    request.curve,
+                    C::CURVE
+                ),
+            });
+        }
+        if request.key_group_id != group_id {
+            return Err(CoreError::Invalid {
+                what: "sign request",
+                reason: "key group does not match this share".into(),
+            });
+        }
+        self.check_session(session, CeremonyKind::Sign, group_id)?;
+        let binding = request.payload_hash_hex.clone();
+        if session.payload_hash_hex.as_deref() != Some(binding.as_str()) {
+            return Err(CoreError::Invalid {
+                what: "ceremony session",
+                reason: "sign session must be bound to the request payload hash".into(),
+            });
+        }
+        let min = pkp
+            .min_signers()
+            .ok_or_else(|| ceremony_err("public key package has no threshold"))?;
+        if session.participants.len() < min as usize {
+            return Err(ceremony_err(format!(
+                "{} signers is below threshold {min}",
+                session.participants.len()
+            )));
+        }
+        let peers = self.peer_identifiers(&session.participants)?;
+        if let Some(stranger) = peers
+            .iter()
+            .find(|(_, id)| !pkp.verifying_shares().contains_key(id))
+        {
+            return Err(ceremony_err(format!(
+                "{} holds no share of this group",
+                stranger.0
+            )));
+        }
+        let own = *kp.identifier();
+        let (nonces, commitments): (Vec<_>, Vec<_>) = messages
+            .iter()
+            .map(|_| frost_core::round1::commit(kp.signing_share(), &mut OsRng))
+            .unzip();
+        let bodies = commitments
+            .iter()
+            .map(|c| c.serialize())
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(frost_err("commitment serialization"))?;
+        let body = encode_items(&bodies);
+        self.begin(
+            session,
+            CeremonyKind::Sign,
+            binding,
+            peers,
+            Phase::SignRound1 {
+                nonces,
+                commitments: BTreeMap::from([(own, commitments)]),
+            },
+            Some((messages, request.id.clone())),
+        );
+        Ok(self.broadcast(1, &body))
     }
 }
 
@@ -741,69 +888,8 @@ impl<C: FrostCurve> ThresholdScheme for FrostParty<C> {
         request: &SignRequest,
         session: &CeremonySession,
     ) -> Result<Vec<CeremonyMessage>> {
-        self.require_idle()?;
-        let (kp, pkp, group_id) = self.require_key()?;
-        if request.curve != C::CURVE {
-            return Err(CoreError::Invalid {
-                what: "sign request",
-                reason: format!(
-                    "curve {:?} does not match party {:?}",
-                    request.curve,
-                    C::CURVE
-                ),
-            });
-        }
-        if request.key_group_id != group_id {
-            return Err(CoreError::Invalid {
-                what: "sign request",
-                reason: "key group does not match this share".into(),
-            });
-        }
-        self.check_session(session, CeremonyKind::Sign, group_id)?;
         let message = message_to_sign(request)?;
-        let binding = request.payload_hash_hex.clone();
-        if session.payload_hash_hex.as_deref() != Some(binding.as_str()) {
-            return Err(CoreError::Invalid {
-                what: "ceremony session",
-                reason: "sign session must be bound to the request payload hash".into(),
-            });
-        }
-        let min = pkp
-            .min_signers()
-            .ok_or_else(|| ceremony_err("public key package has no threshold"))?;
-        if session.participants.len() < min as usize {
-            return Err(ceremony_err(format!(
-                "{} signers is below threshold {min}",
-                session.participants.len()
-            )));
-        }
-        let peers = self.peer_identifiers(&session.participants)?;
-        if let Some(stranger) = peers
-            .iter()
-            .find(|(_, id)| !pkp.verifying_shares().contains_key(id))
-        {
-            return Err(ceremony_err(format!(
-                "{} holds no share of this group",
-                stranger.0
-            )));
-        }
-        let own = *kp.identifier();
-        let (nonces, commitments) = frost_core::round1::commit(kp.signing_share(), &mut OsRng);
-        let body = commitments
-            .serialize()
-            .map_err(frost_err("commitment serialization"))?;
-        self.begin(
-            session,
-            CeremonyKind::Sign,
-            binding,
-            peers,
-            Phase::SignRound1 {
-                nonces,
-                commitments: BTreeMap::from([(own, commitments)]),
-            },
-            Some((message, request.id.clone())),
-        );
-        Ok(self.broadcast(1, &body))
+        self.sign_batch_start(request, session, vec![message])
     }
 
     fn refresh_start(&mut self, session: &CeremonySession) -> Result<Vec<CeremonyMessage>> {
@@ -1080,6 +1166,25 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
         assert_ne!(a, d);
+    }
+
+    #[test]
+    fn batch_bodies_carry_exactly_one_item_per_message() {
+        let items = vec![vec![1, 2], vec![], vec![3]];
+        let body = encode_items(&items);
+        let back: Vec<Vec<u8>> = decode_items(&body, 3)
+            .unwrap()
+            .into_iter()
+            .map(<[u8]>::to_vec)
+            .collect();
+        assert_eq!(back, items);
+        assert!(decode_items(&body, 2).is_none());
+        assert!(decode_items(&body, 4).is_none());
+        assert!(decode_items(&body[..body.len() - 1], 3).is_none());
+        assert!(decode_items(&[0, 0, 0, 9, 1], 2).is_none());
+        // A single message keeps the plain frost serialization.
+        assert_eq!(encode_items(&[vec![7, 8]]), vec![7, 8]);
+        assert_eq!(decode_items(&[7, 8], 1).unwrap(), vec![&[7u8, 8][..]]);
     }
 
     #[test]

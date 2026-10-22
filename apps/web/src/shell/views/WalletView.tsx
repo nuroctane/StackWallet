@@ -156,6 +156,21 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
               Stake…
             </Button>
           )}
+          {wallet.kind === 'tss' && (
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Replace both devices' shares with fresh ones; the addresses stay the same"
+              onClick={() =>
+                shell.openDialog({
+                  kind: 'threshold',
+                  target: { mode: 'refresh', walletId: wallet.id },
+                })
+              }
+            >
+              Refresh shares…
+            </Button>
+          )}
           {wallet.kind !== 'single' && (
             <Button
               size="sm"

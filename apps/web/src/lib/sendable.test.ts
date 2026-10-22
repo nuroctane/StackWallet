@@ -57,8 +57,9 @@ describe('canSendFrom', () => {
     expect(canSendFrom(acct('eip155:11155111', 'evm'), undefined)).toBe(false);
   });
 
-  it('lets a shared wallet send only on Solana Devnet', () => {
+  it('lets a shared wallet send only on Solana Devnet and Bitcoin Signet', () => {
     expect(canSendFrom(acct(SOLANA_DEVNET, 'solana'), { kind: 'tss' })).toBe(true);
+    expect(canSendFrom(acct(BITCOIN_SIGNET, 'bitcoin'), { kind: 'tss' })).toBe(true);
     expect(canSendFrom(acct('eip155:11155111', 'evm'), { kind: 'tss' })).toBe(false);
   });
 

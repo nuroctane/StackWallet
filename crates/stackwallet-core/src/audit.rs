@@ -71,6 +71,18 @@ pub enum AuditEvent {
         proposer_device_id: String,
         reason: String,
     },
+    /// A refresh finished on this device; the previous share is kept until
+    /// every peer confirms (committed) or one fails (rolled back).
+    ShareRefreshed {
+        wallet_id: String,
+        session_id: String,
+    },
+    ShareRefreshCommitted {
+        wallet_id: String,
+    },
+    ShareRefreshRolledBack {
+        wallet_id: String,
+    },
     DevicePaired {
         device_id: String,
     },

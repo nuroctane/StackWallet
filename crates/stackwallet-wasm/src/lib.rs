@@ -5,7 +5,7 @@
 mod transport;
 
 use stackwallet_core::export_gate::{self, ExportGate, KeyScope};
-use stackwallet_core::identity::{DeviceIdentity, SignedCeremonyMessage};
+use stackwallet_core::identity::{self, DeviceIdentity, SignedCeremonyMessage};
 use stackwallet_core::intent::TxIntent;
 use stackwallet_core::lifecycle::TxState;
 use stackwallet_core::model::Curve;
@@ -100,6 +100,32 @@ fn scope_from(scope: &str) -> Result<KeyScope, JsError> {
     ))?)
 }
 
+/// Labels the page may write and delete raw: its own records, never key
+/// material or core state.
+const APP_LABEL_PREFIXES: [&str; 2] = ["provider-key:", "agent-session:"];
+
+fn check_app_label(label: &str) -> Result<(), JsError> {
+    if label.len() > 128
+        || label.chars().any(char::is_control)
+        || !APP_LABEL_PREFIXES
+            .iter()
+            .any(|p| label.len() > p.len() && label.starts_with(p))
+    {
+        return Err(JsError::new("not an app record label"));
+    }
+    Ok(())
+}
+
+/// The one label a device identity seed lives under.
+const IDENTITY_LABEL: &str = "device-identity";
+
+fn check_identity_label(label: &str) -> Result<(), JsError> {
+    if label != IDENTITY_LABEL {
+        return Err(JsError::new("not a device identity label"));
+    }
+    Ok(())
+}
+
 fn core_err(e: stackwallet_core::CoreError) -> JsError {
     JsError::new(&e.to_string())
 }
@@ -171,8 +197,12 @@ impl WasmVault {
     }
 
     /// Store a secret the UI already holds (a provider API key the user
-    /// pasted). Returns the handle. Re-putting a label keeps its handle.
+    /// pasted, an agent transcript). Returns the handle. Re-putting a label
+    /// keeps its handle. Only app-record labels: every other entry (phrases,
+    /// shares, the ledger and its policies, the device table, export keys) is
+    /// written by the core through its own checks, never raw by the page.
     pub fn put(&mut self, label: &str, secret: Vec<u8>) -> Result<String, JsError> {
+        check_app_label(label)?;
         self.inner
             .put(label, Secret::new(secret))
             .map(|h| h.0)
@@ -180,6 +210,14 @@ impl WasmVault {
     }
 
     pub fn delete(&mut self, handle: &str) -> Result<(), JsError> {
+        let label = self
+            .inner
+            .labels()
+            .into_iter()
+            .find(|(h, _)| h.0 == handle)
+            .map(|(_, l)| l)
+            .ok_or_else(|| JsError::new("no such secret"))?;
+        check_app_label(&label)?;
         self.inner
             .delete(&SecretHandle(handle.to_owned()))
             .map_err(core_err)
@@ -187,7 +225,12 @@ impl WasmVault {
 
     /// Generate an Ed25519 device identity and seal its seed under `label`.
     /// Returns `{ deviceId, publicHex, noiseStaticHex }`; the seed never leaves the vault.
+    /// An existing identity is never replaced: peers pinned its key.
     pub fn create_identity(&mut self, label: &str) -> Result<String, JsError> {
+        check_identity_label(label)?;
+        if self.inner.handle_for(label).is_some() {
+            return Err(JsError::new("this vault already holds that identity"));
+        }
         let id = DeviceIdentity::generate().map_err(core_err)?;
         self.inner.put(label, id.to_secret()).map_err(core_err)?;
         Ok(identity_json(&id))
@@ -226,12 +269,59 @@ impl WasmVault {
 
     /// Sign a `CeremonyMessage` JSON with the identity under `label`;
     /// returns the `SignedCeremonyMessage` JSON.
+    /// An addressed protocol round is sealed to the recipient's pinned Noise
+    /// key first, so a device relaying it between two others cannot read it.
     pub fn sign_ceremony_message(&self, label: &str, msg_json: &str) -> Result<String, JsError> {
         let msg: CeremonyMessage = serde_json::from_str(msg_json)?;
+        let recipient = match &msg.to_device_id {
+            Some(to) if identity::is_sealed(&msg) => Some(self.active_device(to)?),
+            _ => None,
+        };
         self.with_identity(label, |id| {
-            let signed = SignedCeremonyMessage::sign(id, msg.clone());
-            Ok(serde_json::to_string(&signed)?)
+            let msg = match &recipient {
+                Some(d) => {
+                    identity::seal_for(id, &d.noise_static_hex, msg.clone()).map_err(core_err)?
+                }
+                None => msg.clone(),
+            };
+            Ok(serde_json::to_string(&SignedCeremonyMessage::sign(
+                id, msg,
+            ))?)
         })
+    }
+
+    /// Open a verified message addressed to this device (`CeremonyMessage`
+    /// JSON in and out); anything not sealed passes through.
+    pub fn open_ceremony_message(&self, label: &str, msg_json: &str) -> Result<String, JsError> {
+        let msg: CeremonyMessage = serde_json::from_str(msg_json)?;
+        if !identity::is_sealed(&msg) {
+            return Ok(msg_json.to_owned());
+        }
+        let sender = self.active_device(&msg.from_device_id)?;
+        self.with_identity(label, |id| {
+            let opened =
+                identity::open_from(id, &sender.noise_static_hex, msg.clone()).map_err(core_err)?;
+            Ok(serde_json::to_string(&opened)?)
+        })
+    }
+
+    /// A message another device relayed (`SignedCeremonyMessage` JSON): its
+    /// author must be an active pinned device here and the signature must be
+    /// theirs. Returns the `CeremonyMessage` JSON.
+    pub fn admit_relayed(&self, signed_json: &str) -> Result<String, JsError> {
+        let signed: SignedCeremonyMessage = serde_json::from_str(signed_json)?;
+        let author = self.active_device(&signed.msg.from_device_id)?;
+        signed.verify(&author.identity_pub_hex).map_err(core_err)?;
+        Ok(serde_json::to_string(&signed.msg)?)
+    }
+
+    fn active_device(&self, device_id: &str) -> Result<Device, JsError> {
+        load_device_table(&self.inner)
+            .map_err(core_err)?
+            .into_iter()
+            .find(|d| d.id == device_id && d.revoked_at_ms.is_none())
+            .filter(|d| !d.noise_static_hex.is_empty())
+            .ok_or_else(|| JsError::new(&format!("`{device_id}` is not an active paired device")))
     }
 
     /// Generate and seal a fresh 24-word phrase for a new `single` wallet.
@@ -352,6 +442,7 @@ impl WasmVault {
         directory_json: &str,
         now_ms: f64,
     ) -> Result<String, JsError> {
+        check_identity_label(identity_label)?;
         let wallet_ids: Vec<String> = serde_json::from_str(wallet_ids_json)?;
         let scope: transfer::BundleScope =
             serde_json::from_value(serde_json::Value::String(scope.into()))?;
@@ -389,6 +480,7 @@ impl WasmVault {
         bundle: &str,
         now_ms: f64,
     ) -> Result<String, JsError> {
+        check_identity_label(identity_label)?;
         let session = session_from(session_slot, session_secret, session_device);
         let got = transfer::import_set(
             &mut self.inner,
@@ -651,6 +743,78 @@ impl WasmVault {
         Ok(WasmThresholdDriver { driver, outbox })
     }
 
+    /// Start (or join) a share refresh for the group the session names.
+    pub fn threshold_refresh(
+        &mut self,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        session_json: &str,
+        now_ms: f64,
+    ) -> Result<WasmThresholdDriver, JsError> {
+        let proof = session_from(session_slot, session_secret, session_device);
+        let (driver, outbox) = threshold::Driver::refresh(
+            &mut self.inner,
+            &proof,
+            &serde_json::from_str(session_json)?,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(WasmThresholdDriver { driver, outbox })
+    }
+
+    /// The refresh session for a wallet this vault holds a share of.
+    pub fn threshold_refresh_session(
+        &self,
+        wallet_id: &str,
+        session_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let acc = threshold::lookup(&self.inner, wallet_id)
+            .map_err(core_err)?
+            .ok_or_else(|| JsError::new("this vault holds no share of that wallet"))?;
+        Ok(serde_json::to_string(
+            &threshold::refresh_session(&acc, session_id, now_ms as i64).map_err(core_err)?,
+        )?)
+    }
+
+    /// `ShareFingerprint` JSON: which share generation this device holds.
+    pub fn threshold_share_fingerprint(&self, wallet_id: &str) -> Result<String, JsError> {
+        Ok(serde_json::to_string(
+            &threshold::share_fingerprint(&self.inner, wallet_id).map_err(core_err)?,
+        )?)
+    }
+
+    /// Settle a pending refresh against every other party's current fingerprint;
+    /// returns `"inSync" | "committed" | "rolledBack"`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn threshold_reconcile_refresh(
+        &mut self,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        wallet_id: &str,
+        peer_currents_json: &str,
+        device_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let proof = session_from(session_slot, session_secret, session_device);
+        let peers: Vec<String> = serde_json::from_str(peer_currents_json)?;
+        let out = threshold::reconcile_refresh(
+            &mut self.inner,
+            &proof,
+            wallet_id,
+            &peers,
+            device_id,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(serde_json::to_value(out)?
+            .as_str()
+            .unwrap_or_default()
+            .to_owned())
+    }
+
     /// Threshold approval, first half: `{ record, request }` (request is null if policy refused).
     pub fn tx_begin_threshold(
         &mut self,
@@ -911,6 +1075,9 @@ impl WasmVault {
         label: &str,
         f: impl Fn(&DeviceIdentity) -> Result<T, JsError>,
     ) -> Result<T, JsError> {
+        // Any other 32-byte secret would otherwise become a signing key for
+        // whatever the page asks the identity to sign.
+        check_identity_label(label)?;
         let handle = self
             .inner
             .handle_for(label)
@@ -1004,6 +1171,15 @@ impl WasmThresholdDriver {
         let acc = self
             .driver
             .finish_keygen(&mut vault.inner, now_ms as i64)
+            .map_err(core_err)?;
+        Ok(serde_json::to_string(&acc)?)
+    }
+
+    /// Seal the refreshed share beside the previous one; `ThresholdAccount` JSON.
+    pub fn finish_refresh(&self, vault: &mut WasmVault, now_ms: f64) -> Result<String, JsError> {
+        let acc = self
+            .driver
+            .finish_refresh(&mut vault.inner, now_ms as i64)
             .map_err(core_err)?;
         Ok(serde_json::to_string(&acc)?)
     }

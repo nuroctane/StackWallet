@@ -614,6 +614,8 @@ export const ThresholdProposal = z.discriminatedUnion('kind', [
     request: z.lazy(() => SignRequest),
     session: CeremonySession,
   }),
+  z.object({ kind: z.literal('refresh'), session: CeremonySession }),
+  z.object({ kind: z.literal('reconcile'), session: CeremonySession }),
 ]);
 export type ThresholdProposal = z.infer<typeof ThresholdProposal>;
 
@@ -622,10 +624,27 @@ export const ThresholdAccount = z.object({
   walletId: z.string(),
   group: z.lazy(() => KeyGroup),
   deviceId: z.string(),
+  curve: z.enum(['ed25519', 'secp256k1-tr']),
+  /** Ed25519 group key, or the x-only Taproot output key. */
   publicKeyHex: z.string().regex(/^[0-9a-f]{64}$/),
-  solanaAddress: z.string(),
+  /** The one chain the wallet signs on, and the group key as its address. */
+  chainId: z.string(),
+  address: z.string(),
 });
 export type ThresholdAccount = z.infer<typeof ThresholdAccount>;
+
+/**
+ * Which share generation a device holds: a hash of the group's public key
+ * package, identical on every party and new with each refresh.
+ */
+export const ShareFingerprint = z.object({
+  current: z.string().regex(/^[0-9a-f]{64}$/),
+  previous: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .nullable(),
+});
+export type ShareFingerprint = z.infer<typeof ShareFingerprint>;
 
 /** A co-signer's view of what it is asked to sign, decoded by its own core. */
 export const CosignSummary = z.object({
@@ -633,7 +652,12 @@ export const CosignSummary = z.object({
   chainId: z.string(),
   from: z.string(),
   to: z.string(),
-  lamports: z.string(),
+  /** Base units of the chain's native asset (lamports, satoshis). */
+  amount: z.string().regex(/^[0-9]+$/),
+  fee: z
+    .string()
+    .regex(/^[0-9]+$/)
+    .nullable(),
   decision: z.lazy(() => Decision),
 });
 export type CosignSummary = z.infer<typeof CosignSummary>;
@@ -892,6 +916,8 @@ export const BitcoinTx = z.strictObject({
   to: z.string().max(90),
   amount: Amount,
   fee: Amount,
+  /** Ledger id of the broadcast transfer this one replaces (BIP125). */
+  replaces: z.string().min(1).max(128).optional(),
   inputs: z
     .array(
       z.strictObject({

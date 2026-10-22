@@ -572,6 +572,52 @@ export class VaultStore {
     });
   }
 
+  /** Start or join a share refresh; the group key stays the same. */
+  thresholdRefresh(req: { session: SessionProof; ceremony: CeremonySession }) {
+    return this.guardedValue(async () => {
+      const driver = await this.unlockedVault().thresholdRefresh({ ...req, nowMs: this.now() });
+      await this.persist();
+      await this.refreshLedger();
+      return driver;
+    });
+  }
+
+  /** Seal a finished refresh beside the previous share until reconciled. */
+  thresholdFinishRefresh(driver: ThresholdDriverHandle) {
+    return this.guardedValue(async () => {
+      const account = await driver.finishRefresh(this.unlockedVault(), this.now());
+      await this.persist();
+      await this.refreshLedger();
+      return account;
+    });
+  }
+
+  thresholdShareFingerprint(walletId: string) {
+    return this.guardedValue(() => this.unlockedVault().thresholdShareFingerprint(walletId));
+  }
+
+  /** Settle a pending refresh against what the peer reports holding. */
+  thresholdReconcile(session: SessionProof, walletId: string, peerCurrents: string[]) {
+    return this.guardedValue(async () => {
+      const out = await this.unlockedVault().thresholdReconcileRefresh(
+        session,
+        walletId,
+        peerCurrents,
+        this.deviceId(),
+        this.now(),
+      );
+      await this.persist();
+      await this.refreshLedger();
+      return out;
+    });
+  }
+
+  thresholdRefreshSession(walletId: string) {
+    return this.guardedValue(() =>
+      this.unlockedVault().thresholdRefreshSession(walletId, crypto.randomUUID(), this.now()),
+    );
+  }
+
   /** Audit how a ceremony ended on this device. */
   thresholdEnd(driver: ThresholdDriverHandle, aborted: string | null) {
     return this.guarded(async () => {
@@ -581,9 +627,19 @@ export class VaultStore {
     });
   }
 
-  /** Sign a ceremony envelope with this device's identity. */
+  /** Sign a ceremony envelope with this device's identity (sealing addressed rounds). */
   async signCeremony(msg: CeremonyMessage): Promise<SignedCeremonyMessage> {
     return this.unlockedVault().signCeremonyMessage(IDENTITY_LABEL, msg);
+  }
+
+  /** Open a ceremony body sealed to this device. */
+  async openCeremony(msg: CeremonyMessage): Promise<CeremonyMessage> {
+    return this.unlockedVault().openCeremonyMessage(IDENTITY_LABEL, msg);
+  }
+
+  /** Verify an envelope relayed by a hub against this vault's pinned author. */
+  async admitRelayed(signed: SignedCeremonyMessage): Promise<CeremonyMessage> {
+    return this.unlockedVault().admitRelayed(signed);
   }
 
   txBeginThreshold(txId: string, session: SessionProof) {

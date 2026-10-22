@@ -103,18 +103,44 @@ keeps the tag rather than clearing it, and an indexer that omits a log hides tha
 
 ### Threshold wallets, hardware signers, swaps and dapps
 
-- **Shared (threshold) wallets** are 2-of-2 FROST-Ed25519 between two paired devices, for
-  Solana Devnet transfers. Each vault seals one share under `tss:<wallet>`; the share is loaded
+- **Shared (threshold) wallets** are t-of-n FROST (two to five paired devices): Ed25519 for
+  Solana Devnet transfers, or secp256k1-tr for Bitcoin Signet P2TR key-path spends. A wallet
+  holds one curve and signs only its own chain's transfers; a request on any other curve is
+  refused. Each vault seals one share under `tss:<wallet>`; the share is loaded
   by the core's ceremony driver and never crosses into the page, never enters an export bundle
   and never reaches the other device. Key generation checks the D6 rule before any round. The
-  devices meet over a direct WebRTC channel set up by swapping two codes; the channel is the
-  pinned Noise IK session, and every ceremony envelope is signed by its author's identity. The
+  device that starts a ceremony meets each other party over a direct WebRTC channel set up by
+  swapping two codes; each channel is the pinned Noise IK session, and every ceremony envelope
+  is signed by its author's identity. With more than two parties that device relays: a relayed
+  envelope is admitted only against the receiver's own pin of its author, and every addressed
+  protocol round is sealed to its recipient's pinned Noise static key, so the relay can drop or
+  delay messages but cannot forge them or read a DKG share. (A relay that could read round 2
+  of a 2-of-3 DKG would hold two points of each peer's degree-1 polynomial and so the group
+  key.) The
   initiator's ledger begins the approval (session proof, signing-time policy) and accepts the
-  aggregate only if it verifies against the group key over the core's own message. The
-  co-signer's core decodes the request itself (only a byte-for-byte reproducible native transfer
-  from the group address is accepted), evaluates its own policies and needs its own session
-  proof. Proposals expire after ten minutes and the core rejects later participation. Losing either device loses the wallet: there is
-  no re-sharing yet, so these wallets are for testnet use only.
+  aggregate only if it verifies against the group key over the core's own message (for Bitcoin,
+  every input's BIP340 signature over the core's own BIP341 sighash). The co-signer's core
+  decodes the request itself (only a byte-for-byte reproducible native transfer from the group
+  address is accepted; a Bitcoin payload must be the core's canonical serialization and carries
+  the full funding transactions, so the co-signer re-checks inputs, amounts, fee and change),
+  evaluates its own policies and needs its own session proof. Each share signs only digests its
+  own core derived from the payload the session binds; a batch uses fresh nonces per digest.
+  Before broadcasting a Taproot spend the client re-verifies it with bitcoinjs sighashes and
+  noble BIP340 checks, independent of the core. Proposals expire after ten minutes and the core
+  rejects later participation. A share refresh (passphrase only, every party, same group key)
+  keeps the previous share until every other party reports the new generation by fingerprint,
+  then commits; it rolls back only if one still holds the old share, and a device with a
+  refresh pending refuses to sign. A t-of-n wallet survives losing n−t devices; there is no
+  re-sharing to replace a lost device yet, so these wallets are for testnet use only.
+- **The page's raw vault surface is an allowlist.** The wasm `put` and `delete` accept only the
+  page's own records (`provider-key:*`, `agent-session:*`); every other entry (phrases, shares,
+  the ledger with its policies and audit chain, the device table, export keys) is written by the
+  core through its own checks. Identity operations (signing ceremony envelopes, opening sealed
+  bodies, export and import bundles) accept only the `device-identity` label, so no other
+  32-byte secret can become a signing key for page-supplied bytes, and an existing identity is
+  never replaced. Bitcoin and Solana approvals run the same chain pre-checks whether a local key
+  or a ceremony signs: inputs still spendable (a replacement's spent only by what it replaces)
+  and a live blockhash.
 - **Ledger** signing (EVM testnets) runs the same signing-time checks as a local key. The
   device signs the core's exact EIP-1559 payload, and the core accepts the signature only if it
   recovers to the address registered (with a session proof) for that wallet and path.
@@ -346,10 +372,11 @@ input use; they do not authenticate chain state. Network
 simulation is unavailable and simulation policies fail closed. Broadcast uncertainty remains
 pending indefinitely until a matching indexed result reaches six observed confirmations.
 There is no timeout-based release or automatic resend. No funded Signet confirmation has been
-verified; mainnet, Taproot input signing and threshold Bitcoin sends remain disabled. Recipient
-outputs may be canonical Signet P2WPKH, P2WSH or P2TR; the core enforces script-specific dust
-bounds and fee limits. Sender inputs and change remain P2WPKH. Unknown witness versions,
-legacy recipients and non-canonical addresses are refused.
+verified; mainnet remains disabled. Recipient outputs may be canonical Signet P2WPKH, P2WSH or
+P2TR; the core enforces script-specific dust bounds and fee limits. Single keys spend P2WPKH
+inputs with P2WPKH change; threshold wallets spend P2TR key-path inputs with P2TR change, and a
+single key never signs for a P2TR sender. Unknown witness versions, legacy recipients and
+non-canonical addresses are refused.
 
 ## 7. Reporting
 

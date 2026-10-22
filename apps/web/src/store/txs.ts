@@ -1,6 +1,7 @@
-import type { ChainRegistry } from '@stackwallet/chains';
+import type { ChainRegistry, Simulation } from '@stackwallet/chains';
 import {
   prepareBitcoin,
+  planBitcoinReplacement,
   bitcoinInputsUnspent,
   broadcastBitcoin,
   bitcoinTransferStatus,
@@ -22,7 +23,7 @@ import {
   type SolanaAdapter,
   type SolanaPrepareOptions,
 } from '@stackwallet/chains-solana';
-import type { Account, TxIntent, TxRecord } from '@stackwallet/core-client';
+import type { Account, BitcoinTx, TxIntent, TxRecord } from '@stackwallet/core-client';
 import {
   broadcastCosmos,
   prepareCosmos,
@@ -73,6 +74,8 @@ export interface SendRequest {
   /** Base units. */
   amount: string;
   bitcoin?: BitcoinPrepareOptions;
+  /** A Bitcoin transfer already built (a BIP125 replacement); used instead of preparing one. */
+  bitcoinPlanned?: { unsigned: BitcoinTx; simulation: Simulation };
   solana?: SolanaPrepareOptions;
   /** Families with a `form.tag` field: the routing tag the user entered, if any. */
   tag?: string;
@@ -217,7 +220,14 @@ async function proposeIntent(
   registry: ChainRegistry,
   req: Pick<
     SendRequest,
-    'account' | 'bitcoin' | 'solana' | 'replace' | 'by' | 'untrustedDestinations' | 'tag'
+    | 'account'
+    | 'bitcoin'
+    | 'bitcoinPlanned'
+    | 'solana'
+    | 'replace'
+    | 'by'
+    | 'untrustedDestinations'
+    | 'tag'
   >,
   kind: IntentShape,
 ): Promise<Result<TxRecord>> {
@@ -246,12 +256,13 @@ async function proposeIntent(
           req.tag === undefined ? {} : { tag: req.tag },
         )
       : account.family === 'bitcoin'
-        ? await prepareBitcoin(
+        ? (req.bitcoinPlanned ??
+          (await prepareBitcoin(
             bitcoinAdapter(registry, account.chainId),
             proposed.value.intent,
             account.address,
             req.bitcoin,
-          )
+          )))
         : account.family === 'solana'
           ? await prepareSolana(
               solanaAdapter(registry, account.chainId),
@@ -314,6 +325,8 @@ export async function approveWithCeremony(
     return { ok: false, error: 'This transfer is already being approved' };
   activeSends.add(tx.id);
   try {
+    const stale = await signingPrecheck(registry, tx);
+    if (stale) return stale;
     let signed: TxRecord;
     try {
       signed = await sign();
@@ -382,43 +395,45 @@ export async function approveAndSend(
   }
 }
 
-async function approveAndBroadcast(
+function bitcoinOf(unsigned: TxRecord['unsigned']) {
+  return unsigned &&
+    'inputs' in unsigned &&
+    !('lovelace' in unsigned) &&
+    !('nanoerg' in unsigned) &&
+    !('attoalph' in unsigned) &&
+    !('base' in unsigned) &&
+    !('bytes' in unsigned) &&
+    !('satoshis' in unsigned) &&
+    !('xinat' in unsigned)
+    ? unsigned
+    : null;
+}
+
+/**
+ * Chain checks every signing path runs before a key or share is asked for
+ * anything: Bitcoin inputs still spendable (a replacement's may be spent only by
+ * the transfer it replaces), a Solana blockhash still live. `null` means go on.
+ */
+async function signingPrecheck(
   registry: ChainRegistry,
   tx: TxRecord,
-  passphrase: string,
-): Promise<Result<TxRecord>> {
+): Promise<Result<TxRecord> | null> {
+  const bitcoin = bitcoinOf(tx.unsigned);
   const solana = tx.unsigned && 'recentBlockhash' in tx.unsigned ? tx.unsigned : null;
-  const cosmos = tx.unsigned && 'timeoutHeight' in tx.unsigned ? tx.unsigned : null;
-  const tron = tx.unsigned && 'refBlockHash' in tx.unsigned ? tx.unsigned : null;
-  const bitcoin =
-    tx.unsigned &&
-    'inputs' in tx.unsigned &&
-    !('lovelace' in tx.unsigned) &&
-    !('nanoerg' in tx.unsigned) &&
-    !('attoalph' in tx.unsigned) &&
-    !('base' in tx.unsigned) &&
-    !('bytes' in tx.unsigned) &&
-    !('satoshis' in tx.unsigned) &&
-    !('xinat' in tx.unsigned)
-      ? tx.unsigned
-      : null;
-  const family = familySendOf(tx.unsigned);
-  if (family?.approvalValid && tx.unsigned) {
+  if (bitcoin) {
+    const replaced = bitcoin.replaces
+      ? vault.getSnapshot().ledger?.txs.find((t) => t.id === bitcoin.replaces)
+      : undefined;
+    if (bitcoin.replaces && !replaced?.hash)
+      return { ok: false, error: 'The transfer this one replaces is no longer in the ledger' };
     try {
       if (
-        !(await family.approvalValid(
-          familyAdapter(registry, family, tx.intent.chainId),
-          tx.unsigned,
+        !(await bitcoinInputsUnspent(
+          bitcoinAdapter(registry, tx.intent.chainId),
+          bitcoin,
+          replaced?.hash ?? undefined,
         ))
       )
-        return vault.txReport(tx.id, 'expired', family.expiredReason);
-    } catch (err) {
-      return { ok: false, error: `Could not check the prepared transfer: ${nodeMessage(err)}` };
-    }
-  }
-  if (bitcoin) {
-    try {
-      if (!(await bitcoinInputsUnspent(bitcoinAdapter(registry, tx.intent.chainId), bitcoin)))
         return {
           ok: false,
           error:
@@ -440,6 +455,32 @@ async function approveAndBroadcast(
       return { ok: false, error: `Could not check blockhash: ${nodeMessage(err)}` };
     }
   }
+  return null;
+}
+
+async function approveAndBroadcast(
+  registry: ChainRegistry,
+  tx: TxRecord,
+  passphrase: string,
+): Promise<Result<TxRecord>> {
+  const cosmos = tx.unsigned && 'timeoutHeight' in tx.unsigned ? tx.unsigned : null;
+  const tron = tx.unsigned && 'refBlockHash' in tx.unsigned ? tx.unsigned : null;
+  const family = familySendOf(tx.unsigned);
+  if (family?.approvalValid && tx.unsigned) {
+    try {
+      if (
+        !(await family.approvalValid(
+          familyAdapter(registry, family, tx.intent.chainId),
+          tx.unsigned,
+        ))
+      )
+        return vault.txReport(tx.id, 'expired', family.expiredReason);
+    } catch (err) {
+      return { ok: false, error: `Could not check the prepared transfer: ${nodeMessage(err)}` };
+    }
+  }
+  const stale = await signingPrecheck(registry, tx);
+  if (stale) return stale;
   if (cosmos) {
     try {
       if (!(await cosmosApprovalValid(cosmosAdapter(registry, tx.intent.chainId), cosmos)))
@@ -560,10 +601,11 @@ function evmUnsigned(t: TxRecord) {
 }
 
 /**
- * Replace a stuck EVM transaction: the same intent with higher fees (speed
- * up), or a zero-value transfer to the sender itself (cancel). Either is a new
- * proposal at the same nonce, checked by the core and approved like any other;
- * whichever the chain includes first settles both.
+ * Replace a stuck transaction: the same intent with higher fees (speed up), or
+ * a payment back to the sender itself (cancel). On EVM either is a new
+ * proposal at the same nonce; on Bitcoin it spends the same inputs under
+ * BIP125 and the core holds it to the fee rules. Either is approved like any
+ * other, and whichever the chain includes first settles both.
  */
 export async function proposeReplacement(
   registry: ChainRegistry,
@@ -571,11 +613,35 @@ export async function proposeReplacement(
   account: Account,
   mode: 'speedUp' | 'cancel',
 ): Promise<Result<TxRecord>> {
-  const u = evmUnsigned(tx);
-  if (!u || account.family !== 'evm')
-    return { ok: false, error: 'Only EVM transactions can be replaced' };
   if (!['broadcast', 'pending'].includes(tx.state))
     return { ok: false, error: 'Only a sent, unconfirmed transaction can be replaced' };
+  const btc = bitcoinOf(tx.unsigned);
+  if (btc && account.family === 'bitcoin') {
+    if (!tx.hash) return { ok: false, error: 'The original has no transaction id to replace' };
+    let planned;
+    try {
+      planned = await planBitcoinReplacement(
+        bitcoinAdapter(registry, tx.intent.chainId),
+        { id: tx.id, hash: tx.hash, unsigned: btc },
+        mode,
+      );
+    } catch (err) {
+      return { ok: false, error: nodeMessage(err) };
+    }
+    return proposeIntent(
+      registry,
+      { account, bitcoinPlanned: planned },
+      {
+        kind: 'transfer',
+        to: planned.unsigned.to,
+        asset: `${tx.intent.chainId}:native`,
+        amount: planned.unsigned.amount,
+      },
+    );
+  }
+  const u = evmUnsigned(tx);
+  if (!u || account.family !== 'evm')
+    return { ok: false, error: 'Only EVM and Bitcoin transactions can be replaced' };
   const replace = {
     nonce: u.nonce,
     maxFeePerGas: BigInt(u.maxFeePerGas),
@@ -624,6 +690,28 @@ export async function proposeReplacement(
  * later replacements were dropped.
  */
 async function settleNonceSiblings(confirmed: TxRecord, txs: readonly TxRecord[]): Promise<void> {
+  const btc = bitcoinOf(confirmed.unsigned);
+  if (btc) {
+    // Transfers sharing an input with the confirmed one can never confirm.
+    const spent = new Set(btc.inputs.map((i) => `${i.txid}:${i.vout}`));
+    for (const t of txs) {
+      const o = bitcoinOf(t.unsigned);
+      if (
+        t.id === confirmed.id ||
+        !o ||
+        o.from !== btc.from ||
+        t.state !== 'pending' ||
+        !o.inputs.some((i) => spent.has(`${i.txid}:${i.vout}`))
+      )
+        continue;
+      await vault.txReport(
+        t.id,
+        t.createdAtMs < confirmed.createdAtMs ? 'replaced' : 'dropped',
+        `its inputs were spent by ${confirmed.hash ?? confirmed.id}`,
+      );
+    }
+    return;
+  }
   const u = evmUnsigned(confirmed);
   if (!u) return;
   for (const t of txs) {

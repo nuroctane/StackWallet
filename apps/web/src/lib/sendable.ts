@@ -114,8 +114,10 @@ export function canSendFrom(
   wallet: Pick<Wallet, 'kind'> | undefined,
 ): boolean {
   if (!wallet) return false;
-  // A shared wallet signs Solana Devnet transfers through a two-device ceremony.
-  if (wallet.kind === 'tss') return account.chainId === SOLANA_DEVNET;
+  // A shared wallet signs Solana Devnet transfers or Bitcoin Signet Taproot spends
+  // through a two-device ceremony.
+  if (wallet.kind === 'tss')
+    return account.chainId === SOLANA_DEVNET || account.chainId === BITCOIN_SIGNET;
   // A Ledger signs EVM transactions; its accounts send through the device.
   if (wallet.kind !== 'single' && wallet.kind !== 'hardware') return false;
   if (!account.derivationPath) return false;

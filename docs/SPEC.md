@@ -250,7 +250,8 @@ visibility. Shares are never synced; they are created in place by DKG or moved b
 | Ed25519                    | Solana (Sui/Aptos later)           | FROST                                                     | `frost-ed25519`        |
 | secp256k1 Schnorr (BIP340) | Bitcoin Taproot                    | FROST                                                     | `frost-secp256k1-tr`   |
 
-Each `tss` wallet runs DKG once per curve so one wallet covers all families. Key refresh rotates
+The target is one `tss` wallet running DKG once per curve so it covers all families; today a
+shared wallet holds exactly one group key on one FROST curve. Key refresh rotates
 share material without changing public keys; re-sharing changes the party set (device add or
 remove) without changing public keys.
 
@@ -264,15 +265,35 @@ with an explicit reason (`CoreError::Invalid`) until a stable `cggmp24` lands. U
 wallets can hold Ed25519 and Taproot keys only. Blocking EVM and Cosmos accounts in a `tss`
 wallet at creation time belongs to the directory phase, when wallet creation moves into the core.
 
-Browser threshold wallets (`threshold` in the core). Two paired devices create a 2-of-2
-Ed25519 wallet over a direct WebRTC channel (two pasted or scanned codes; the channel is the
-pinned Noise IK session) and sign Solana Devnet transfers with it. Each vault seals its share;
-the ceremony driver loads it inside the core, so the page only moves signed envelopes. The
-proposer's ledger begins the approval (`begin_threshold`: session proof, signing-time policy)
-and finishes it with the aggregate (`complete_threshold`, verified against the group key). The
-co-signer's core decodes the request, evaluates its own policies and asks for its own session
-proof before its share joins. Not yet: more than two parties, Taproot, refresh and re-sharing
-in the browser, and the agent as a party.
+Browser threshold wallets (`threshold` in the core). Two to five paired devices create a t-of-n
+wallet: Ed25519 for Solana Devnet transfers, or secp256k1-tr for Bitcoin Signet P2TR spends. The
+device that starts a ceremony is its hub: it opens a direct WebRTC channel to each other party
+(two pasted or scanned codes each; every channel is the pinned Noise IK session) and forwards
+signed envelopes between them unchanged. A forwarded envelope is admitted only after the
+receiving core verifies it against its own pin of the author, so every party must be paired
+with every other, and every addressed protocol round is sealed end to end to its recipient's
+pinned Noise static key (static-static X25519, HKDF, XChaCha20-Poly1305 over the envelope), so
+the hub cannot read another party's DKG shares. Parties tell the hub when they hold their
+result, and it relays until all have. A signature takes the threshold's worth of parties.
+Each vault seals its share; the ceremony driver loads it inside the core, so the page only moves
+signed envelopes. The proposer's ledger begins the approval (`begin_threshold`: session proof,
+signing-time policy) and finishes it with the aggregate (`complete_threshold`, verified against
+the group key over the core's own digests). The sign request's payload is the Solana message or
+the core's serialized Bitcoin transaction (funding transactions included); the co-signer's core
+rebuilds the transaction from it, re-derives what to sign, evaluates its own policies and asks
+for its own session proof before its share joins. A Taproot spend signs one BIP341 key-path
+sighash per input in a single ceremony: each message gets fresh nonces, and the round bodies
+carry the per-message items in input order. frost applies the BIP341 unspendable-script-path
+tweak at DKG, so the group key is the output key `Q` and the address is built from it directly.
+
+Share refresh. Every party of a group refreshes together (frost's refresh DKG, bound to the group
+key, which must come out unchanged). Each device seals the new share but keeps the previous one
+under `tss-prev:` until it has heard every other party's share fingerprint, a hash of the group's
+public key package that is identical on every party and new with each refresh. It commits when
+all others hold the new generation and rolls back when one still holds the old; since a device
+reports the new generation only after sealing it, nobody can have committed in that case. A
+device with a refresh pending refuses to sign, and the Refresh dialog then compares fingerprints
+instead of refreshing. Not yet: re-sharing (changing the party set), and the agent as a party.
 
 ### 5.2 Parties
 
@@ -812,9 +833,26 @@ client for which folder a wallet sits in; the wallet key is bound to the wallet 
    rewards from the LCD.
    Fifth increment: 2-of-2 threshold (FROST-Ed25519) Solana Devnet transfers between two
    browsers (§5.1).
-   Remaining in this phase: Bitcoin Taproot/threshold signing and RBF replacement, Cosmos
-   threshold ceremonies, SPL/Token-2022 transfers, address lookup tables and v1 messages, IBC
-   and other Cosmos messages, and swaps on Solana, Cosmos and Bitcoin.
+   Sixth increment: 2-of-2 threshold (FROST secp256k1-tr) Bitcoin Signet spends. A shared
+   wallet created on Bitcoin Signet receives at the group's P2TR address and spends its key
+   path: one to eight inputs, one BIP341 SIGHASH_DEFAULT digest each, all signed in one
+   ceremony. The core sizes P2TR inputs (58 vB) and change (43 bytes, 330-sat dust) for its fee
+   and dust bounds, and verifies every BIP340 signature against the output key before it
+   finalizes the witness; the client checks the same spend again with bitcoinjs and noble
+   before broadcast. Single-key senders remain P2WPKH. Funded Signet confirmation is opt-in
+   (`STACKWALLET_SIGNET_SMOKE=1`, two runs around funding the printed address) and has not yet
+   been run against a funded wallet.
+   Seventh increment: BIP125 replacement of a stuck Signet transfer, single-key or shared. A
+   replacement names the ledger record it replaces (`replaces`) and spends every original
+   input again: speed-up pays the same recipient, cancel sweeps everything back to the sender in
+   one output. The core accepts it only for this wallet's broadcast, unconfirmed transfer, at a
+   strictly higher fee rate that also pays 1 sat/vB of its own size, and never while another
+   proposal over those inputs awaits approval. Approval checks that the inputs are spent by
+   nothing but the replaced transaction; once either confirms, the other is recorded `replaced`
+   or `dropped`.
+   Remaining in this phase: Cosmos threshold ceremonies,
+   SPL/Token-2022 transfers, address lookup tables and v1 messages, IBC and other Cosmos
+   messages, and swaps on Solana, Cosmos and Bitcoin.
 5. **Agent runtime**: providers, tools, run loop, grants, agent party.
    First increment (`packages/agent`): BYOK Anthropic, OpenAI, Google and OpenRouter models via
    the Vercel AI SDK, keys sealed in the vault under `provider-key:<id>` (the only vault entries

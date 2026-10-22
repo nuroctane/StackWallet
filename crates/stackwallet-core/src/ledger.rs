@@ -338,6 +338,15 @@ impl From<CosmosTx> for UnsignedTx {
     }
 }
 impl UnsignedTx {
+    /// The curve a threshold group signs this transaction with. Families with
+    /// no threshold path report ECDSA, which no group holds.
+    fn threshold_curve(&self) -> Curve {
+        match self {
+            Self::Solana(_) => Curve::Ed25519,
+            Self::Bitcoin(_) => Curve::Secp256k1Tr,
+            _ => Curve::Secp256k1,
+        }
+    }
     fn check_matches_intent(&self, intent: &TxIntent) -> Result<()> {
         match self {
             Self::Evm(tx) => evm::check_matches_intent(tx, intent),
@@ -446,6 +455,26 @@ fn check_bitcoin_reservations(ledger: &Ledger, id: &str, unsigned: &UnsignedTx) 
     let UnsignedTx::Bitcoin(tx) = unsigned else {
         return Ok(());
     };
+    let wallet = &ledger.txs[ledger.index(id)?].intent.wallet_id;
+    if let Some(replaced) = &tx.replaces {
+        let original = ledger
+            .txs
+            .iter()
+            .find(|t| &t.id == replaced)
+            .ok_or_else(|| invalid("the replaced transaction is not in this ledger"))?;
+        let Some(UnsignedTx::Bitcoin(old)) = &original.unsigned else {
+            return Err(invalid("only a Bitcoin transfer can be replaced by one"));
+        };
+        if &original.intent.wallet_id != wallet
+            || original.raw_signed_hex.is_none()
+            || !matches!(original.state, TxState::Broadcast | TxState::Pending)
+        {
+            return Err(invalid(
+                "only this wallet's sent, unconfirmed transfer can be replaced",
+            ));
+        }
+        tx.check_replaces(old)?;
+    }
     for other in &ledger.txs {
         if other.id == id
             || (other.raw_signed_hex.is_none()
@@ -456,17 +485,28 @@ fn check_bitcoin_reservations(ledger: &Ledger, id: &str, unsigned: &UnsignedTx) 
         {
             continue;
         }
-        if let Some(UnsignedTx::Bitcoin(reserved)) = &other.unsigned {
-            if reserved.inputs.iter().any(|a| {
-                tx.inputs
-                    .iter()
-                    .any(|b| a.txid == b.txid && a.vout == b.vout)
-            }) {
-                return Err(invalid(
-                    "Bitcoin input is reserved by another active or signed transfer",
-                ));
-            }
+        let Some(UnsignedTx::Bitcoin(reserved)) = &other.unsigned else {
+            continue;
+        };
+        if !reserved.inputs.iter().any(|a| {
+            tx.inputs
+                .iter()
+                .any(|b| a.txid == b.txid && a.vout == b.vout)
+        }) {
+            continue;
         }
+        // A replacement conflicts with what is already on the network by
+        // design; it must never race another transfer still being approved.
+        let on_network = matches!(
+            other.state,
+            TxState::Broadcast | TxState::Pending | TxState::Replaced | TxState::Dropped
+        );
+        if tx.replaces.is_some() && on_network && reserved.from == tx.from {
+            continue;
+        }
+        return Err(invalid(
+            "Bitcoin input is reserved by another active or signed transfer",
+        ));
     }
     Ok(())
 }
@@ -893,12 +933,15 @@ pub fn attach(
                 .ok_or_else(|| {
                     invalid("no key and no registered hardware account for this signer")
                 })?,
-            UnsignedTx::Solana(_) => threshold::lookup(vault, &signer.wallet_id)?
-                .map(|acc| acc.solana_address)
-                .ok_or_else(|| invalid("no key and no threshold share for this signer"))?,
+            UnsignedTx::Solana(_) | UnsignedTx::Bitcoin(_) => {
+                threshold::lookup(vault, &signer.wallet_id)?
+                    .filter(|acc| acc.curve == unsigned.threshold_curve())
+                    .map(|acc| acc.address)
+                    .ok_or_else(|| invalid("no key and no threshold share for this signer"))?
+            }
             _ => {
                 return Err(invalid(
-                    "external signing covers EVM hardware and Solana threshold wallets",
+                    "external signing covers EVM hardware and Solana/Bitcoin threshold wallets",
                 ))
             }
         }
@@ -1319,6 +1362,27 @@ pub fn abort_external(
     Ok(out)
 }
 
+fn threshold_sender(unsigned: &UnsignedTx) -> Result<&str> {
+    match unsigned {
+        UnsignedTx::Solana(tx) => Ok(&tx.from),
+        UnsignedTx::Bitcoin(tx) if tx.is_taproot()? => Ok(&tx.from),
+        _ => Err(invalid(
+            "threshold signing covers Solana and Bitcoin Taproot",
+        )),
+    }
+}
+
+/// The bytes a threshold sign ceremony is bound to: the Solana message, or the
+/// Bitcoin transaction from which each co-signer derives the input sighashes.
+pub fn threshold_payload(unsigned: &UnsignedTx) -> Result<Vec<u8>> {
+    threshold_sender(unsigned)?;
+    match unsigned {
+        UnsignedTx::Solana(tx) => tx.message(),
+        UnsignedTx::Bitcoin(tx) => tx.payload(),
+        _ => unreachable!("checked by threshold_sender"),
+    }
+}
+
 /// First half of a threshold approval: the checks of [`approve`], then
 /// Awaiting → Signing and the request every share signs. The signature comes
 /// back through [`complete_threshold`] once the ceremony has run.
@@ -1339,15 +1403,19 @@ pub fn begin_threshold(
         ));
     }
     let t = ledger.txs[i].clone();
-    let (Some(UnsignedTx::Solana(tx)), Some(signer)) = (&t.unsigned, &t.signer) else {
-        return Err(invalid("threshold signing is Solana only"));
+    let (Some(unsigned), Some(signer)) = (&t.unsigned, &t.signer) else {
+        return Err(invalid("nothing to sign"));
     };
+    let from = threshold_sender(unsigned)?;
     let acc = threshold::lookup(vault, &signer.wallet_id)?
         .ok_or_else(|| invalid("this wallet holds no threshold share here"))?;
-    if acc.solana_address != signer.address || tx.from != signer.address {
+    if acc.curve != unsigned.threshold_curve()
+        || acc.address != signer.address
+        || from != signer.address
+    {
         return Err(invalid("the group address changed since the proposal"));
     }
-    tx.check_matches_intent(&t.intent)?;
+    unsigned.check_matches_intent(&t.intent)?;
     let ctx = ledger.context(tx_id, now_ms, t.simulation_ok);
     let decision = policy::evaluate(&ledger.policies, &t.intent, &ctx);
     if let Decision::Deny { reasons, .. } = &decision {
@@ -1358,12 +1426,12 @@ pub fn begin_threshold(
         save_ledger(vault, &ledger)?;
         return Ok((out, None));
     }
-    let message = tx.message()?;
+    let message = threshold_payload(unsigned)?;
     let request = SignRequest {
         id: format!("{tx_id}-sign"),
         tx_id: tx_id.to_owned(),
         key_group_id: acc.group.id.clone(),
-        curve: Curve::Ed25519,
+        curve: acc.curve,
         payload_hash_hex: hex::encode(sha2::Sha256::digest(&message)),
         payload_hex: hex::encode(&message),
     };
@@ -1397,20 +1465,27 @@ pub fn complete_threshold(
     }
     let t = ledger.txs[i].clone();
     let checked = (|| -> Result<(String, String)> {
-        let (Some(UnsignedTx::Solana(tx)), Some(signer)) = (&t.unsigned, &t.signer) else {
-            return Err(invalid("threshold signing is Solana only"));
+        let (Some(unsigned), Some(signer)) = (&t.unsigned, &t.signer) else {
+            return Err(invalid("nothing to sign"));
         };
         let acc = threshold::lookup(vault, &signer.wallet_id)?
             .ok_or_else(|| invalid("this wallet holds no threshold share here"))?;
-        if acc.solana_address != tx.from {
+        if acc.curve != unsigned.threshold_curve() || acc.address != threshold_sender(unsigned)? {
             return Err(invalid("the group address changed since the proposal"));
         }
-        tx.check_matches_intent(&t.intent)?;
-        let sig: [u8; 64] = hex::decode(signature_hex.trim_start_matches("0x"))
-            .ok()
-            .and_then(|b| b.try_into().ok())
-            .ok_or_else(|| invalid("a signature is 64 bytes of hex"))?;
-        tx.assemble(&sig)
+        unsigned.check_matches_intent(&t.intent)?;
+        let sig = hex::decode(signature_hex.trim_start_matches("0x"))
+            .map_err(|_| invalid("the signature is not hex"))?;
+        match unsigned {
+            UnsignedTx::Solana(tx) => {
+                let sig: [u8; 64] = sig
+                    .try_into()
+                    .map_err(|_| invalid("a signature is 64 bytes of hex"))?;
+                tx.assemble(&sig)
+            }
+            UnsignedTx::Bitcoin(tx) => tx.assemble_taproot(&sig),
+            _ => Err(invalid("threshold signing covers Solana and Bitcoin")),
+        }
     })();
     match checked {
         Ok((raw, hash)) => {
@@ -1862,6 +1937,120 @@ mod tests {
         assert!(report(&mut v, "btc", TxState::Expired, None, "d", 10).is_err());
         report(&mut v, "btc", TxState::Confirmed, None, "d", 11).unwrap();
         load_ledger(&v).unwrap().validate().unwrap();
+    }
+
+    #[test]
+    fn a_stuck_bitcoin_transfer_can_be_sped_up_or_cancelled_under_bip125() {
+        let mut v = vault();
+        let path = "m/84'/1'/0'/0/0";
+        let key = provenance::signing_key(&v, "w", Curve::Secp256k1, path).unwrap();
+        let original = bitcoin::fixture(&key.public);
+        let signer = Signer {
+            wallet_id: "w".into(),
+            path: path.into(),
+            address: original.from.clone(),
+        };
+        let mut step = 0;
+        let mut send = |v: &mut EncryptedVault, id: &str, tx: &BitcoinTx| {
+            step += 10;
+            let mut i = intent(id, &tx.to, &tx.amount);
+            i.chain_id = ChainId(bitcoin::SIGNET.into());
+            i.kind = TxIntentKind::Transfer {
+                to: tx.to.clone(),
+                asset: AssetRef(format!("{}:native", bitcoin::SIGNET)),
+                amount: Amount(tx.amount.clone()),
+            };
+            propose(v, i, "d", step).unwrap();
+            attach(
+                v,
+                id,
+                signer.clone(),
+                tx.clone(),
+                serde_json::json!({}),
+                false,
+                "d",
+                step + 1,
+            )
+        };
+        send(&mut v, "orig", &original).unwrap();
+        evaluate(&mut v, "orig", "d", 12).unwrap();
+
+        // Not on the network yet: nothing to replace, and its inputs stay reserved.
+        let faster = BitcoinTx {
+            fee: "700".into(),
+            replaces: Some("orig".into()),
+            ..original.clone()
+        };
+        assert!(send(&mut v, "early", &faster).is_err());
+        approve(&mut v, "orig", &pw(), "d", 13).unwrap();
+        report(&mut v, "orig", TxState::Broadcast, None, "d", 14).unwrap();
+        report(&mut v, "orig", TxState::Pending, None, "d", 15).unwrap();
+
+        // 142 vB bound: +100 sats does not pay the incremental relay fee.
+        let timid = BitcoinTx {
+            fee: "600".into(),
+            ..faster.clone()
+        };
+        assert!(send(&mut v, "timid", &timid)
+            .unwrap_err()
+            .to_string()
+            .contains("fee rate"));
+        // An ordinary send still may not touch the pending inputs.
+        assert!(send(&mut v, "plain", &original).is_err());
+        let rec = send(&mut v, "faster", &faster).unwrap();
+        assert_eq!(rec.state, TxState::Simulated);
+        evaluate(&mut v, "faster", "d", 100).unwrap();
+        // A second replacement may not race one still being approved.
+        let cancel = BitcoinTx {
+            to: original.from.clone(),
+            amount: "99100".into(),
+            fee: "900".into(),
+            replaces: Some("orig".into()),
+            ..original.clone()
+        };
+        assert!(send(&mut v, "cancel-early", &cancel).is_err());
+        let signed = approve(&mut v, "faster", &pw(), "d", 101).unwrap();
+        assert_eq!(signed.state, TxState::Signed);
+        report(&mut v, "faster", TxState::Broadcast, None, "d", 102).unwrap();
+        report(&mut v, "faster", TxState::Pending, None, "d", 103).unwrap();
+
+        // Cancel the speed-up too: everything back to the sender, one output.
+        let cancel = BitcoinTx {
+            replaces: Some("faster".into()),
+            amount: "98900".into(),
+            fee: "1100".into(),
+            ..cancel
+        };
+        let leftover = BitcoinTx {
+            amount: "98000".into(),
+            ..cancel.clone()
+        };
+        assert!(leftover.psbt().is_err(), "a cancel leaves no change");
+        let unreplaced = BitcoinTx {
+            replaces: None,
+            ..cancel.clone()
+        };
+        assert!(unreplaced.psbt().is_err(), "self-payment only as a cancel");
+        send(&mut v, "cancel", &cancel).unwrap();
+        evaluate(&mut v, "cancel", "d", 200).unwrap();
+        let signed = approve(&mut v, "cancel", &pw(), "d", 201).unwrap();
+        let raw = hex::decode(&signed.raw_signed_hex.unwrap()[2..]).unwrap();
+        let tx: ::bitcoin::Transaction = ::bitcoin::consensus::deserialize(&raw).unwrap();
+        assert_eq!(tx.output.len(), 1);
+        assert_eq!(tx.output[0].value.to_sat(), 98_900);
+        load_ledger(&v).unwrap().validate().unwrap();
+
+        // Replacing a confirmed transfer, or another wallet's, is refused.
+        report(&mut v, "cancel", TxState::Broadcast, None, "d", 202).unwrap();
+        report(&mut v, "cancel", TxState::Pending, None, "d", 203).unwrap();
+        report(&mut v, "cancel", TxState::Confirmed, None, "d", 204).unwrap();
+        let late = BitcoinTx {
+            fee: "1500".into(),
+            amount: "98500".into(),
+            replaces: Some("cancel".into()),
+            ..cancel.clone()
+        };
+        assert!(send(&mut v, "late", &late).is_err());
     }
 
     fn intent(id: &str, to: &str, amount: &str) -> TxIntent {

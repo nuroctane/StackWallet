@@ -124,7 +124,7 @@ describe.skipIf(!built)('wasm bridge against the built core', () => {
     const c = await load();
     const own = await c.createVault(PASS);
     const peerVault = await c.createVault(PASS);
-    const peerInfo = await peerVault.createIdentity('id');
+    const peerInfo = await peerVault.createIdentity('device-identity');
     peerVault.free();
 
     expect(await own.devices()).toEqual([]);
@@ -218,6 +218,20 @@ describe.skipIf(!built)('wasm bridge against the built core', () => {
     expect(await v.appRecord('agent-session:s1')).toBe('{"id":"s1"}');
     await expect(v.appRecord('mnemonic:dev')).rejects.toThrow(/not an app record/);
     await expect(v.providerKey('../mnemonic')).rejects.toThrow();
+
+    // The page writes and deletes only its own records: never the ledger and
+    // its policies, a phrase, a share, the device table or an identity.
+    for (const label of ['tx-ledger', 'mnemonic:dev', 'tss:w', 'device-table', 'provider-key:'])
+      await expect(v.put(label, new Uint8Array(32))).rejects.toThrow(/not an app record/);
+    await v.createIdentity('device-identity');
+    await expect(v.createIdentity('device-identity')).rejects.toThrow(/already holds/);
+    const labels = await v.labels();
+    for (const l of labels.filter((x) => !x.label.startsWith('agent-session:')))
+      await expect(v.delete(l.handle)).rejects.toThrow(/not an app record/);
+    // Only the device identity signs ceremony envelopes or opens identities.
+    await expect(v.identityInfo('mnemonic:dev')).rejects.toThrow(/not a device identity/);
+    await expect(v.createIdentity('tss:w')).rejects.toThrow(/not a device identity/);
+    expect((await v.identityInfo('device-identity')).deviceId).toBeTruthy();
 
     await v.createSingle('fresh', 4);
     const sol = await v.singlePublicKey('fresh', 'ed25519', "m/44'/501'/0'/0'");
@@ -364,12 +378,12 @@ describe.skipIf(!built)('wasm bridge against the built core', () => {
     const c = await load();
     const vaultA = await c.createVault(PASS);
     const vaultB = await c.createVault(PASS);
-    const infoA = await vaultA.createIdentity('id');
-    const infoB = await vaultB.createIdentity('id');
+    const infoA = await vaultA.createIdentity('device-identity');
+    const infoB = await vaultB.createIdentity('device-identity');
     const a = deviceFrom(infoA, 'A');
     const b = deviceFrom(infoB, 'B');
-    const idA = await vaultA.identity('id');
-    const idB = await vaultB.identity('id');
+    const idA = await vaultA.identity('device-identity');
+    const idB = await vaultB.identity('device-identity');
     const now = Date.now();
 
     const offer = {
@@ -418,7 +432,7 @@ describe.skipIf(!built)('wasm bridge against the built core', () => {
     ]);
 
     // A ceremony envelope from the peer itself surfaces as a plain frame.
-    const signed = await vaultA.signCeremonyMessage('id', {
+    const signed = await vaultA.signCeremonyMessage('device-identity', {
       sessionId: 's1',
       payloadHashHex: '',
       fromDeviceId: a.id,

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type {
   CosignSummary,
   Device,
@@ -22,27 +22,50 @@ import { useRegistry } from '../store/RegistryContext.js';
 import { approveWithCeremony } from '../store/txs.js';
 import {
   joinKeygen,
+  joinReconcile,
+  joinRefresh,
   joinSign,
   proposeKeygen,
+  proposeReconcile,
+  proposeRefresh,
   proposeSign,
   readProposal,
+  type Reconciled,
 } from '../threshold/ceremony.js';
 import { openLink, type CeremonyLink } from '../threshold/link.js';
 import { SessionField, sessionReady } from './ExportGateFields.js';
 import { QrCode } from './views/QrCode.js';
 
-const DEVNET = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
+/** What a shared wallet signs on, by the one FROST curve its key lives on. */
+const KINDS = {
+  ed25519: { label: 'Solana Devnet', chain: 'solana devnet', symbol: 'SOL', decimals: 9 },
+  'secp256k1-tr': {
+    label: 'Bitcoin Signet (Taproot)',
+    chain: 'bitcoin signet',
+    symbol: 'sBTC',
+    decimals: 8,
+  },
+} as const;
+type SharedCurve = keyof typeof KINDS;
+const kindOfChain = (chainId: string) =>
+  chainId.startsWith('bip122:') ? KINDS['secp256k1-tr'] : KINDS.ed25519;
+
+/** Shared wallets stay small: every extra party is one more code swap per ceremony. */
+const MAX_PARTIES = 5;
 
 export type ThresholdTarget =
   | { mode: 'create'; folderId?: string | undefined }
   | { mode: 'join' }
-  | { mode: 'sign'; txId: string };
+  | { mode: 'sign'; txId: string }
+  | { mode: 'refresh'; walletId: string };
 
 /**
- * Shared (threshold) wallets between two paired devices. Each device keeps
- * one FROST share sealed in its own vault; neither ever holds the key. The
- * devices meet over a direct WebRTC connection set up by pasting or scanning
- * two codes, and every ceremony message is signed by the device that sent it.
+ * Shared (threshold) wallets between paired devices. Each device keeps one
+ * FROST share sealed in its own vault; none ever holds the key. The device
+ * that starts a ceremony connects to each other device directly over WebRTC
+ * (two pasted or scanned codes per device) and relays between them; every
+ * message is signed by its author, and messages meant for one device are
+ * sealed to it, so the relay can neither forge nor read them.
  */
 export function ThresholdDialog({
   open,
@@ -58,14 +81,30 @@ export function ThresholdDialog({
       ? 'Sign together'
       : target?.mode === 'join'
         ? 'Join a ceremony'
-        : 'New shared wallet';
+        : target?.mode === 'refresh'
+          ? 'Refresh shares'
+          : 'New shared wallet';
   return (
-    <Dialog open={open} onClose={onClose} title={title} meta="2-of-2 · ed25519 · solana devnet">
+    <Dialog open={open} onClose={onClose} title={title} meta="threshold · frost">
       {target?.mode === 'create' && <CreateFlow folderId={target.folderId} onClose={onClose} />}
       {target?.mode === 'join' && <JoinFlow onClose={onClose} />}
       {target?.mode === 'sign' && <SignFlow txId={target.txId} onClose={onClose} />}
+      {target?.mode === 'refresh' && <RefreshFlow walletId={target.walletId} onClose={onClose} />}
     </Dialog>
   );
+}
+
+const RECONCILED: Record<Reconciled, string> = {
+  committed: 'Every device holds the refreshed shares; the old ones are gone',
+  inSync: 'Every device already holds the same shares',
+  rolledBack: 'Another device kept its old share, so this one went back to it',
+};
+
+/** The wallet this device holds a share of in `keyGroupId`, if any. */
+async function walletOfGroup(keyGroupId: string): Promise<ThresholdAccount> {
+  const account = (await vault.thresholdList()).find((a) => a.group.id === keyGroupId);
+  if (!account) throw new Error('This device holds no share of that wallet');
+  return account;
 }
 
 function message(err: unknown): string {
@@ -102,6 +141,9 @@ function useConnection() {
       local: deviceOf(local),
       carrier,
       sign: (m) => vault.signCeremony(m),
+      open: (m) => vault.openCeremony(m),
+      // Only a joiner hears from devices other than its peer, relayed by the hub.
+      ...(role.kind === 'responder' ? { admitRelayed: (s) => vault.admitRelayed(s) } : {}),
       role,
       timeoutMs: 5 * 60_000,
     })
@@ -218,13 +260,24 @@ function Paste({
   );
 }
 
-/** The initiator's half of the code swap. */
-function Connect({ conn, peer }: { conn: ReturnType<typeof useConnection>; peer: Device }) {
+/** The initiator's half of the code swap with one device. */
+function PeerConnect({
+  peer,
+  onLink,
+}: {
+  peer: Device;
+  onLink: (peerId: string, link: CeremonyLink | null) => void;
+}) {
+  const conn = useConnection();
   const [sent, setSent] = useState(false);
-  if (conn.link) return <p className="text-muted">Connected to {conn.link.peer.name}.</p>;
+  useEffect(() => {
+    onLink(peer.id, conn.link);
+  }, [conn.link, peer.id, onLink]);
   return (
-    <div className="flex flex-col gap-3">
-      {!conn.code ? (
+    <div className="flex flex-col gap-3 rounded-sw-sm border border-edge p-3">
+      {conn.link ? (
+        <p className="text-muted">Connected to {conn.link.peer.name}.</p>
+      ) : !conn.code ? (
         <Button variant="primary" onClick={() => void conn.start(peer)}>
           Connect to {peer.name}
         </Button>
@@ -248,6 +301,62 @@ function Connect({ conn, peer }: { conn: ReturnType<typeof useConnection>; peer:
           )}
         </>
       )}
+      {conn.error && <p className="text-danger">{conn.error}</p>}
+    </div>
+  );
+}
+
+/** One code swap per device; `links` is complete once every device is connected. */
+function useLinks(peers: readonly Device[]) {
+  const [links, setLinks] = useState<Record<string, CeremonyLink | null>>({});
+  const onLink = useCallback(
+    (peerId: string, link: CeremonyLink | null) =>
+      setLinks((prev) => (prev[peerId] === link ? prev : { ...prev, [peerId]: link })),
+    [],
+  );
+  const ready = peers.length > 0 && peers.every((p) => links[p.id]);
+  return {
+    ready,
+    links: ready ? peers.map((p) => links[p.id]!) : [],
+    view: (
+      <div className="flex flex-col gap-3">
+        {peers.map((p) => (
+          <PeerConnect key={p.id} peer={p} onLink={onLink} />
+        ))}
+      </div>
+    ),
+  };
+}
+
+/** Choose some of `candidates`; exactly `exactly` when set. */
+function DevicePicker({
+  candidates,
+  chosen,
+  onChange,
+  exactly,
+}: {
+  candidates: readonly Device[];
+  chosen: readonly string[];
+  onChange: (ids: string[]) => void;
+  exactly?: number;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      {candidates.map((d) => {
+        const on = chosen.includes(d.id);
+        const full = exactly !== undefined && chosen.length >= exactly && !on;
+        return (
+          <label key={d.id} className="flex items-center gap-2 text-ink">
+            <input
+              type="checkbox"
+              checked={on}
+              disabled={full}
+              onChange={() => onChange(on ? chosen.filter((x) => x !== d.id) : [...chosen, d.id])}
+            />
+            {d.name}
+          </label>
+        );
+      })}
     </div>
   );
 }
@@ -291,8 +400,8 @@ function addWallet(account: ThresholdAccount, name: string, folderId: string) {
     keyGroupId: account.group.id,
     accounts: [
       {
-        chainId: DEVNET,
-        address: account.solanaAddress,
+        chainId: account.chainId,
+        address: account.address,
         derivationPath: 'tss',
         publicKeyHex: account.publicKeyHex,
       },
@@ -304,37 +413,41 @@ function CreateFlow({ folderId, onClose }: { folderId?: string | undefined; onCl
   const state = useDirectory();
   const devState = useDevices();
   const toasts = useToasts();
-  const ids = { name: useId(), peer: useId() };
-  const peers = activeDevices(devState);
+  const ids = { name: useId(), curve: useId(), threshold: useId() };
+  const candidates = activeDevices(devState);
   const root = state.folders.find((f) => f.parentId === null)!;
   const [name, setName] = useState('Shared');
-  const [peerId, setPeerId] = useState(peers[0]?.id ?? '');
-  const [chosen, setChosen] = useState<Device | null>(null);
+  const [curve, setCurve] = useState<SharedCurve>('ed25519');
+  const [picked, setPicked] = useState<string[]>(candidates[0] ? [candidates[0].id] : []);
+  const [threshold, setThreshold] = useState(2);
+  const [chosen, setChosen] = useState<Device[] | null>(null);
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const conn = useConnection();
+  const conns = useLinks(chosen ?? []);
   const local = devState.localDevice;
-  if (!local || peers.length === 0)
+  if (!local || candidates.length === 0)
     return (
       <p className="p-4 text-[12px] text-faint">
-        Pair the other device first (Devices). A shared wallet is split between two paired devices.
+        Pair the other devices first (Devices). A shared wallet is split between paired devices.
       </p>
     );
+  const parties = picked.length + 1;
+  const t = Math.min(Math.max(threshold, 2), parties);
 
   const run = async (choice: SessionChoice) => {
-    if (!conn.link || !chosen) return;
+    if (!conns.ready || !chosen) return;
     setWorking('generating');
     setError(null);
     try {
       const proof = await vault.proveSession(choice);
       const group: KeyGroup = {
         id: crypto.randomUUID(),
-        threshold: 2,
+        threshold: t,
         parties: [
           { deviceId: local.id, role: 'human' },
-          { deviceId: chosen.id, role: 'human' },
+          ...chosen.map((d) => ({ deviceId: d.id, role: 'human' as const })),
         ],
-        curves: ['ed25519'],
+        curves: [curve],
         publicKeys: [],
       };
       const ceremony = await vault.core!.thresholdKeygenSession(
@@ -344,7 +457,7 @@ function CreateFlow({ folderId, onClose }: { folderId?: string | undefined; onCl
       );
       const account = await proposeKeygen({
         ops: vault,
-        link: conn.link,
+        links: conns.links,
         localId: local.id,
         walletId: crypto.randomUUID(),
         group,
@@ -353,7 +466,7 @@ function CreateFlow({ folderId, onClose }: { folderId?: string | undefined; onCl
       });
       const r = addWallet(account, name, folderId ?? root.id);
       if (!r.ok) throw new Error(r.error);
-      toasts.push(`${name} created; ${chosen.name} holds the other share`);
+      toasts.push(`${name} created: ${t} of ${group.parties.length} devices sign`);
       onClose();
     } catch (err) {
       setError(message(err));
@@ -369,42 +482,77 @@ function CreateFlow({ folderId, onClose }: { folderId?: string | undefined; onCl
           className="flex flex-col gap-3"
           onSubmit={(e) => {
             e.preventDefault();
-            setChosen(peers.find((p) => p.id === peerId) ?? null);
+            setThreshold(t);
+            setChosen(candidates.filter((d) => picked.includes(d.id)));
           }}
         >
           <Field label="Name" htmlFor={ids.name}>
             <Input id={ids.name} value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
-          <Field label="Other share on" htmlFor={ids.peer}>
-            <Select id={ids.peer} value={peerId} onChange={(e) => setPeerId(e.target.value)}>
-              {peers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
+          <Field label="Signs on" htmlFor={ids.curve}>
+            <Select
+              id={ids.curve}
+              value={curve}
+              onChange={(e) => setCurve(e.target.value as SharedCurve)}
+            >
+              {(Object.keys(KINDS) as SharedCurve[]).map((c) => (
+                <option key={c} value={c}>
+                  {KINDS[c].label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <div className="flex flex-col gap-1">
+            <p className="text-[10px] tracking-[0.08em] text-faint uppercase">
+              Other shares on (this device holds one too)
+            </p>
+            <DevicePicker
+              candidates={candidates}
+              chosen={picked}
+              onChange={(next) => setPicked(next.slice(0, MAX_PARTIES - 1))}
+            />
+          </div>
+          <Field label="Devices needed to sign" htmlFor={ids.threshold}>
+            <Select
+              id={ids.threshold}
+              value={String(t)}
+              onChange={(e) => setThreshold(Number(e.target.value))}
+            >
+              {Array.from({ length: Math.max(parties - 1, 1) }, (_, i) => i + 2).map((n) => (
+                <option key={n} value={n}>
+                  {n} of {parties}
                 </option>
               ))}
             </Select>
           </Field>
           <p className="text-faint">
-            Both devices must approve every transaction. Neither can sign alone, and no device ever
-            holds the whole key.
+            Any {t} of these {parties} devices must approve every transaction. Fewer can never sign,
+            and no device ever holds the whole key. Every device must be paired with every other
+            one.
           </p>
           <div className="flex justify-end">
-            <Button type="submit" variant="primary" disabled={!peerId || !name.trim()}>
+            <Button type="submit" variant="primary" disabled={picked.length === 0 || !name.trim()}>
               Next
             </Button>
           </div>
         </form>
       ) : (
         <>
-          <Connect conn={conn} peer={chosen} />
-          {conn.link && (
+          {conns.view}
+          {conns.ready && (
             <SessionStep label="Create shared key" working={working} onRun={(s) => void run(s)} />
           )}
         </>
       )}
-      {(error ?? conn.error) && <p className="text-danger">{error ?? conn.error}</p>}
+      {error && <p className="text-danger">{error}</p>}
     </div>
   );
+}
+
+/** Participants of a proposal other than this device and the proposer. */
+function thirdParties(p: ThresholdProposal, localId: string, proposerId: string): string[] {
+  const ids = p.kind === 'keyGen' ? p.group.parties.map((x) => x.deviceId) : p.session.participants;
+  return ids.filter((id) => id !== localId && id !== proposerId);
 }
 
 function JoinFlow({ onClose }: { onClose: () => void }) {
@@ -427,6 +575,16 @@ function JoinFlow({ onClose }: { onClose: () => void }) {
       try {
         const p = readProposal(await link.next());
         if (!live) return;
+        const local = devices.getSnapshot().localDevice;
+        if (!local) throw new Error('This device has no identity yet');
+        // Messages from the other parties arrive relayed by the proposer and
+        // are checked against this device's own pins, so each must be paired here.
+        const known = new Set(activeDevices(devices.getSnapshot()).map((d) => d.id));
+        const unpaired = thirdParties(p, local.id, link.peer.id).filter((id) => !known.has(id));
+        if (unpaired.length > 0)
+          throw new Error(
+            `Pair this device with ${unpaired.join(', ')} first; it takes part in this ceremony`,
+          );
         if (p.kind === 'sign') {
           const r = await vault.thresholdReview(p.request, p.session, link.peer.id);
           if (!r.ok) throw new Error(r.error);
@@ -445,8 +603,17 @@ function JoinFlow({ onClose }: { onClose: () => void }) {
 
   const run = async (choice: SessionChoice) => {
     const link = conn.link;
-    if (!link || !proposal) return;
-    setWorking(proposal.kind === 'sign' ? 'signing' : 'generating');
+    const local = devices.getSnapshot().localDevice;
+    if (!link || !proposal || !local) return;
+    setWorking(
+      proposal.kind === 'sign'
+        ? 'signing'
+        : proposal.kind === 'keyGen'
+          ? 'generating'
+          : proposal.kind === 'refresh'
+            ? 'refreshing'
+            : 'comparing',
+    );
     setError(null);
     try {
       const session = await vault.proveSession(choice);
@@ -454,16 +621,25 @@ function JoinFlow({ onClose }: { onClose: () => void }) {
         const account = await joinKeygen({
           ops: vault,
           link,
+          localId: local.id,
           proposal,
           walletId: crypto.randomUUID(),
           session,
         });
         const r = addWallet(account, name, root.id);
         if (!r.ok) throw new Error(r.error);
-        toasts.push(`${name} created; ${link.peer.name} holds the other share`);
-      } else {
-        await joinSign({ ops: vault, link, proposal, session });
+        toasts.push(`${name} created; this device holds one share`);
+      } else if (proposal.kind === 'sign') {
+        await joinSign({ ops: vault, link, localId: local.id, proposal, session });
         toasts.push(`Co-signed with ${link.peer.name}`);
+      } else {
+        const account = await walletOfGroup(proposal.session.keyGroupId);
+        const common = { ops: vault, link, localId: local.id, walletId: account.walletId, session };
+        const out =
+          proposal.kind === 'refresh'
+            ? await joinRefresh({ ...common, proposal })
+            : await joinReconcile({ ...common, proposal });
+        toasts.push(RECONCILED[out]);
       }
       onClose();
     } catch (err) {
@@ -488,18 +664,35 @@ function JoinFlow({ onClose }: { onClose: () => void }) {
           <LoadingWord label="waiting for the connection" />
         </>
       ) : !proposal ? (
-        <LoadingWord label={`connected to ${conn.link.peer.name}; waiting for its proposal`} />
+        !error && (
+          <LoadingWord label={`connected to ${conn.link.peer.name}; waiting for its proposal`} />
+        )
       ) : proposal.kind === 'keyGen' ? (
         <>
           <p className="text-muted">
-            <span className="text-ink">{conn.link.peer.name}</span> proposes a shared wallet: both
-            devices must approve every transaction ({proposal.group.threshold} of{' '}
-            {proposal.group.parties.length}).
+            <span className="text-ink">{conn.link.peer.name}</span> proposes a shared{' '}
+            {KINDS[proposal.group.curves[0] as SharedCurve]?.label ?? proposal.group.curves[0]}{' '}
+            wallet: any {proposal.group.threshold} of its {proposal.group.parties.length} devices
+            must approve every transaction.
           </p>
           <Field label="Name here" htmlFor={nameId}>
             <Input id={nameId} value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
           <SessionStep label="Join" working={working} onRun={(s) => void run(s)} />
+        </>
+      ) : proposal.kind === 'refresh' || proposal.kind === 'reconcile' ? (
+        <>
+          <p className="text-muted">
+            <span className="text-ink">{conn.link.peer.name}</span>{' '}
+            {proposal.kind === 'refresh'
+              ? 'proposes replacing every share of a shared wallet with fresh ones. The addresses stay the same; the old shares stop working once every device confirms.'
+              : 'asks to compare share generations after an unfinished refresh. This device keeps whichever share the other devices hold.'}
+          </p>
+          <SessionStep
+            label={proposal.kind === 'refresh' ? 'Refresh' : 'Compare'}
+            working={working}
+            onRun={(s) => void run(s)}
+          />
         </>
       ) : (
         review && (
@@ -508,12 +701,19 @@ function JoinFlow({ onClose }: { onClose: () => void }) {
               <span className="text-ink">{conn.link.peer.name}</span> asks this device to co-sign:
             </p>
             <p className="text-ink">
-              Send {formatUnits(review.lamports, 9)} SOL to{' '}
+              Send {formatUnits(review.amount, kindOfChain(review.chainId).decimals)}{' '}
+              {kindOfChain(review.chainId).symbol} to{' '}
               <span className="font-mono break-all">{review.to}</span>
             </p>
+            {review.fee !== null && (
+              <p className="text-muted">
+                network fee {formatUnits(review.fee, kindOfChain(review.chainId).decimals)}{' '}
+                {kindOfChain(review.chainId).symbol}
+              </p>
+            )}
             <p className="text-faint">
-              from <span className="font-mono break-all">{review.from}</span> · decoded by this
-              device&apos;s core
+              from <span className="font-mono break-all">{review.from}</span> on{' '}
+              {kindOfChain(review.chainId).chain} · decoded by this device&apos;s core
             </p>
             {denied ? (
               <p className="text-danger">
@@ -531,18 +731,24 @@ function JoinFlow({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** The other parties of `account`'s group that are paired and active here. */
+function otherParties(account: ThresholdAccount, all: readonly Device[], localId: string) {
+  return all.filter((d) =>
+    account.group.parties.some((p) => p.deviceId === d.id && d.id !== localId),
+  );
+}
+
 function SignFlow({ txId, onClose }: { txId: string; onClose: () => void }) {
   const registry = useRegistry();
   const view = useVaultView(vault);
   const devState = useDevices();
   const toasts = useToasts();
-  const peerId = useId();
-  const conn = useConnection();
   const [accounts, setAccounts] = useState<ThresholdAccount[] | null>(null);
-  const [picked, setPicked] = useState('');
-  const [chosen, setChosen] = useState<Device | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [chosen, setChosen] = useState<Device[] | null>(null);
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const conns = useLinks(chosen ?? []);
   useEffect(() => {
     void vault.thresholdList().then(setAccounts);
   }, []);
@@ -553,19 +759,19 @@ function SignFlow({ txId, onClose }: { txId: string; onClose: () => void }) {
   const account = accounts.find((a) => a.walletId === tx.intent.walletId);
   if (!account)
     return <p className="p-4 text-[12px] text-faint">This device holds no share of that wallet.</p>;
-  const peers = activeDevices(devState).filter((d) =>
-    account.group.parties.some((p) => p.deviceId === d.id && d.id !== local.id),
-  );
-  if (peers.length === 0)
+  const peers = otherParties(account, activeDevices(devState), local.id);
+  const needed = account.group.threshold - 1;
+  if (peers.length < needed)
     return (
       <p className="p-4 text-[12px] text-faint">
-        The device with the other share is not paired here (or was revoked).
+        This wallet needs {needed} other device{needed === 1 ? '' : 's'} to sign, and only{' '}
+        {peers.length} of its devices {peers.length === 1 ? 'is' : 'are'} paired here.
       </p>
     );
+  const selection = peers.length === needed ? peers.map((p) => p.id) : picked;
 
   const run = async (choice: SessionChoice) => {
-    const link = conn.link;
-    if (!link) return;
+    if (!conns.ready) return;
     setWorking('signing');
     setError(null);
     const session = await vault.proveSession(choice).catch((err: unknown) => {
@@ -579,7 +785,7 @@ function SignFlow({ txId, onClose }: { txId: string; onClose: () => void }) {
     const r = await approveWithCeremony(registry, tx, () =>
       proposeSign({
         ops: vault,
-        link,
+        links: conns.links,
         localId: local.id,
         txId,
         session,
@@ -591,7 +797,7 @@ function SignFlow({ txId, onClose }: { txId: string; onClose: () => void }) {
     else if (r.value.state === 'rejected' || r.value.state === 'failed')
       setError(r.value.error ?? 'The core refused to sign under the current policy.');
     else {
-      toasts.push('Signed by both devices and sent');
+      toasts.push(`Signed by ${account.group.threshold} devices and sent`);
       onClose();
     }
   };
@@ -600,38 +806,128 @@ function SignFlow({ txId, onClose }: { txId: string; onClose: () => void }) {
     <div className="flex flex-col gap-4 p-4 text-[12px]">
       {!chosen ? (
         <form
-          className="flex items-end gap-2"
+          className="flex flex-col gap-3"
           onSubmit={(e) => {
             e.preventDefault();
-            setChosen(peers.find((p) => p.id === (picked || peers[0]!.id)) ?? null);
+            setChosen(peers.filter((p) => selection.includes(p.id)));
           }}
         >
-          <Field label="Co-signer" htmlFor={peerId}>
-            <Select
-              id={peerId}
-              value={picked || peers[0]!.id}
-              onChange={(e) => setPicked(e.target.value)}
-            >
-              {peers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Button type="submit" variant="primary">
-            Next
-          </Button>
+          <p className="text-[10px] tracking-[0.08em] text-faint uppercase">
+            Co-signers ({needed} of {peers.length})
+          </p>
+          <DevicePicker
+            candidates={peers}
+            chosen={selection}
+            onChange={setPicked}
+            exactly={needed}
+          />
+          <div className="flex justify-end">
+            <Button type="submit" variant="primary" disabled={selection.length !== needed}>
+              Next
+            </Button>
+          </div>
         </form>
       ) : (
         <>
-          <Connect conn={conn} peer={chosen} />
-          {conn.link && (
+          {conns.view}
+          {conns.ready && (
             <SessionStep label="Sign together" working={working} onRun={(s) => void run(s)} />
           )}
         </>
       )}
-      {(error ?? conn.error) && <p className="text-danger">{error ?? conn.error}</p>}
+      {error && <p className="text-danger">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * Replace this wallet's shares on every device. A refresh some device did not
+ * finish leaves the previous share pending; then the same connections compare
+ * generations instead, and the core keeps whichever the others hold.
+ */
+function RefreshFlow({ walletId, onClose }: { walletId: string; onClose: () => void }) {
+  const devState = useDevices();
+  const toasts = useToasts();
+  const [account, setAccount] = useState<ThresholdAccount | null | undefined>(undefined);
+  const [pending, setPending] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [working, setWorking] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const local = devState.localDevice;
+  const peers = account && local ? otherParties(account, activeDevices(devState), local.id) : [];
+  const conns = useLinks(started ? peers : []);
+  useEffect(() => {
+    void (async () => {
+      const found = (await vault.thresholdList()).find((a) => a.walletId === walletId) ?? null;
+      setAccount(found);
+      if (!found) return;
+      const fp = await vault.thresholdShareFingerprint(walletId);
+      if (fp.ok) setPending(fp.value.previous !== null);
+    })();
+  }, [walletId]);
+  if (account === undefined) return <LoadingWord label="reading shares" />;
+  if (!account || !local)
+    return <p className="p-4 text-[12px] text-faint">This device holds no share of that wallet.</p>;
+  if (peers.length + 1 < account.group.parties.length)
+    return (
+      <p className="p-4 text-[12px] text-faint">
+        Every device of this wallet takes part in a refresh, and not all of them are paired here (or
+        one was revoked).
+      </p>
+    );
+
+  const run = async (choice: SessionChoice) => {
+    if (!conns.ready) return;
+    setWorking(pending ? 'comparing' : 'refreshing');
+    setError(null);
+    try {
+      const session = await vault.proveSession(choice);
+      const ceremony = await vault.thresholdRefreshSession(walletId);
+      if (!ceremony.ok) throw new Error(ceremony.error);
+      const common = {
+        ops: vault,
+        links: conns.links,
+        localId: local.id,
+        walletId,
+        ceremony: ceremony.value,
+        session,
+      };
+      const out = pending ? await proposeReconcile(common) : await proposeRefresh(common);
+      toasts.push(RECONCILED[out]);
+      onClose();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4 p-4 text-[12px]">
+      <p className="text-faint">
+        {pending
+          ? 'A refresh on this device was not confirmed by every other device. Connect to compare: this device keeps whichever share the others hold. Do not sign until this is settled.'
+          : 'Every device gets a fresh share of the same key: the addresses and balances stay, and a copy of an old vault stops being useful. Every device must take part.'}
+      </p>
+      {!started ? (
+        <div className="flex justify-end">
+          <Button variant="primary" onClick={() => setStarted(true)}>
+            Connect {peers.length === 1 ? peers[0]!.name : `${peers.length} devices`}
+          </Button>
+        </div>
+      ) : (
+        <>
+          {conns.view}
+          {conns.ready && (
+            <SessionStep
+              label={pending ? 'Compare shares' : 'Refresh shares'}
+              working={working}
+              onRun={(s) => void run(s)}
+            />
+          )}
+        </>
+      )}
+      {error && <p className="text-danger">{error}</p>}
     </div>
   );
 }

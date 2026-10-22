@@ -3,6 +3,12 @@
  * messages. The core's Noise session authenticates the peer against its
  * pinned record and verifies every envelope's identity signature; this file
  * only pumps bytes and queues what arrives.
+ *
+ * With more than two parties the proposer is a hub: every other party talks
+ * only to it, and it forwards envelopes between them unchanged. A relayed
+ * envelope is admitted only after this device's core verifies it against its
+ * own pinned record of the author, and addressed bodies are sealed end to end,
+ * so the hub can drop or delay traffic but never forge or read it.
  */
 import type {
   CeremonyMessage,
@@ -17,11 +23,21 @@ import type { Carrier } from '../core/carrier.js';
 
 export const LINK_TIMEOUT_MS = 60_000;
 
+/** A received message: `msg` is opened when it was sealed to this device. */
+export interface Envelope {
+  msg: CeremonyMessage;
+  signed: SignedCeremonyMessage;
+}
+
 export interface CeremonyLink {
   readonly peer: Device;
   send(msg: CeremonyMessage): Promise<void>;
+  /** Pass another device's envelope on unchanged (hub only). */
+  forward(signed: SignedCeremonyMessage): Promise<void>;
   /** The next message from the peer; rejects on close or after `timeoutMs`. */
   next(timeoutMs?: number): Promise<CeremonyMessage>;
+  /** Like `next`, with the signed envelope a hub forwards. */
+  nextEnvelope(timeoutMs?: number): Promise<Envelope>;
   close(reason: string): void;
 }
 
@@ -30,15 +46,22 @@ export interface OpenLinkOptions {
   identity: IdentityHandle;
   local: Device;
   carrier: Carrier;
-  /** Signs an envelope with this device's identity. */
+  /** Signs an envelope with this device's identity (sealing addressed rounds). */
   sign: (msg: CeremonyMessage) => Promise<SignedCeremonyMessage>;
+  /** Opens a body sealed to this device. */
+  open: (msg: CeremonyMessage) => Promise<CeremonyMessage>;
+  /**
+   * Verifies an envelope the peer relayed for another device against this
+   * device's pinned record of its author. Without it relays are refused.
+   */
+  admitRelayed?: (signed: SignedCeremonyMessage) => Promise<CeremonyMessage>;
   /** The initiator names the peer; the responder accepts any pinned device. */
   role: { kind: 'initiator'; peer: Device } | { kind: 'responder'; known: Device[] };
   timeoutMs?: number;
 }
 
 export async function openLink(opts: OpenLinkOptions): Promise<CeremonyLink> {
-  const { core, identity, local, carrier, sign, role } = opts;
+  const { core, identity, local, carrier, sign, open: openBody, role } = opts;
   const timeoutMs = opts.timeoutMs ?? LINK_TIMEOUT_MS;
   await carrier.ready;
   const session: SessionHandle =
@@ -46,8 +69,8 @@ export async function openLink(opts: OpenLinkOptions): Promise<CeremonyLink> {
       ? await core.connectInitiator(identity, local, role.peer, Date.now())
       : await core.connectResponder(identity, local, role.known, Date.now());
 
-  const inbox: CeremonyMessage[] = [];
-  let waiter: { resolve: (m: CeremonyMessage) => void; reject: (e: Error) => void } | null = null;
+  const inbox: Envelope[] = [];
+  let waiter: { resolve: (m: Envelope) => void; reject: (e: Error) => void } | null = null;
   let closed: Error | null = null;
   let peer: Device | null = null;
   let opened!: () => void;
@@ -64,12 +87,17 @@ export async function openLink(opts: OpenLinkOptions): Promise<CeremonyLink> {
     waiter?.reject(err);
     waiter = null;
   };
-  const deliver = (msg: CeremonyMessage) => {
+  const deliver = (env: Envelope) => {
     if (waiter) {
       const w = waiter;
       waiter = null;
-      w.resolve(msg);
-    } else inbox.push(msg);
+      w.resolve(env);
+    } else inbox.push(env);
+  };
+  // Only what is addressed to this device is opened; a hub passes the rest on sealed.
+  const accept = async (msg: CeremonyMessage, signed: SignedCeremonyMessage) => {
+    const mine = msg.toDeviceId === local.id;
+    deliver({ msg: mine ? await openBody(msg) : msg, signed });
   };
   const drain = async () => {
     for (const bytes of await session.takeOutgoing()) carrier.send(bytes);
@@ -98,13 +126,23 @@ export async function openLink(opts: OpenLinkOptions): Promise<CeremonyLink> {
               shut(new Error('a message did not come from the connected device'));
               return;
             }
-            deliver(ev.frame.msg);
+            const { type: _type, ...signed } = ev.frame;
+            await accept(ev.frame.msg, signed);
           } else if (ev.type === 'relayed') {
-            shut(
-              new Error(
-                'the peer relayed a message from another device; ceremonies here are direct',
-              ),
-            );
+            if (!opts.admitRelayed) {
+              shut(
+                new Error(
+                  'the peer relayed a message from another device; this ceremony is direct',
+                ),
+              );
+              return;
+            }
+            const msg = await opts.admitRelayed(ev.signed);
+            if (msg.fromDeviceId === local.id) {
+              shut(new Error('the peer relayed a message claiming to be from this device'));
+              return;
+            }
+            await accept(msg, ev.signed);
           } else if (ev.type === 'closed') {
             shut(new Error(ev.reason));
           }
@@ -128,6 +166,27 @@ export async function openLink(opts: OpenLinkOptions): Promise<CeremonyLink> {
     clearTimeout(timer);
   }
 
+  const nextEnvelope = (ms = timeoutMs) => {
+    if (inbox.length > 0) return Promise.resolve(inbox.shift()!);
+    if (closed) return Promise.reject(closed);
+    return new Promise<Envelope>((resolve, reject) => {
+      const t = setTimeout(() => {
+        waiter = null;
+        reject(new Error('the other device stopped answering'));
+      }, ms);
+      waiter = {
+        resolve: (m) => {
+          clearTimeout(t);
+          resolve(m);
+        },
+        reject: (e) => {
+          clearTimeout(t);
+          reject(e);
+        },
+      };
+    });
+  };
+
   return {
     peer: peer!,
     async send(msg) {
@@ -136,25 +195,14 @@ export async function openLink(opts: OpenLinkOptions): Promise<CeremonyLink> {
       await session.sendFrame({ type: 'ceremony', ...signed });
       await drain();
     },
-    next(ms = timeoutMs) {
-      if (inbox.length > 0) return Promise.resolve(inbox.shift()!);
-      if (closed) return Promise.reject(closed);
-      return new Promise<CeremonyMessage>((resolve, reject) => {
-        const t = setTimeout(() => {
-          waiter = null;
-          reject(new Error('the other device stopped answering'));
-        }, ms);
-        waiter = {
-          resolve: (m) => {
-            clearTimeout(t);
-            resolve(m);
-          },
-          reject: (e) => {
-            clearTimeout(t);
-            reject(e);
-          },
-        };
-      });
+    async forward(signed) {
+      if (closed) throw closed;
+      await session.sendFrame({ type: 'ceremony', ...signed });
+      await drain();
+    },
+    nextEnvelope,
+    async next(ms) {
+      return (await nextEnvelope(ms)).msg;
     },
     close(reason) {
       shut(new Error(reason));

@@ -196,6 +196,24 @@ class FakeVault implements VaultHandle {
   async thresholdSign(): Promise<never> {
     throw new Error('not used');
   }
+  async openCeremonyMessage(): Promise<never> {
+    throw new Error('not used');
+  }
+  async admitRelayed(): Promise<never> {
+    throw new Error('not used');
+  }
+  async thresholdRefresh(): Promise<never> {
+    throw new Error('not used');
+  }
+  async thresholdRefreshSession(): Promise<never> {
+    throw new Error('not used');
+  }
+  async thresholdShareFingerprint(): Promise<never> {
+    throw new Error('not used');
+  }
+  async thresholdReconcileRefresh(): Promise<never> {
+    throw new Error('not used');
+  }
   async txBeginThreshold(): Promise<never> {
     throw new Error('not used');
   }

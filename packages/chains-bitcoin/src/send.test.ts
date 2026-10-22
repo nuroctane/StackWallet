@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Transaction, address, networks, script } from 'bitcoinjs-lib';
 import { Secp256k1, Secp256k1Signature } from '@cosmjs/crypto';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import {
   WasmCoreClient,
   type BitcoinTx,
@@ -19,6 +20,8 @@ import {
   bitcoinInputsUnspent,
   broadcastBitcoin,
   bitcoinTransferStatus,
+  planBitcoinReplacement,
+  verifyTaprootSpend,
 } from './send.js';
 
 const publicKey = '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798';
@@ -59,6 +62,7 @@ interface Options {
   genesis?: string;
   value?: number;
   spent?: boolean;
+  spender?: string;
   missing?: boolean;
   fee?: number;
   height?: string;
@@ -108,8 +112,13 @@ function adapter(
           status: { confirmed: true, block_height: 80 },
         };
         result = options.coins ?? (options.duplicate ? [u, u] : [u]);
-      } else if (path.endsWith('/recommended')) result = { halfHourFee: options.fee ?? 1 };
-      else if (path.includes('/outspend/')) result = { spent: options.spent ?? false };
+      } else if (path.endsWith('/recommended'))
+        result = { halfHourFee: options.fee ?? 1, fastestFee: options.fee ?? 1 };
+      else if (path.includes('/outspend/'))
+        result = {
+          spent: options.spent ?? false,
+          ...(options.spender ? { txid: options.spender } : {}),
+        };
       else if (path.endsWith('/status')) {
         if (options.missing) return new Response('{}', { status: 404 });
         result = options.status ?? { confirmed: true, block_height: 100 };
@@ -137,8 +146,11 @@ describe('Signet recipient boundaries', () => {
       await expect(
         prepareBitcoin(adapter(), { ...intent, to: recipient, amount: '329' }, from),
       ).rejects.toThrow(/dust/);
-      await expect(readBitcoinCoins(adapter(), recipient)).rejects.toThrow(/senders/);
-      await expect(prepareBitcoin(adapter(), intent, recipient)).rejects.toThrow(/senders/);
+      // P2TR is a threshold wallet's sender; P2WSH has no signer here.
+      if (version === 0) {
+        await expect(readBitcoinCoins(adapter(), recipient)).rejects.toThrow(/senders/);
+        await expect(prepareBitcoin(adapter(), intent, recipient)).rejects.toThrow(/senders/);
+      }
     }
     for (const recipient of [
       encodeSegwit('bc', 1, new Uint8Array(32).fill(2)),
@@ -416,3 +428,129 @@ describe.skipIf(!existsSync(resolve(wasmDir, 'stackwallet_wasm_bg.wasm')))(
     );
   },
 );
+describe('Taproot (threshold) senders', () => {
+  // A stand-in output key: x(G), signed for with secret 1. The core's FROST
+  // group key plays this role; here only the spend checks matter.
+  const outputKey = publicKey.slice(2);
+  const taproot = encodeSegwit('tb', 1, Buffer.from(outputKey, 'hex'));
+  const p2tr = Uint8Array.from([0x51, 0x20, ...Buffer.from(outputKey, 'hex')]);
+  function trFunding(value: bigint, marker: number) {
+    const tx = new Transaction();
+    tx.version = 2;
+    tx.addInput(new Uint8Array(32).fill(marker), 0);
+    tx.addOutput(p2tr, value);
+    return tx;
+  }
+  const funds = [trFunding(30000n, 3), trFunding(40000n, 4)];
+  const trUnsigned: BitcoinTx = {
+    chainId: BITCOIN_SIGNET,
+    from: taproot,
+    to,
+    amount: '50000',
+    fee: '600',
+    inputs: funds.map((f) => ({ txid: f.getId(), vout: 0, previousTxHex: f.toHex() })),
+  };
+  /** What the core broadcasts: the proposed spend with one key-path signature per input. */
+  function spend(sign = (digest: Uint8Array) => schnorr.sign(digest, secret)) {
+    const tx = new Transaction();
+    tx.version = 2;
+    for (const f of funds) tx.addInput(Buffer.from(f.getId(), 'hex').reverse(), 0, 0xfffffffd);
+    tx.addOutput(address.toOutputScript(to, networks.testnet), 50000n);
+    tx.addOutput(p2tr, 70000n - 50000n - 600n);
+    const values = funds.map((f) => f.outs[0]!.value);
+    tx.ins.forEach((_, i) => {
+      const digest = tx.hashForWitnessV1(i, [p2tr, p2tr], values, Transaction.SIGHASH_DEFAULT);
+      tx.setWitness(i, [sign(digest)]);
+    });
+    return `0x${tx.toHex()}`;
+  }
+  const secret = new Uint8Array(32);
+  secret[31] = 1;
+
+  it('accepts a P2TR sender with its own input size and change dust', async () => {
+    const f = trFunding(100000n, 5);
+    const prepared = await prepareBitcoin(
+      adapter({
+        raw: f.toHex(),
+        coins: [{ txid: f.getId(), vout: 0, value: 100000, status: { confirmed: true } }],
+      }),
+      intent,
+      taproot,
+    );
+    // 11 + 58 (key-path input) + 43 (P2TR change) + 31 (P2WPKH recipient) vB at 1 sat/vB.
+    expect(prepared.unsigned).toMatchObject({ from: taproot, fee: '143' });
+    await expect(
+      prepareBitcoin(
+        adapter({
+          raw: f.toHex(),
+          coins: [{ txid: f.getId(), vout: 0, value: 100000, status: { confirmed: true } }],
+        }),
+        // Change of 329 sats is P2TR dust; with a P2WPKH sender it would not be.
+        { ...intent, amount: String(100000 - 143 - 329) },
+        taproot,
+      ),
+    ).rejects.toThrow(/non-dust change/);
+  });
+
+  it('verifies every key-path signature independently before broadcast', async () => {
+    expect(() => verifyTaprootSpend(trUnsigned, spend())).not.toThrow();
+    expect(await broadcastBitcoin(adapter(), trUnsigned, spend())).toBe(hash);
+    // One input signed over the wrong digest.
+    let n = 0;
+    const bad = spend((d) => schnorr.sign(n++ === 1 ? new Uint8Array(32) : d, secret));
+    expect(() => verifyTaprootSpend(trUnsigned, bad)).toThrow(/Input 1/);
+    await expect(broadcastBitcoin(adapter(), trUnsigned, bad)).rejects.toThrow();
+    // Inputs other than the proposed ones, in the proposed count.
+    const swapped = { ...trUnsigned, inputs: [...trUnsigned.inputs].reverse() };
+    expect(() => verifyTaprootSpend(swapped, spend())).toThrow(/inputs differ/);
+    // A P2WPKH sender has no key-path signatures to check.
+    expect(() => verifyTaprootSpend(unsigned, spend())).toThrow(/Taproot/);
+  });
+});
+describe('BIP125 replacement', () => {
+  const original = { id: 'orig', hash: 'b'.repeat(64), unsigned };
+  const mempool = { status: { confirmed: false }, spent: true, spender: 'b'.repeat(64) };
+
+  it('speeds up over the same inputs above the BIP125 fee floor', async () => {
+    const { unsigned: faster, simulation } = await planBitcoinReplacement(
+      adapter(mempool),
+      original,
+      'speedUp',
+    );
+    // 142 vB both times: the old 142 sats plus 1 sat/vB of the new size.
+    expect(faster).toEqual({ ...unsigned, fee: '284', replaces: 'orig' });
+    expect(simulation.fee?.amount).toBe('284');
+    // A higher market rate wins over the floor.
+    const busy = await planBitcoinReplacement(adapter({ ...mempool, fee: 5 }), original, 'speedUp');
+    expect(busy.unsigned.fee).toBe(String(142 * 5));
+  });
+
+  it('cancels by sweeping every input back to the sender', async () => {
+    const { unsigned: cancel } = await planBitcoinReplacement(adapter(mempool), original, 'cancel');
+    expect(cancel).toMatchObject({ to: from, amount: String(100000 - 284), fee: '284' });
+    expect(cancel.inputs).toEqual(unsigned.inputs);
+  });
+
+  it('refuses a confirmed original and inputs spent by anything else', async () => {
+    await expect(
+      planBitcoinReplacement(
+        adapter({ ...mempool, status: { confirmed: true } }),
+        original,
+        'cancel',
+      ),
+    ).rejects.toThrow(/confirmed/);
+    await expect(
+      planBitcoinReplacement(adapter({ ...mempool, spender: 'c'.repeat(64) }), original, 'cancel'),
+    ).rejects.toThrow(/another transaction/);
+    // Raising the fee from a tight change output would leave dust.
+    const tight = { ...original, unsigned: { ...unsigned, amount: '99500', fee: '142' } };
+    await expect(planBitcoinReplacement(adapter(mempool), tight, 'speedUp')).rejects.toThrow();
+  });
+
+  it('lets a replacement through the spend check only past its own original', async () => {
+    const replacement = { ...unsigned, replaces: 'orig' };
+    expect(await bitcoinInputsUnspent(adapter(mempool), replacement, 'b'.repeat(64))).toBe(true);
+    expect(await bitcoinInputsUnspent(adapter(mempool), replacement, 'c'.repeat(64))).toBe(false);
+    expect(await bitcoinInputsUnspent(adapter(mempool), unsigned)).toBe(false);
+  });
+});
