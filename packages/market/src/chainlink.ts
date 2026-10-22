@@ -8,6 +8,7 @@ import {
   type RpcPool,
 } from '@stackwallet/chains';
 import { keccak_256 } from '@noble/hashes/sha3';
+import { bytesToHex } from '@noble/hashes/utils';
 
 import type { Candle } from './candles.js';
 import { CHAINLINK_FEEDS, type ChainlinkFeed } from './chainlink-feeds.js';
@@ -52,7 +53,7 @@ const ROUND_PAGE = 150;
 const MAX_ROUNDS_PER_PULL = 600;
 
 export function selectorOf(signature: string): string {
-  return Buffer.from(keccak_256(new TextEncoder().encode(signature)).slice(0, 4)).toString('hex');
+  return bytesToHex(keccak_256(new TextEncoder().encode(signature)).slice(0, 4));
 }
 
 const SEL = {
