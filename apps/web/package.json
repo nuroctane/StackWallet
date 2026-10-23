@@ -83,7 +83,7 @@
     "@vitejs/plugin-react": "6.1.1",
     "tailwindcss": "^4.1.0",
     "typescript": "7.0.2",
-    "vite": "8.2.2",
+    "vite": "8.3.3",
     "vitest": "3.2.6",
     "wrangler": "^4.0.0"
   }
