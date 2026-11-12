@@ -516,4 +516,224 @@ mod tests {
         assert!(!evaluate(&p, &i, &PolicyContext::default()).is_allowed());
         assert!(evaluate(&[], &i, &PolicyContext::default()).is_allowed());
     }
+
+    // -----------------------------------------------------------------------
+    // Properties over random policy sets (the policy support gate).
+    // -----------------------------------------------------------------------
+
+    use crate::tss::harness::XorShift64;
+
+    const ADDRS: [&str; 4] = ["0xA", "0xB", "0xC", "0xD"];
+    const CHAINS: [&str; 2] = ["eip155:1", "eip155:11155111"];
+
+    fn pick<'a>(rng: &mut XorShift64, from: &[&'a str]) -> Vec<&'a str> {
+        from.iter().copied().filter(|_| rng.below(2) == 0).collect()
+    }
+
+    fn random_rule(rng: &mut XorShift64) -> Rule {
+        let windows = [Window::Tx, Window::H1, Window::H24, Window::D7, Window::D30];
+        match rng.below(10) {
+            0 => Rule::SpendCap {
+                window: windows[rng.below(windows.len())],
+                usd_micros: rng.below(100) as u64 * 1_000_000,
+            },
+            1 => Rule::DestinationAllow {
+                addresses: pick(rng, &ADDRS).into_iter().map(String::from).collect(),
+            },
+            2 => Rule::DestinationDeny {
+                addresses: pick(rng, &ADDRS).into_iter().map(String::from).collect(),
+            },
+            3 => Rule::ChainAllow {
+                chain_ids: pick(rng, &CHAINS)
+                    .into_iter()
+                    .map(|c| ChainId(c.into()))
+                    .collect(),
+            },
+            4 => Rule::AssetAllow {
+                assets: pick(rng, &["eip155:1:native", "eip155:1:erc20:0xT"])
+                    .into_iter()
+                    .map(|a| AssetRef(a.into()))
+                    .collect(),
+            },
+            5 => Rule::RequireSimulationPass,
+            6 => Rule::RequireApprovers {
+                device_ids: pick(rng, &["laptop", "phone"])
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+                at_least: 1 + rng.below(2) as u8,
+            },
+            7 => Rule::Cooldown {
+                seconds: rng.below(7200) as u64,
+            },
+            8 => Rule::MaxPendingProposals {
+                count: rng.below(3) as u32,
+            },
+            _ => Rule::RefuseUntrustedDestinations,
+        }
+    }
+
+    fn random_policy(rng: &mut XorShift64, id: usize, mode: Option<PolicyMode>) -> Policy {
+        let mode = mode.unwrap_or(if rng.below(3) == 0 {
+            PolicyMode::Audit
+        } else {
+            PolicyMode::Enforce
+        });
+        let rules = (0..1 + rng.below(4)).map(|_| random_rule(rng)).collect();
+        policy(&format!("p{id}"), mode, rules)
+    }
+
+    fn random_case(rng: &mut XorShift64) -> (Vec<Policy>, TxIntent, PolicyContext) {
+        let policies = (0..rng.below(5))
+            .map(|i| random_policy(rng, i, None))
+            .collect();
+        let mut i = intent(
+            ADDRS[rng.below(ADDRS.len())],
+            rng.below(50) as u64 * 1_000_000,
+        );
+        i.chain_id = ChainId(CHAINS[rng.below(CHAINS.len())].into());
+        if rng.below(3) == 0 {
+            i.usd_micros = None;
+        }
+        if rng.below(3) == 0 {
+            if let TxIntentKind::Transfer { to, .. } = &i.kind {
+                i.untrusted_destinations.push(to.clone());
+            }
+        }
+        let mut ctx = PolicyContext {
+            now_ms: 10_000_000,
+            pending_proposals: rng.below(4) as u32,
+            last_tx_at_ms: (rng.below(2) == 0).then(|| 10_000_000 - rng.below(9_000_000) as i64),
+            simulation_ok: [None, Some(true), Some(false)][rng.below(3)],
+            ..Default::default()
+        };
+        for w in [Window::H1, Window::H24, Window::D7] {
+            if rng.below(2) == 0 {
+                ctx.spent_usd_micros
+                    .insert(w, rng.below(80) as u64 * 1_000_000);
+            }
+        }
+        (policies, i, ctx)
+    }
+
+    /// A verdict with its reasons as sets, which is what order cannot change.
+    fn normalized(d: Decision) -> (bool, Vec<String>, Vec<String>, Vec<String>) {
+        let (allowed, mut reasons, mut notes, mut approvers) = match d {
+            Decision::Allow {
+                required_approvers,
+                audit_notes,
+            } => (
+                true,
+                vec![],
+                audit_notes,
+                required_approvers
+                    .iter()
+                    .map(|a| format!("{:?}/{}", a.device_ids, a.at_least))
+                    .collect(),
+            ),
+            Decision::Deny {
+                reasons,
+                audit_notes,
+            } => (false, reasons, audit_notes, vec![]),
+        };
+        reasons.sort();
+        notes.sort();
+        approvers.sort();
+        (allowed, reasons, notes, approvers)
+    }
+
+    #[test]
+    fn verdicts_do_not_depend_on_policy_order() {
+        let mut rng = XorShift64::new(0x0DE5);
+        for _ in 0..600 {
+            let (mut policies, i, ctx) = random_case(&mut rng);
+            let before = normalized(evaluate(&policies, &i, &ctx));
+            rng.shuffle(&mut policies);
+            assert_eq!(
+                normalized(evaluate(&policies, &i, &ctx)),
+                before,
+                "{policies:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn adding_an_enforced_policy_never_allows_what_was_denied() {
+        let mut rng = XorShift64::new(0xA11);
+        for n in 0..600 {
+            let (mut policies, i, ctx) = random_case(&mut rng);
+            if evaluate(&policies, &i, &ctx).is_allowed() {
+                continue;
+            }
+            policies.push(random_policy(&mut rng, 100 + n, Some(PolicyMode::Enforce)));
+            assert!(!evaluate(&policies, &i, &ctx).is_allowed(), "{policies:?}");
+        }
+    }
+
+    #[test]
+    fn an_enforced_denylist_beats_any_allowlist() {
+        let mut rng = XorShift64::new(0xDE7);
+        for n in 0..300 {
+            let (mut policies, i, ctx) = random_case(&mut rng);
+            let TxIntentKind::Transfer { to, .. } = &i.kind else {
+                unreachable!()
+            };
+            policies.push(policy(
+                &format!("allow{n}"),
+                PolicyMode::Enforce,
+                vec![Rule::DestinationAllow {
+                    addresses: vec![to.clone()],
+                }],
+            ));
+            policies.push(policy(
+                &format!("deny{n}"),
+                PolicyMode::Enforce,
+                vec![Rule::DestinationDeny {
+                    addresses: vec![to.clone()],
+                }],
+            ));
+            rng.shuffle(&mut policies);
+            assert!(!evaluate(&policies, &i, &ctx).is_allowed());
+        }
+    }
+
+    #[test]
+    fn audit_mode_alone_never_denies() {
+        let mut rng = XorShift64::new(0xAD17);
+        for n in 0..300 {
+            let (_, i, ctx) = random_case(&mut rng);
+            let policies: Vec<Policy> = (0..1 + rng.below(4))
+                .map(|k| random_policy(&mut rng, n * 10 + k, Some(PolicyMode::Audit)))
+                .collect();
+            assert!(evaluate(&policies, &i, &ctx).is_allowed(), "{policies:?}");
+        }
+    }
+
+    #[test]
+    fn an_agent_only_threshold_is_denied_whatever_the_policies() {
+        // D6 defense in depth: the group is checked again at evaluation time,
+        // so no policy set can let an agent sign alone.
+        let agent_alone = KeyGroup {
+            id: "g".into(),
+            threshold: 1,
+            parties: vec![
+                PartyRef {
+                    device_id: "agent".into(),
+                    role: PartyRole::Agent,
+                },
+                PartyRef {
+                    device_id: "laptop".into(),
+                    role: PartyRole::Human,
+                },
+            ],
+            curves: vec![Curve::Secp256k1],
+            public_keys: vec![],
+        };
+        let mut rng = XorShift64::new(0xD6);
+        for _ in 0..300 {
+            let (policies, i, mut ctx) = random_case(&mut rng);
+            ctx.key_group = Some(agent_alone.clone());
+            assert!(!evaluate(&policies, &i, &ctx).is_allowed(), "{policies:?}");
+        }
+    }
 }
