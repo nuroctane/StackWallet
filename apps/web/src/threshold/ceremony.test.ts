@@ -13,9 +13,18 @@ import {
   type Address,
 } from '@solana/kit';
 import { BITCOIN_SIGNET, verifyTaprootSpend } from '@stackwallet/chains-bitcoin';
-import type { BitcoinTx } from '@stackwallet/core-client';
+import type { BitcoinTx, PartyRef, ThresholdAccount } from '@stackwallet/core-client';
 
-import { joinRefresh, proposeRefresh, readProposal } from './ceremony.js';
+import {
+  joinReconcile,
+  joinRefresh,
+  joinReshare,
+  proposeReconcile,
+  proposeRefresh,
+  proposeReshare,
+  readProposal,
+  type ThresholdOps,
+} from './ceremony.js';
 import {
   browsers,
   built,
@@ -29,6 +38,99 @@ import {
   signTogether,
   type Browser,
 } from './testkit.js';
+
+/** Propose a Taproot spend of wallet `w` from `from`'s ledger, ready for approval. */
+async function proposeSpend(from: Browser, acc: ThresholdAccount, txId: string, marker: bigint) {
+  const now = Date.now();
+  const to = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx';
+  await from.vault.txPropose(
+    {
+      id: txId,
+      walletId: 'w',
+      accountId: 'acc',
+      chainId: BITCOIN_SIGNET,
+      proposer: { kind: 'human', deviceId: from.local.id },
+      kind: 'transfer',
+      to,
+      asset: `${BITCOIN_SIGNET}:native`,
+      amount: '50000',
+      usdMicros: null,
+      untrustedDestinations: [],
+      createdAtMs: now,
+    },
+    from.local.id,
+    now,
+  );
+  const unsigned: BitcoinTx = {
+    chainId: BITCOIN_SIGNET,
+    from: acc.address,
+    to,
+    amount: '50000',
+    fee: '600',
+    inputs: [fundingTx(acc.publicKeyHex, 80_000n + marker)],
+  };
+  await from.vault.txAttach({
+    txId,
+    signer: { walletId: 'w', path: 'tss', address: acc.address },
+    unsigned,
+    simulation: { ok: true },
+    simulationOk: true,
+    deviceId: from.local.id,
+    nowMs: now,
+  });
+  await from.vault.txEvaluate(txId, from.local.id, now);
+  return unsigned;
+}
+
+/**
+ * `hub` replaces `lost` with `fresh`, helped by the other remaining devices;
+ * every side's outcome, settled. The newcomer keeps the wallet as `w` too.
+ */
+async function replace(
+  hub: Browser,
+  helpers: Browser[],
+  fresh: Browser,
+  lost: Browser,
+  acc: ThresholdAccount,
+  opts: { freshOps?: ThresholdOps; onSealed?: (a: ThresholdAccount) => void } = {},
+) {
+  const newcomer: PartyRef = { deviceId: fresh.local.id, role: 'human' };
+  const ceremony = await hub.vault.thresholdReshareSession(
+    'w',
+    lost.local.id,
+    newcomer,
+    `rs-${Date.now()}`,
+    Date.now(),
+  );
+  const l = await links(hub, [...helpers, fresh]);
+  return Promise.allSettled([
+    proposeReshare({
+      ops: opsFor(hub.vault, hub.local.id),
+      links: l.hub,
+      localId: hub.local.id,
+      walletId: 'w',
+      group: acc.group,
+      replaced: lost.local.id,
+      newcomer,
+      ceremony,
+      session: proof,
+    }),
+    ...[...helpers, fresh].map(async (x, i) => {
+      const p = readProposal(await l.peers[i]!.next());
+      if (p.kind !== 'reshare') throw new Error('expected reshare');
+      const joining = x === fresh;
+      return joinReshare({
+        ops: joining && opts.freshOps ? opts.freshOps : opsFor(x.vault, x.local.id),
+        link: l.peers[i]!,
+        localId: x.local.id,
+        walletId: 'w',
+        proposal: p,
+        session: proof,
+        ...(joining && opts.onSealed ? { onSealed: opts.onSealed } : {}),
+      });
+    }),
+  ]);
+}
 
 describe.skipIf(!built)('threshold wallets across browsers', () => {
   it('generates a 2-of-2 key and signs a Solana transfer only with both shares', async () => {
@@ -318,5 +420,79 @@ describe.skipIf(!built)('threshold wallets across browsers', () => {
     const [again] = await signTogether(a, [b], 'b4');
     expect(again.state).toBe('signed');
     expect(() => verifyTaprootSpend(second, again.rawSignedHex!)).not.toThrow();
+  }, 120_000);
+
+  it('replaces a lost device: the newcomer co-signs for the same address', async () => {
+    const [a, b, c, d] = await browsers('laptop', 'phone', 'desk', 'tablet');
+    const [acc] = await shareKey(a, [b, c], 'secp256k1-tr', 2);
+    // The desk is lost; the tablet takes its place, and the newcomer's group
+    // arrives in the proposal, its share repaired across the hub sealed.
+    const sealed: ThresholdAccount[] = [];
+    const outcomes = await replace(a, [b], d, c, acc, { onSealed: (x) => sealed.push(x) });
+    expect(outcomes.map((o) => (o.status === 'fulfilled' ? o.value : String(o.reason)))).toEqual([
+      'committed',
+      'committed',
+      'committed',
+    ]);
+    expect(sealed[0]?.address).toBe(acc.address);
+    expect(sealed[0]?.group.parties.map((p) => p.deviceId).sort()).toEqual(
+      [a, b, d].map((x) => x.local.id).sort(),
+    );
+    const [after] = await a.vault.thresholdList();
+    expect(after?.group.parties.some((p) => p.deviceId === c.local.id)).toBe(false);
+
+    const unsigned = await proposeSpend(a, acc, 'b5', 5n);
+    const [signed] = await signTogether(a, [d], 'b5');
+    expect(signed.state).toBe('signed');
+    expect(() => verifyTaprootSpend(unsigned, signed.rawSignedHex!)).not.toThrow();
+  }, 120_000);
+
+  it('rolls a replacement back when the newcomer never sealed its share', async () => {
+    const [a, b, c, d] = await browsers('laptop', 'phone', 'desk', 'tablet');
+    const [acc] = await shareKey(a, [b, c], 'secp256k1-tr', 2);
+    const crashing: ThresholdOps = {
+      ...opsFor(d.vault, d.local.id),
+      thresholdFinishReshare: async () => ({ ok: false, error: 'stopped before sealing' }),
+    };
+    const first = await replace(a, [b], d, c, acc, { freshOps: crashing });
+    expect(first.every((o) => o.status === 'rejected')).toBe(true);
+    expect((await a.vault.thresholdShareFingerprint('w')).pending).toBe(true);
+    expect((await b.vault.thresholdShareFingerprint('w')).pending).toBe(true);
+    expect(await d.vault.thresholdList()).toEqual([]);
+
+    // Comparing shares: the tablet says it holds none, so the others go back.
+    const ceremony = await a.vault.thresholdRefreshSession('w', 'rc-1', Date.now());
+    const l = await links(a, [b, d]);
+    const settled = await Promise.all([
+      proposeReconcile({
+        ops: opsFor(a.vault, a.local.id),
+        links: l.hub,
+        localId: a.local.id,
+        walletId: 'w',
+        ceremony,
+        session: proof,
+      }),
+      ...[b, d].map(async (x, i) => {
+        const p = readProposal(await l.peers[i]!.next());
+        if (p.kind !== 'reconcile') throw new Error('expected reconcile');
+        return joinReconcile({
+          ops: opsFor(x.vault, x.local.id),
+          link: l.peers[i]!,
+          localId: x.local.id,
+          walletId: x === d ? null : 'w',
+          proposal: p,
+          session: proof,
+        });
+      }),
+    ]);
+    expect(settled).toEqual(['rolledBack', 'rolledBack', 'dropped']);
+    const [back] = await a.vault.thresholdList();
+    expect(back?.group.parties.some((p) => p.deviceId === c.local.id)).toBe(true);
+
+    // Nothing was lost: the original pair still signs.
+    const unsigned = await proposeSpend(a, acc, 'b7', 7n);
+    const [signed] = await signTogether(a, [b], 'b7');
+    expect(signed.state).toBe('signed');
+    expect(() => verifyTaprootSpend(unsigned, signed.rawSignedHex!)).not.toThrow();
   }, 120_000);
 });

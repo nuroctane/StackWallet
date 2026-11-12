@@ -5,8 +5,9 @@
 //! device is trusted to assemble the signature. DKG and refresh follow the
 //! frost-core three-part flow (broadcast, peer-to-peer, finalize).
 //!
-//! Rounds are numbered 1 and 2 for every ceremony kind. A party accepts the
-//! round it is collecting and buffers exactly the next one, because a fast
+//! Keygen, refresh and sign number their rounds 1 and 2; a reshare uses 1 to 4
+//! (below). A party accepts the round it is collecting and buffers exactly
+//! the next one it takes part in, because a fast
 //! peer legitimately finishes a round before a slow peer's message has
 //! reached us; anything else is refused. A peer that sends two different
 //! bodies for the same round is equivocating and the ceremony aborts, since
@@ -19,6 +20,14 @@
 //! its sender saw, and a receiver whose own view differs aborts. Every pair of
 //! honest parties exchanges round 2 directly, so any split between them shows.
 //!
+//! A reshare replaces one device without changing the group key: every other
+//! party helps the newcomer repair a share at its own identifier (frost's
+//! repairable threshold scheme), then all of them run a refresh, which leaves
+//! the replaced device's old share unable to combine with anything. Survivors
+//! walk rounds 1, 3 and 4 and the newcomer 2, 3 and 4, each buffering only its
+//! own next round; the newcomer checks its repaired share against the group's
+//! public data before it uses it.
+//!
 //! A sign ceremony may cover several messages at once (one Taproot sighash per
 //! transaction input), each with its own fresh nonces, so one approval and one
 //! round trip sign the whole transaction. With a single message the round
@@ -28,10 +37,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use frost_core::keys::dkg;
-use frost_core::keys::{refresh, KeyPackage, PublicKeyPackage};
+use frost_core::keys::repairable::{self, Delta, Sigma};
+use frost_core::keys::{refresh, KeyPackage, PublicKeyPackage, VerifyingShare};
 use frost_core::round1::{SigningCommitments, SigningNonces};
 use frost_core::round2::SignatureShare;
-use frost_core::{Ciphersuite, Identifier, SigningPackage};
+use frost_core::{Ciphersuite, Group, Identifier, SigningPackage};
 use rand_core_06::OsRng;
 use sha2::{Digest, Sha256};
 
@@ -40,7 +50,7 @@ use super::{
     ThresholdScheme,
 };
 use crate::intent::{SignRequest, Signature};
-use crate::model::{Curve, KeyGroup, PublicKey};
+use crate::model::{Curve, KeyGroup, PartyRef, PublicKey};
 use crate::{CoreError, Result};
 
 /// Ties a frost ciphersuite to the wallet's curve enum.
@@ -116,9 +126,23 @@ pub fn message_to_sign(request: &SignRequest) -> Result<Vec<u8>> {
 /// party set. Binding round-1 messages to it turns a parameter mismatch into an
 /// immediate refusal instead of an opaque DKG failure two rounds later.
 pub fn keygen_binding_hex(group: &KeyGroup, curve: Curve) -> String {
-    // Roles are part of the binding: relabelling a party (e.g. an agent as
-    // human to dodge the D6 invariant) must change the session binding, or
-    // the proposer could rewrite roles without any peer noticing.
+    let ids = party_labels(group);
+    let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+    binding_hex(
+        "keygen",
+        &group.id,
+        curve,
+        group.threshold as u16,
+        &refs,
+        b"",
+    )
+}
+
+/// Each party as `device:role`, sorted. Roles are part of every binding that
+/// sets up a group: relabelling a party (an agent as human, to dodge the D6
+/// invariant) must change the binding, or the proposer could rewrite roles
+/// without any peer noticing.
+fn party_labels(group: &KeyGroup) -> Vec<String> {
     let mut ids: Vec<String> = group
         .parties
         .iter()
@@ -131,15 +155,7 @@ pub fn keygen_binding_hex(group: &KeyGroup, curve: Curve) -> String {
         })
         .collect();
     ids.sort_unstable();
-    let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
-    binding_hex(
-        "keygen",
-        &group.id,
-        curve,
-        group.threshold as u16,
-        &refs,
-        b"",
-    )
+    ids
 }
 
 /// Same idea for refresh, additionally bound to the group key being refreshed.
@@ -160,6 +176,86 @@ pub fn refresh_binding_hex(
         &ids,
         verifying_key,
     )
+}
+
+/// The group a reshare leaves behind: `newcomer` in `replaced`'s place, with
+/// the same id, threshold, curves and key. Refused when it breaks the group
+/// rules (D6 included).
+pub fn replaced_group(group: &KeyGroup, replaced: &str, newcomer: &PartyRef) -> Result<KeyGroup> {
+    if !group.parties.iter().any(|p| p.device_id == replaced) {
+        return Err(CoreError::Invalid {
+            what: "reshare",
+            reason: format!("{replaced} is not a party of the group"),
+        });
+    }
+    if group
+        .parties
+        .iter()
+        .any(|p| p.device_id == newcomer.device_id)
+    {
+        return Err(CoreError::Invalid {
+            what: "reshare",
+            reason: format!("{} already holds a share", newcomer.device_id),
+        });
+    }
+    let mut next = group.clone();
+    for p in &mut next.parties {
+        if p.device_id == replaced {
+            *p = newcomer.clone();
+        }
+    }
+    next.validate()?;
+    Ok(next)
+}
+
+/// What every party of a reshare must agree on: the group it leaves behind
+/// (roles included, so no one can be relabelled on the way), the device it
+/// replaces and the group key that must survive.
+pub fn reshare_binding_hex(next: &KeyGroup, curve: Curve, replaced: &str, key: &[u8]) -> String {
+    let ids = party_labels(next);
+    let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let mut extra = (key.len() as u32).to_be_bytes().to_vec();
+    extra.extend(key);
+    extra.extend((replaced.len() as u32).to_be_bytes());
+    extra.extend(replaced.as_bytes());
+    binding_hex(
+        "reshare",
+        &next.id,
+        curve,
+        next.threshold as u16,
+        &refs,
+        &extra,
+    )
+}
+
+/// The group's public package with `newcomer`'s verifying share in place of
+/// `replaced`'s. The share is interpolated in the exponent from the helpers'
+/// shares at the newcomer's identifier, which is exactly where the repair
+/// puts its secret share, so anyone holding the package can check it.
+fn joined_package<C: Ciphersuite>(
+    pkp: &PublicKeyPackage<C>,
+    helpers: &BTreeSet<Identifier<C>>,
+    newcomer: Identifier<C>,
+    replaced: Identifier<C>,
+) -> Result<PublicKeyPackage<C>> {
+    let mut acc = <C::Group as Group>::identity();
+    for id in helpers {
+        let lambda = frost_core::compute_lagrange_coefficient(helpers, Some(newcomer), *id)
+            .map_err(frost_err("lagrange coefficient"))?;
+        let share = pkp
+            .verifying_shares()
+            .get(id)
+            .ok_or_else(|| ceremony_err("a helper is missing from the group's public package"))?;
+        acc = acc + share.to_element() * lambda;
+    }
+    let mut shares = pkp.verifying_shares().clone();
+    shares.remove(&replaced);
+    shares.insert(newcomer, VerifyingShare::new(acc));
+    Ok(PublicKeyPackage::new(
+        shares,
+        *pkp.verifying_key(),
+        pkp.min_signers(),
+    ))
 }
 
 fn binding_hex(
@@ -274,6 +370,9 @@ enum Body<C: Ciphersuite> {
     Dkg2([u8; ECHO_LEN], dkg::round2::Package<C>),
     Commitments(Vec<SigningCommitments<C>>),
     Share(Vec<SignatureShare<C>>),
+    Delta(Delta<C>),
+    /// A helper's repair value and its view of the group after the reshare.
+    Repair(Sigma<C>, PublicKeyPackage<C>),
 }
 
 enum Phase<C: Ciphersuite> {
@@ -297,7 +396,30 @@ enum Phase<C: Ciphersuite> {
         packages: Vec<SigningPackage<C>>,
         shares: BTreeMap<Identifier<C>, Vec<SignatureShare<C>>>,
     },
+    /// A helper collecting the other helpers' parts of its repair value.
+    RepairDeltas {
+        deltas: BTreeMap<Identifier<C>, Delta<C>>,
+    },
+    /// The newcomer collecting every helper's repair value and view.
+    RepairSigmas {
+        sigmas: BTreeMap<Identifier<C>, Sigma<C>>,
+        views: BTreeMap<Identifier<C>, PublicKeyPackage<C>>,
+    },
     Finished,
+}
+
+/// Who replaces whom in a reshare ceremony.
+struct Reshare<C: Ciphersuite> {
+    group_id: String,
+    threshold: u16,
+    helpers: BTreeSet<Identifier<C>>,
+    newcomer: Identifier<C>,
+    replaced: Identifier<C>,
+    /// The serialized group key, which must come out of the reshare unchanged.
+    group_key: Vec<u8>,
+    /// The share and group this party carries into the closing refresh. They
+    /// stay here, not on the party, so a reshare that aborts changes nothing.
+    joined: Option<(KeyPackage<C>, PublicKeyPackage<C>)>,
 }
 
 struct Ceremony<C: Ciphersuite> {
@@ -309,6 +431,13 @@ struct Ceremony<C: Ciphersuite> {
     /// Every other participant, by device id.
     peers: BTreeMap<String, Identifier<C>>,
     round: u8,
+    /// The rounds this party takes part in, in order; `round` walks them.
+    rounds: Vec<u8>,
+    /// Who must send in a round, where that is not every peer.
+    senders: BTreeMap<u8, BTreeSet<String>>,
+    /// The two DKG rounds; a reshare runs its refresh after the repair rounds.
+    dkg_rounds: [u8; 2],
+    reshare: Option<Reshare<C>>,
     /// Digest of the body already accepted per (round, sender), for duplicate
     /// and equivocation detection. Round-2 DKG bodies carry a secret share, so
     /// only the hash is kept.
@@ -322,11 +451,34 @@ struct Ceremony<C: Ciphersuite> {
 
 impl<C: Ciphersuite> Ceremony<C> {
     fn missing(&self) -> Vec<String> {
-        self.peers
-            .keys()
+        let expected: Vec<&String> = match self.senders.get(&self.round) {
+            Some(from) => from.iter().collect(),
+            None => self.peers.keys().collect(),
+        };
+        expected
+            .into_iter()
             .filter(|d| !self.seen.contains_key(&(self.round, (*d).clone())))
             .cloned()
             .collect()
+    }
+
+    fn position(&self, round: u8) -> Option<usize> {
+        self.rounds.iter().position(|r| *r == round)
+    }
+
+    fn next_round(&self) -> Option<u8> {
+        self.position(self.round)
+            .and_then(|i| self.rounds.get(i + 1))
+            .copied()
+    }
+
+    /// Whether `sender` has anything to say to this party in `round`.
+    fn expects(&self, round: u8, sender: &str) -> bool {
+        self.position(round).is_some()
+            && self
+                .senders
+                .get(&round)
+                .is_none_or(|from| from.contains(sender))
     }
 
     fn round_complete(&self) -> bool {
@@ -374,6 +526,13 @@ impl<C: FrostCurve> FrostParty<C> {
 
     pub fn has_share(&self) -> bool {
         self.key_package.is_some() && self.public_key_package.is_some()
+    }
+
+    /// Drops any ceremony in progress, as a device does when its session
+    /// expires or is cancelled. Shares are untouched: every ceremony commits
+    /// its result only when it completes.
+    pub fn abandon(&mut self) {
+        self.ceremony = None;
     }
 
     pub fn key_group_id(&self) -> Option<&str> {
@@ -505,6 +664,10 @@ impl<C: FrostCurve> FrostParty<C> {
             sign_request_id,
             peers,
             round: 1,
+            rounds: vec![1, 2],
+            senders: BTreeMap::new(),
+            dkg_rounds: [1, 2],
+            reshare: None,
             seen: BTreeMap::new(),
             buffered: Vec::new(),
             phase,
@@ -551,6 +714,13 @@ impl<C: FrostCurve> FrostParty<C> {
             Phase::SignRound2 { .. } => {
                 decode_all(&body, n, |b| SignatureShare::<C>::deserialize(b).ok()).map(Body::Share)
             }
+            Phase::RepairDeltas { .. } => Delta::<C>::deserialize(&body).ok().map(Body::Delta),
+            Phase::RepairSigmas { .. } => decode_items(&body, 2).and_then(|items| {
+                Some(Body::Repair(
+                    Sigma::<C>::deserialize(items[0]).ok()?,
+                    PublicKeyPackage::<C>::deserialize(items[1]).ok()?,
+                ))
+            }),
             Phase::Finished => return Err(ceremony_err("ceremony is not collecting messages")),
         };
         let Some(parsed) = parsed else {
@@ -581,6 +751,13 @@ impl<C: FrostCurve> FrostParty<C> {
             }
             (Phase::SignRound2 { shares, .. }, Body::Share(p)) => {
                 shares.insert(id, p);
+            }
+            (Phase::RepairDeltas { deltas }, Body::Delta(d)) => {
+                deltas.insert(id, d);
+            }
+            (Phase::RepairSigmas { sigmas, views }, Body::Repair(sigma, view)) => {
+                sigmas.insert(id, sigma);
+                views.insert(id, view);
             }
             _ => return Err(ceremony_err("message body does not fit the current phase")),
         }
@@ -624,7 +801,7 @@ impl<C: FrostCurve> FrostParty<C> {
                 packages,
             } => {
                 let transcript = round1_transcript(self.own_identifier()?, &own, &packages)?;
-                let (secret2, outgoing) = if c.kind == CeremonyKind::Refresh {
+                let (secret2, outgoing) = if c.kind != CeremonyKind::KeyGen {
                     refresh::refresh_dkg_part2(secret, &packages)
                         .map_err(frost_err("refresh part 2"))?
                 } else {
@@ -640,7 +817,12 @@ impl<C: FrostCurve> FrostParty<C> {
                         pkg.serialize()
                             .map_err(frost_err("dkg round 2 serialization"))?,
                     );
-                    out.push(c.envelope(&self.device_id, Some(device.clone()), 2, &body));
+                    out.push(c.envelope(
+                        &self.device_id,
+                        Some(device.clone()),
+                        c.dkg_rounds[1],
+                        &body,
+                    ));
                 }
                 c.phase = Phase::DkgRound2 {
                     secret: secret2,
@@ -648,7 +830,7 @@ impl<C: FrostCurve> FrostParty<C> {
                     round2: BTreeMap::new(),
                     transcript,
                 };
-                c.round = 2;
+                c.round = c.dkg_rounds[1];
                 Ok(out)
             }
             Phase::DkgRound2 {
@@ -657,18 +839,28 @@ impl<C: FrostCurve> FrostParty<C> {
                 round2,
                 ..
             } => {
-                let (kp, pkp) = if c.kind == CeremonyKind::Refresh {
-                    let (old_kp, old_pkp, _) = self.require_key()?;
-                    refresh::refresh_dkg_shares(
-                        &secret,
-                        &round1,
-                        &round2,
-                        old_pkp.clone(),
-                        old_kp.clone(),
-                    )
-                    .map_err(frost_err("refresh finalize"))?
-                } else {
+                let (kp, pkp) = if c.kind == CeremonyKind::KeyGen {
                     dkg::part3(&secret, &round1, &round2).map_err(frost_err("dkg part 3"))?
+                } else {
+                    let (old_kp, old_pkp) = match c.reshare.as_ref() {
+                        Some(r) => r
+                            .joined
+                            .clone()
+                            .ok_or_else(|| ceremony_err("the reshare has no share to refresh"))?,
+                        None => {
+                            let (k, p, _) = self.require_key()?;
+                            (k.clone(), p.clone())
+                        }
+                    };
+                    let before = *old_pkp.verifying_key();
+                    let (kp, pkp) =
+                        refresh::refresh_dkg_shares(&secret, &round1, &round2, old_pkp, old_kp)
+                            .map_err(frost_err("refresh finalize"))?;
+                    // A refresh re-randomizes the shares and nothing else.
+                    if *pkp.verifying_key() != before {
+                        return Err(ceremony_err("the refresh would change the group key"));
+                    }
+                    (kp, pkp)
                 };
                 let vk = pkp
                     .verifying_key()
@@ -676,6 +868,9 @@ impl<C: FrostCurve> FrostParty<C> {
                     .map_err(frost_err("verifying key serialization"))?;
                 self.key_package = Some(kp);
                 self.public_key_package = Some(pkp);
+                if let Some(r) = &c.reshare {
+                    self.key_group_id = Some(r.group_id.clone());
+                }
                 c.public_key = Some(PublicKey {
                     curve: C::CURVE,
                     hex: hex::encode(vk),
@@ -734,8 +929,275 @@ impl<C: FrostCurve> FrostParty<C> {
                 c.state = CeremonyState::Complete;
                 Ok(vec![])
             }
+            Phase::RepairDeltas { deltas } => {
+                let r = c.reshare.as_ref().expect("a reshare ceremony");
+                let sigma =
+                    repairable::repair_share_part2(&deltas.into_values().collect::<Vec<_>>());
+                let (kp, pkp, _) = self.require_key()?;
+                let joined = joined_package(pkp, &r.helpers, r.newcomer, r.replaced)?;
+                let view = joined
+                    .serialize()
+                    .map_err(frost_err("public key package serialization"))?;
+                let newcomer = c
+                    .peers
+                    .iter()
+                    .find(|(_, id)| **id == r.newcomer)
+                    .map(|(d, _)| d.clone())
+                    .ok_or_else(|| ceremony_err("the newcomer is not a participant"))?;
+                let mut out = vec![c.envelope(
+                    &self.device_id,
+                    Some(newcomer),
+                    2,
+                    &encode_items(&[sigma.serialize(), view]),
+                )];
+                out.extend(self.open_refresh(c, (kp.clone(), joined))?);
+                Ok(out)
+            }
+            Phase::RepairSigmas { sigmas, views } => {
+                let r = c.reshare.as_ref().expect("a reshare ceremony");
+                // Every helper must describe the same group: the proposed key,
+                // threshold and members.
+                let mut described = views.into_values();
+                let view = described
+                    .next()
+                    .ok_or_else(|| ceremony_err("no helper described the group"))?;
+                let bytes = view
+                    .serialize()
+                    .map_err(frost_err("public key package serialization"))?;
+                if described.any(|other| other.serialize().ok().as_deref() != Some(&bytes[..])) {
+                    return Err(ceremony_err("the helpers disagree about the group"));
+                }
+                let key = view
+                    .verifying_key()
+                    .serialize()
+                    .map_err(frost_err("verifying key serialization"))?;
+                let members: BTreeSet<Identifier<C>> =
+                    view.verifying_shares().keys().copied().collect();
+                let mut expected = r.helpers.clone();
+                expected.insert(r.newcomer);
+                if key != r.group_key
+                    || view.min_signers() != Some(r.threshold)
+                    || members != expected
+                {
+                    return Err(ceremony_err(
+                        "the helpers describe another group than the one proposed",
+                    ));
+                }
+                let kp = repairable::repair_share_part3(
+                    &sigmas.into_values().collect::<Vec<_>>(),
+                    r.newcomer,
+                    &view,
+                )
+                .map_err(frost_err("repair"))?;
+                // frost does not check the repaired share against the group;
+                // a helper that sent a wrong value is caught here.
+                if view.verifying_shares().get(&r.newcomer) != Some(kp.verifying_share()) {
+                    return Err(ceremony_err(
+                        "the repaired share does not match the group; a helper sent a wrong value",
+                    ));
+                }
+                self.open_refresh(c, (kp, view))
+            }
             Phase::Finished => Err(ceremony_err("ceremony already finished")),
         }
+    }
+
+    /// Opens the refresh that ends a reshare, among every participant, from
+    /// the share and group this party has just joined with.
+    fn open_refresh(
+        &self,
+        c: &mut Ceremony<C>,
+        joined: (KeyPackage<C>, PublicKeyPackage<C>),
+    ) -> Result<Vec<CeremonyMessage>> {
+        let min = joined
+            .1
+            .min_signers()
+            .ok_or_else(|| ceremony_err("public key package has no threshold"))?;
+        let n = (c.peers.len() + 1) as u16;
+        let (secret, package) = refresh::refresh_dkg_part1(self.own_identifier()?, n, min, OsRng)
+            .map_err(frost_err("refresh part 1"))?;
+        let body = package
+            .serialize()
+            .map_err(frost_err("refresh round 1 serialization"))?;
+        c.reshare.as_mut().expect("a reshare ceremony").joined = Some(joined);
+        c.phase = Phase::DkgRound1 {
+            secret,
+            own: package,
+            packages: BTreeMap::new(),
+        };
+        c.round = c.dkg_rounds[0];
+        Ok(vec![c.envelope(
+            &self.device_id,
+            None,
+            c.dkg_rounds[0],
+            &body,
+        )])
+    }
+
+    /// Join (or propose) the replacement of `replaced` by `newcomer` in
+    /// `group`, keeping `group_key`. Every other party of the group is a
+    /// helper and must take part, since a refresh leaves out whoever is
+    /// absent; at least the threshold of them are needed to repair a share.
+    pub fn reshare_start(
+        &mut self,
+        group: &KeyGroup,
+        session: &CeremonySession,
+        replaced: &str,
+        newcomer: &PartyRef,
+        group_key: &PublicKey,
+    ) -> Result<Vec<CeremonyMessage>> {
+        self.require_idle()?;
+        group.validate()?;
+        if group_key.curve != C::CURVE || !group.curves.contains(&C::CURVE) {
+            return Err(CoreError::Invalid {
+                what: "reshare",
+                reason: "the group key is on another curve".into(),
+            });
+        }
+        let next = replaced_group(group, replaced, newcomer)?;
+        self.check_session(session, CeremonyKind::Reshare, &group.id)?;
+        let mut expected: Vec<&str> = next.parties.iter().map(|p| p.device_id.as_str()).collect();
+        let mut given: Vec<&str> = session.participants.iter().map(String::as_str).collect();
+        expected.sort_unstable();
+        given.sort_unstable();
+        if expected != given {
+            return Err(CoreError::Invalid {
+                what: "ceremony session",
+                reason: "a reshare runs among every remaining party and the newcomer".into(),
+            });
+        }
+        let key = hex::decode(&group_key.hex).map_err(|_| CoreError::Invalid {
+            what: "reshare",
+            reason: "group key is not hex".into(),
+        })?;
+        let binding = reshare_binding_hex(&next, C::CURVE, replaced, &key);
+        if session.payload_hash_hex.as_deref() != Some(binding.as_str()) {
+            return Err(CoreError::Invalid {
+                what: "ceremony session",
+                reason: "session binding does not match the reshare".into(),
+            });
+        }
+        let helper_devices: BTreeSet<String> = session
+            .participants
+            .iter()
+            .filter(|p| **p != newcomer.device_id)
+            .cloned()
+            .collect();
+        if helper_devices.len() < group.threshold as usize {
+            return Err(CoreError::Invalid {
+                what: "reshare",
+                reason: format!(
+                    "{} remaining parties cannot repair a share of a {}-of-{} group",
+                    helper_devices.len(),
+                    group.threshold,
+                    group.parties.len()
+                ),
+            });
+        }
+        let helpers = helper_devices
+            .iter()
+            .map(|d| identifier_for::<C>(d))
+            .collect::<Result<BTreeSet<_>>>()?;
+        let newcomer_id = identifier_for::<C>(&newcomer.device_id)?;
+        let replaced_id = identifier_for::<C>(replaced)?;
+        let peers = self.peer_identifiers(&session.participants)?;
+        let reshare = Reshare {
+            group_id: group.id.clone(),
+            threshold: group.threshold as u16,
+            helpers: helpers.clone(),
+            newcomer: newcomer_id,
+            replaced: replaced_id,
+            group_key: key.clone(),
+            joined: None,
+        };
+
+        if self.device_id == newcomer.device_id {
+            if self.has_share() {
+                return Err(ceremony_err("the newcomer already holds a share"));
+            }
+            self.begin(
+                session,
+                CeremonyKind::Reshare,
+                binding,
+                peers,
+                Phase::RepairSigmas {
+                    sigmas: BTreeMap::new(),
+                    views: BTreeMap::new(),
+                },
+                None,
+            );
+            let c = self.ceremony.as_mut().expect("ceremony begun");
+            c.rounds = vec![2, 3, 4];
+            c.round = 2;
+            c.senders = BTreeMap::from([(2, helper_devices)]);
+            c.dkg_rounds = [3, 4];
+            c.reshare = Some(reshare);
+            return Ok(vec![]);
+        }
+
+        let (kp, pkp, group_id) = self.require_key()?;
+        if group_id != group.id {
+            return Err(ceremony_err("this share belongs to another group"));
+        }
+        let own_key = pkp
+            .verifying_key()
+            .serialize()
+            .map_err(frost_err("verifying key serialization"))?;
+        if own_key != key {
+            return Err(ceremony_err("the proposed group key is not this group's"));
+        }
+        let members = group
+            .parties
+            .iter()
+            .map(|p| identifier_for::<C>(&p.device_id))
+            .collect::<Result<BTreeSet<_>>>()?;
+        let held: BTreeSet<Identifier<C>> = pkp.verifying_shares().keys().copied().collect();
+        if held != members || pkp.min_signers() != Some(group.threshold as u16) {
+            return Err(ceremony_err(
+                "the group record does not match the share this device holds",
+            ));
+        }
+        let mut deltas = repairable::repair_share_part1(
+            &helpers.iter().copied().collect::<Vec<_>>(),
+            kp,
+            &mut OsRng,
+            newcomer_id,
+        )
+        .map_err(frost_err("repair part 1"))?;
+        let own_id = self.own_identifier()?;
+        let own = deltas
+            .remove(&own_id)
+            .ok_or_else(|| ceremony_err("no repair value for this device"))?;
+        self.begin(
+            session,
+            CeremonyKind::Reshare,
+            binding,
+            peers,
+            Phase::RepairDeltas {
+                deltas: BTreeMap::from([(own_id, own)]),
+            },
+            None,
+        );
+        let self_id = self.device_id.clone();
+        let c = self.ceremony.as_mut().expect("ceremony begun");
+        c.rounds = vec![1, 3, 4];
+        c.senders = BTreeMap::from([(
+            1,
+            helper_devices
+                .iter()
+                .filter(|d| **d != self_id)
+                .cloned()
+                .collect(),
+        )]);
+        c.dkg_rounds = [3, 4];
+        c.reshare = Some(reshare);
+        Ok(c.peers
+            .iter()
+            .filter_map(|(device, id)| {
+                let delta = deltas.get(id)?;
+                Some(c.envelope(&self_id, Some(device.clone()), 1, &delta.serialize()))
+            })
+            .collect())
     }
 
     fn result_for(
@@ -1106,34 +1568,47 @@ impl<C: FrostCurve> ThresholdScheme for FrostParty<C> {
         if !live {
             return Err(ceremony_err("ceremony already complete"));
         }
-        if msg.round == 0 || msg.round > 2 {
+        if c.position(msg.round).is_none() {
             return Err(ceremony_err(format!(
                 "round {} does not exist in this protocol",
                 msg.round
             )));
         }
-        if msg.round < c.round {
+        if !c.expects(msg.round, &msg.from_device_id) {
             return Err(ceremony_err(format!(
-                "round {} is already complete",
-                msg.round
+                "{} has nothing to send in round {}",
+                msg.from_device_id, msg.round
             )));
         }
-        if msg.round > c.round + 1 {
-            return Err(ceremony_err(format!(
-                "round {} is more than one round ahead of {}",
-                msg.round, c.round
-            )));
-        }
-        if msg.round == c.round + 1 {
-            c.buffered.push(msg);
-            return Ok(vec![]);
+        if msg.round != c.round {
+            if Some(msg.round) == c.next_round() {
+                c.buffered.push(msg);
+                return Ok(vec![]);
+            }
+            return Err(ceremony_err(
+                if c.position(msg.round) < c.position(c.round) {
+                    format!("round {} is already complete", msg.round)
+                } else {
+                    format!(
+                        "round {} is more than one round ahead of {}",
+                        msg.round, c.round
+                    )
+                },
+            ));
         }
         self.ingest(msg)
     }
 
     fn keygen_result(&self, session: &CeremonySession) -> Result<Option<PublicKey>> {
         Ok(self
-            .result_for(session, &[CeremonyKind::KeyGen, CeremonyKind::Refresh])?
+            .result_for(
+                session,
+                &[
+                    CeremonyKind::KeyGen,
+                    CeremonyKind::Refresh,
+                    CeremonyKind::Reshare,
+                ],
+            )?
             .and_then(|c| c.public_key.clone()))
     }
 

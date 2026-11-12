@@ -22,7 +22,7 @@ hkdf = "0.13"
 ed25519-dalek = { version = "3", features = ["zeroize"] }
 frost-ed25519 = "3"
 frost-secp256k1-tr = "3"
-frost-core = "3"
+frost-core = { version = "3", features = ["internals"] }
 getrandom = "0.4"
 rusqlite = { version = "0.40", features = ["bundled", "serialize"], optional = true }
 k256 = { version = "0.13", features = ["schnorr"] }

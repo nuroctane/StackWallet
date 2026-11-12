@@ -616,6 +616,14 @@ export const ThresholdProposal = z.discriminatedUnion('kind', [
   }),
   z.object({ kind: z.literal('refresh'), session: CeremonySession }),
   z.object({ kind: z.literal('reconcile'), session: CeremonySession }),
+  /** Replace a lost device; the newcomer gets the group from this proposal. */
+  z.object({
+    kind: z.literal('reshare'),
+    group: z.lazy(() => KeyGroup),
+    replaced: z.string().min(1),
+    newcomer: z.lazy(() => PartyRef),
+    session: CeremonySession,
+  }),
 ]);
 export type ThresholdProposal = z.infer<typeof ThresholdProposal>;
 
@@ -633,6 +641,14 @@ export const ThresholdAccount = z.object({
 });
 export type ThresholdAccount = z.infer<typeof ThresholdAccount>;
 
+/** Where a threshold group key lives on chain (`threshold::GroupAddress`). */
+export const GroupAddress = z.object({ chainId: z.string(), address: z.string().min(1) });
+export type GroupAddress = z.infer<typeof GroupAddress>;
+
+/** How settling a refresh or replacement against the other parties ended here. */
+export const Reconciled = z.enum(['inSync', 'committed', 'rolledBack', 'dropped']);
+export type Reconciled = z.infer<typeof Reconciled>;
+
 /**
  * Which share generation a device holds: a hash of the group's public key
  * package, identical on every party and new with each refresh.
@@ -643,6 +659,8 @@ export const ShareFingerprint = z.object({
     .string()
     .regex(/^[0-9a-f]{64}$/)
     .nullable(),
+  /** A refresh or replacement here awaits comparison with the other devices. */
+  pending: z.boolean(),
 });
 export type ShareFingerprint = z.infer<typeof ShareFingerprint>;
 

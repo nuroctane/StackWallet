@@ -13,6 +13,7 @@ import {
   type CeremonySession,
   type CoreClient,
   type KeyGroup,
+  type PartyRef,
   type SignRequest,
   type SignedCeremonyMessage,
   type ThresholdAccount,
@@ -590,6 +591,60 @@ export class VaultStore {
       await this.refreshLedger();
       return account;
     });
+  }
+
+  /** Help replace a lost device of a wallet held here; every other device takes part. */
+  thresholdReshare(req: {
+    session: SessionProof;
+    replaced: string;
+    newcomer: PartyRef;
+    ceremony: CeremonySession;
+  }) {
+    return this.guardedValue(async () => {
+      const driver = await this.unlockedVault().thresholdReshare({ ...req, nowMs: this.now() });
+      await this.persist();
+      await this.refreshLedger();
+      return driver;
+    });
+  }
+
+  /** Join a wallet as the device replacing a lost one. */
+  thresholdJoin(req: {
+    session: SessionProof;
+    walletId: string;
+    group: KeyGroup;
+    replaced: string;
+    newcomer: PartyRef;
+    ceremony: CeremonySession;
+  }) {
+    return this.guardedValue(async () => {
+      const driver = await this.unlockedVault().thresholdJoin({ ...req, nowMs: this.now() });
+      await this.persist();
+      await this.refreshLedger();
+      return driver;
+    });
+  }
+
+  /** Seal what a finished replacement left this device with, unconfirmed until compared. */
+  thresholdFinishReshare(driver: ThresholdDriverHandle) {
+    return this.guardedValue(async () => {
+      const account = await driver.finishReshare(this.unlockedVault(), this.now());
+      await this.persist();
+      await this.refreshLedger();
+      return account;
+    });
+  }
+
+  thresholdReshareSession(walletId: string, replaced: string, newcomer: PartyRef) {
+    return this.guardedValue(() =>
+      this.unlockedVault().thresholdReshareSession(
+        walletId,
+        replaced,
+        newcomer,
+        crypto.randomUUID(),
+        this.now(),
+      ),
+    );
   }
 
   thresholdShareFingerprint(walletId: string) {

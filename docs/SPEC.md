@@ -300,7 +300,29 @@ public key package that is identical on every party and new with each refresh. I
 all others hold the new generation and rolls back when one still holds the old; since a device
 reports the new generation only after sealing it, nobody can have committed in that case. A
 device with a refresh pending refuses to sign, and the Refresh dialog then compares fingerprints
-instead of refreshing. Not yet: re-sharing (changing the party set), and the agent as a party.
+instead of refreshing.
+
+Device replacement. A lost device is replaced without moving funds or changing the address
+(`Reshare` ceremonies). Every remaining party helps, so a group needs n > t: a 2-of-2 that loses
+a device has nobody left to repair from. Helpers walk rounds 1, 3 and 4, the newcomer 2, 3 and
+4, each buffering only its own next round. Round 1 is frost's repairable threshold scheme: each
+helper splits its Lagrange-weighted share (evaluated at the newcomer's identifier) into random
+parts, one sealed to each other helper. In round 2 each helper sends the newcomer, sealed, the
+sum of what it received together with its view of the resulting group: the old public key
+package with the replaced party's verifying share swapped for the newcomer's, interpolated in
+the exponent from the helpers' shares. The newcomer adds the values into its share, refuses
+unless every helper sent the same view holding the proposed key, threshold and members, and
+checks its share against its verifying share in that view, since frost does not. Rounds 3 and
+4 are a refresh among everyone, newcomer included, with the round-1 echo; afterwards the lost
+device's share no longer combines with any current one. The session binds the resulting group
+(roles included, so D6 is checked again), the replaced device and the group key. The proposal
+carries the group to the newcomer, which shows the address so the user can compare it with
+another device of the wallet. Nothing touches a share until the ceremony completes. Settling is
+the refresh's: helpers keep `tss-prev:`, the newcomer marks its share `tss-join:`, nothing signs
+until every party of the new group reports the new generation, a party that holds no share
+reports an empty fingerprint (which rolls the others back), and a newcomer that sees anything
+but the new generation drops its share. Not yet: adding or removing a party (changing n), the
+CLI party in refresh or replacement, and the agent as a party.
 
 ### 5.2 Parties
 
@@ -857,6 +879,9 @@ client for which folder a wallet sits in; the wallet key is bound to the wallet 
    proposal over those inputs awaits approval. Approval checks that the inputs are spent by
    nothing but the replaced transaction; once either confirms, the other is recorded `replaced`
    or `dropped`.
+   Eighth increment: replacing a lost device of a shared wallet (§5.1). The wallet view's
+   Replace a device names the lost device, a paired replacement and its role; every other device
+   of the wallet and the replacement take part, and the address stays.
    Remaining in this phase: Cosmos threshold ceremonies,
    SPL/Token-2022 transfers, address lookup tables and v1 messages, IBC and other Cosmos
    messages, and swaps on Solana, Cosmos and Bitcoin.

@@ -14,6 +14,10 @@ import {
   CeremonySession,
   SignRequest,
   CosignSummary,
+  GroupAddress,
+  PartyRef,
+  PublicKey,
+  Reconciled,
   ShareFingerprint,
   ThresholdAccount,
   Curve,
@@ -231,11 +235,39 @@ export interface VaultHandle {
   }): Promise<ThresholdDriverHandle>;
   /** The refresh session (every party, bound to the group key) for a wallet held here. */
   thresholdRefreshSession(walletId: string, id: string, nowMs: number): Promise<CeremonySession>;
+  /** The session replacing `replaced` by `newcomer` in a wallet held here. */
+  thresholdReshareSession(
+    walletId: string,
+    replaced: string,
+    newcomer: PartyRef,
+    id: string,
+    nowMs: number,
+  ): Promise<CeremonySession>;
+  /** Help replace a lost device: repair a share for the newcomer, then refresh. */
+  thresholdReshare(req: {
+    session: SessionProof;
+    replaced: string;
+    newcomer: PartyRef;
+    ceremony: CeremonySession;
+    nowMs: number;
+  }): Promise<ThresholdDriverHandle>;
+  /** Join `group` as the device replacing `replaced`; sealed as `walletId`. */
+  thresholdJoin(req: {
+    session: SessionProof;
+    walletId: string;
+    group: KeyGroup;
+    replaced: string;
+    newcomer: PartyRef;
+    ceremony: CeremonySession;
+    nowMs: number;
+  }): Promise<ThresholdDriverHandle>;
   /** Which share generation this device holds (public data; safe to send to the peer). */
   thresholdShareFingerprint(walletId: string): Promise<ShareFingerprint>;
   /**
-   * Settle a pending refresh against every other party's current fingerprint:
-   * commit if all hold the new share, roll back if one still holds the old one.
+   * Settle a pending refresh or replacement against every other party's
+   * current fingerprint (`''` for a party holding no share): commit if all
+   * hold the new share, roll back if one still holds the old one or none. A
+   * device that joined by replacement drops its share instead (`dropped`).
    */
   thresholdReconcileRefresh(
     session: SessionProof,
@@ -243,7 +275,7 @@ export interface VaultHandle {
     peerCurrents: string[],
     deviceId: string,
     nowMs: number,
-  ): Promise<'inSync' | 'committed' | 'rolledBack'>;
+  ): Promise<Reconciled>;
   /** Threshold approval, first half: `request` is null when policy refused at signing time. */
   txBeginThreshold(
     txId: string,
@@ -330,6 +362,8 @@ export interface ThresholdDriverHandle {
   finishKeygen(vault: VaultHandle, nowMs: number): Promise<ThresholdAccount>;
   /** Seal the refreshed share beside the previous one until commit or rollback. */
   finishRefresh(vault: VaultHandle, nowMs: number): Promise<ThresholdAccount>;
+  /** Seal what a replacement left this device with, unconfirmed until reconciled. */
+  finishReshare(vault: VaultHandle, nowMs: number): Promise<ThresholdAccount>;
   auditEnd(vault: VaultHandle, aborted: string | null, nowMs: number): Promise<void>;
   free(): void;
 }
@@ -390,6 +424,8 @@ export interface CoreClient {
   verifyCeremonyMessage(signed: SignedCeremonyMessage, publicHex: string): Promise<boolean>;
   /** The session a key generation for `group` runs under (D6-checked, bound to the group). */
   thresholdKeygenSession(group: KeyGroup, id: string, nowMs: number): Promise<CeremonySession>;
+  /** The chain and address a threshold group key signs for, as the core derives them. */
+  thresholdGroupAddress(key: PublicKey): Promise<GroupAddress>;
 }
 
 // ---------------------------------------------------------------------------
@@ -528,6 +564,33 @@ export interface WasmVaultObject {
     nowMs: number,
   ): WasmThresholdDriverObject;
   threshold_refresh_session(walletId: string, sessionId: string, nowMs: number): string;
+  threshold_reshare_session(
+    walletId: string,
+    replaced: string,
+    newcomerJson: string,
+    sessionId: string,
+    nowMs: number,
+  ): string;
+  threshold_reshare(
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    replaced: string,
+    newcomerJson: string,
+    sessionJson: string,
+    nowMs: number,
+  ): WasmThresholdDriverObject;
+  threshold_join(
+    sessionSlot: string | undefined,
+    sessionSecret: Uint8Array,
+    sessionDevice: Uint8Array | undefined,
+    walletId: string,
+    groupJson: string,
+    replaced: string,
+    newcomerJson: string,
+    sessionJson: string,
+    nowMs: number,
+  ): WasmThresholdDriverObject;
   threshold_share_fingerprint(walletId: string): string;
   threshold_reconcile_refresh(
     sessionSlot: string | undefined,
@@ -639,6 +702,7 @@ export interface WasmModule {
   schema_sql(): string;
   verify_ceremony_message(signedJson: string, publicHex: string): boolean;
   threshold_keygen_session(groupJson: string, id: string, nowMs: number): string;
+  threshold_group_address(publicKeyJson: string): string;
   device_id_from_public_hex(publicHex: string): string;
   pairing_new_code_hex(): string;
   pairing_offer_encode(offerJson: string): string;
@@ -708,6 +772,7 @@ interface WasmThresholdDriverObject {
   signature_hex(): string | undefined;
   finish_keygen(vault: WasmVaultObject, nowMs: number): string;
   finish_refresh(vault: WasmVaultObject, nowMs: number): string;
+  finish_reshare(vault: WasmVaultObject, nowMs: number): string;
   audit_end(vault: WasmVaultObject, aborted: string | undefined, nowMs: number): void;
   free(): void;
 }
@@ -741,6 +806,9 @@ class WasmThresholdDriver implements ThresholdDriverHandle {
   }
   async finishRefresh(vault: VaultHandle, nowMs: number) {
     return ThresholdAccount.parse(JSON.parse(this.raw.finish_refresh(rawVault(vault), nowMs)));
+  }
+  async finishReshare(vault: VaultHandle, nowMs: number) {
+    return ThresholdAccount.parse(JSON.parse(this.raw.finish_reshare(rawVault(vault), nowMs)));
   }
   async auditEnd(vault: VaultHandle, aborted: string | null, nowMs: number) {
     this.raw.audit_end(rawVault(vault), aborted ?? undefined, nowMs);
@@ -1013,6 +1081,69 @@ class WasmVaultHandle implements VaultHandle {
       JSON.parse(this.raw.threshold_refresh_session(walletId, id, nowMs)),
     );
   }
+  async thresholdReshareSession(
+    walletId: string,
+    replaced: string,
+    newcomer: PartyRef,
+    id: string,
+    nowMs: number,
+  ) {
+    return CeremonySession.parse(
+      JSON.parse(
+        this.raw.threshold_reshare_session(
+          walletId,
+          replaced,
+          JSON.stringify(PartyRef.parse(newcomer)),
+          id,
+          nowMs,
+        ),
+      ),
+    );
+  }
+  async thresholdReshare(req: {
+    session: SessionProof;
+    replaced: string;
+    newcomer: PartyRef;
+    ceremony: CeremonySession;
+    nowMs: number;
+  }) {
+    const [slot, secret, device] = sessionArgs(req.session);
+    return new WasmThresholdDriver(
+      this.raw.threshold_reshare(
+        slot,
+        secret,
+        device,
+        req.replaced,
+        JSON.stringify(PartyRef.parse(req.newcomer)),
+        JSON.stringify(req.ceremony),
+        req.nowMs,
+      ),
+    );
+  }
+  async thresholdJoin(req: {
+    session: SessionProof;
+    walletId: string;
+    group: KeyGroup;
+    replaced: string;
+    newcomer: PartyRef;
+    ceremony: CeremonySession;
+    nowMs: number;
+  }) {
+    const [slot, secret, device] = sessionArgs(req.session);
+    return new WasmThresholdDriver(
+      this.raw.threshold_join(
+        slot,
+        secret,
+        device,
+        req.walletId,
+        JSON.stringify(req.group),
+        req.replaced,
+        JSON.stringify(PartyRef.parse(req.newcomer)),
+        JSON.stringify(req.ceremony),
+        req.nowMs,
+      ),
+    );
+  }
   async thresholdShareFingerprint(walletId: string) {
     return ShareFingerprint.parse(JSON.parse(this.raw.threshold_share_fingerprint(walletId)));
   }
@@ -1024,19 +1155,17 @@ class WasmVaultHandle implements VaultHandle {
     nowMs: number,
   ) {
     const [slot, secret, device] = sessionArgs(session);
-    return z
-      .enum(['inSync', 'committed', 'rolledBack'])
-      .parse(
-        this.raw.threshold_reconcile_refresh(
-          slot,
-          secret,
-          device,
-          walletId,
-          JSON.stringify(peerCurrents),
-          deviceId,
-          nowMs,
-        ),
-      );
+    return Reconciled.parse(
+      this.raw.threshold_reconcile_refresh(
+        slot,
+        secret,
+        device,
+        walletId,
+        JSON.stringify(peerCurrents),
+        deviceId,
+        nowMs,
+      ),
+    );
   }
   async txBeginThreshold(txId: string, session: SessionProof, deviceId: string, nowMs: number) {
     const [slot, secret, device] = sessionArgs(session);
@@ -1291,6 +1420,11 @@ export class WasmCoreClient implements CoreClient {
       JSON.parse(this.m.threshold_keygen_session(JSON.stringify(group), id, nowMs)),
     );
   }
+  async thresholdGroupAddress(key: PublicKey) {
+    return GroupAddress.parse(
+      JSON.parse(this.m.threshold_group_address(JSON.stringify(PublicKey.parse(key)))),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1352,6 +1486,9 @@ export class TauriCoreClient implements CoreClient {
   async thresholdKeygenSession(): Promise<CeremonySession> {
     this.unsupported('thresholdKeygenSession');
   }
+  async thresholdGroupAddress(): Promise<GroupAddress> {
+    this.unsupported('thresholdGroupAddress');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1406,6 +1543,9 @@ export class UnavailableCoreClient implements CoreClient {
     this.fail();
   }
   async thresholdKeygenSession(): Promise<CeremonySession> {
+    this.fail();
+  }
+  async thresholdGroupAddress(): Promise<GroupAddress> {
     this.fail();
   }
 }

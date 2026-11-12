@@ -83,6 +83,20 @@ pub enum AuditEvent {
     ShareRefreshRolledBack {
         wallet_id: String,
     },
+    /// A replacement finished on this device: `newcomer` holds a share in
+    /// `replaced`'s place under the same group key. Like a refresh, it waits
+    /// for every party to confirm before any share signs.
+    DeviceReplaced {
+        wallet_id: String,
+        session_id: String,
+        replaced: String,
+        newcomer: String,
+    },
+    /// This device joined a group by replacement, but the replacement did not
+    /// finish on every device, so it dropped the share it was given.
+    ShareJoinDropped {
+        wallet_id: String,
+    },
     DevicePaired {
         device_id: String,
     },

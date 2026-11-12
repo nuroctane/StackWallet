@@ -208,6 +208,15 @@ class FakeVault implements VaultHandle {
   async thresholdRefreshSession(): Promise<never> {
     throw new Error('not used');
   }
+  async thresholdReshareSession(): Promise<never> {
+    throw new Error('not used');
+  }
+  async thresholdReshare(): Promise<never> {
+    throw new Error('not used');
+  }
+  async thresholdJoin(): Promise<never> {
+    throw new Error('not used');
+  }
   async thresholdShareFingerprint(): Promise<never> {
     throw new Error('not used');
   }
@@ -304,6 +313,7 @@ function fakeClient(): CoreClient {
     connectResponder: unsupported,
     verifyCeremonyMessage: unsupported,
     thresholdKeygenSession: unsupported,
+    thresholdGroupAddress: unsupported,
   };
 }
 

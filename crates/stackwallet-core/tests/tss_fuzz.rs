@@ -7,6 +7,9 @@
 //! - Any signature a party reports verifies, under an independent verifier,
 //!   for the message that was asked for, and the signers agree on it.
 //! - A refresh never changes the group key, and a clean one still signs.
+//! - Replacing a device never changes the group key; a party that did not
+//!   finish the reshare keeps its share bit for bit, and a finished one signs
+//!   with the newcomer.
 //! - Nothing that parses network or page bytes panics on garbage.
 //!
 //! `STACKWALLET_FUZZ_SEEDS` raises the number of seeds per scenario.
@@ -21,7 +24,7 @@ use stackwallet_core::solana::{self, SolanaTx};
 use stackwallet_core::tss::frost::FrostCurve;
 use stackwallet_core::tss::harness::{Delivery, Faithful, LocalHarness, XorShift64};
 use stackwallet_core::tss::{
-    CeremonyKind, CeremonyMessage, CeremonySession, CeremonyState, ThresholdScheme,
+    CeremonyKind, CeremonyMessage, CeremonySession, CeremonyState, ShareBlob, ThresholdScheme,
 };
 
 type Tr = frost_secp256k1_tr::Secp256K1Sha256TR;
@@ -304,6 +307,90 @@ fn fuzz<C: Verify>(g: KeyGroup, signers: &[&str], seeds: u64) {
         g.curves[0],
         g.threshold,
         g.parties.len()
+    );
+}
+
+/// One seed: a clean DKG, then `lost` is replaced by a fresh device under chaos.
+fn replacement<C: Verify>(g: &KeyGroup, lost: &str, signers: &[&str], seed: u64) -> &'static str {
+    let mut ids: Vec<&str> = g.parties.iter().map(|p| p.device_id.as_str()).collect();
+    let mut h = LocalHarness::<C>::new(g).unwrap();
+    let pk = h.keygen(&mut Faithful).unwrap();
+    let before: Vec<(String, ShareBlob)> = ids
+        .iter()
+        .map(|d| ((*d).to_owned(), h.party(d).unwrap().export_share().unwrap()))
+        .collect();
+    ids.push("fresh");
+    let mut net = Chaos::new(seed, &ids);
+    let fresh = PartyRef {
+        device_id: "fresh".into(),
+        role: PartyRole::Human,
+    };
+
+    let replaced = h.replace(lost, &fresh, &mut net);
+    let report = h.last_run().unwrap().clone();
+    for (d, share) in &before {
+        let party = h.party(d).or_else(|| h.retired(d)).unwrap();
+        if let Some(k) = party.public_key().unwrap() {
+            assert_eq!(k, pk, "seed {seed}: a reshare changed {d}'s group key");
+        }
+        if !report.complete.contains(d) {
+            assert_eq!(
+                &party.export_share().unwrap(),
+                share,
+                "seed {seed}: {d} changed its share without finishing: {report:?}"
+            );
+        }
+    }
+    if replaced.is_err() {
+        return "reshare failed";
+    }
+    let (req, messages) = C::batch(&g.id, seed);
+    h.sign_batch(signers, &req, &messages, &mut Faithful)
+        .unwrap_or_else(|e| panic!("seed {seed}: the new group cannot sign: {e}"));
+    check_signatures(&h, signers, &pk.hex, &messages);
+    "complete"
+}
+
+fn fuzz_replacement<C: Verify>(g: KeyGroup, lost: &str, signers: &[&str], seeds: u64) {
+    let mut outcomes = std::collections::BTreeMap::<&str, u64>::new();
+    for seed in 1..=seeds {
+        *outcomes
+            .entry(replacement::<C>(&g, lost, signers, seed * 0x85EB_CA6B))
+            .or_default() += 1;
+    }
+    assert!(outcomes.contains_key("complete"), "{outcomes:?}");
+    assert!(outcomes.len() > 1, "{outcomes:?}");
+    eprintln!(
+        "{:?} {}-of-{} replacement: {outcomes:?}",
+        g.curves[0],
+        g.threshold,
+        g.parties.len()
+    );
+}
+
+#[test]
+fn taproot_replacement_under_chaos() {
+    fuzz_replacement::<Tr>(
+        group(Curve::Secp256k1Tr, 2, &["laptop", "phone", "desk"]),
+        "laptop",
+        &["fresh", "desk"],
+        seeds(16),
+    );
+    fuzz_replacement::<Tr>(
+        group(Curve::Secp256k1Tr, 3, &["a", "b", "c", "d", "e"]),
+        "b",
+        &["fresh", "c", "e"],
+        seeds(12),
+    );
+}
+
+#[test]
+fn ed25519_replacement_under_chaos() {
+    fuzz_replacement::<Ed>(
+        group(Curve::Ed25519, 2, &["laptop", "phone", "desk"]),
+        "phone",
+        &["laptop", "fresh"],
+        seeds(6),
     );
 }
 

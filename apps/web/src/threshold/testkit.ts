@@ -108,6 +108,9 @@ export function opsFor(v: VaultHandle, deviceId: string): ThresholdOps {
     txCompleteThreshold: (txId, sig) => wrap(v.txCompleteThreshold(txId, sig, deviceId, now())),
     thresholdRefresh: (r) => wrap(v.thresholdRefresh({ ...r, nowMs: now() })),
     thresholdFinishRefresh: (d) => wrap(d.finishRefresh(v, now())),
+    thresholdReshare: (r) => wrap(v.thresholdReshare({ ...r, nowMs: now() })),
+    thresholdJoin: (r) => wrap(v.thresholdJoin({ ...r, nowMs: now() })),
+    thresholdFinishReshare: (d) => wrap(d.finishReshare(v, now())),
     thresholdShareFingerprint: (w) => wrap(v.thresholdShareFingerprint(w)),
     thresholdReconcile: (s, w, peers) =>
       wrap(v.thresholdReconcileRefresh(s, w, peers, deviceId, now())),

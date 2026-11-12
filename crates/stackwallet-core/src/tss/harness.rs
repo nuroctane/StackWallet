@@ -5,13 +5,16 @@
 //! reorder, duplicate and corrupt traffic. The CLI reuses the same runner for
 //! local self-tests, so it is compiled into the crate rather than test-only.
 
-use super::frost::{keygen_binding_hex, refresh_binding_hex, FrostCurve, FrostParty};
+use super::frost::{
+    keygen_binding_hex, refresh_binding_hex, replaced_group, reshare_binding_hex, FrostCurve,
+    FrostParty,
+};
 use super::{
     CeremonyKind, CeremonyMessage, CeremonyProgress, CeremonySession, CeremonyState,
     ThresholdScheme,
 };
 use crate::intent::{SignRequest, Signature};
-use crate::model::{KeyGroup, PublicKey};
+use crate::model::{KeyGroup, PartyRef, PublicKey};
 use crate::{CoreError, Result};
 
 /// The network between harness parties.
@@ -158,6 +161,8 @@ impl RunReport {
 pub struct LocalHarness<C: FrostCurve> {
     group: KeyGroup,
     parties: Vec<FrostParty<C>>,
+    /// Devices replaced out of the group, still holding their last share.
+    retired: Vec<FrostParty<C>>,
     sessions: u64,
     last_run: Option<RunReport>,
     /// Timestamps stamped onto sessions; the harness has no clock of its own.
@@ -187,6 +192,7 @@ impl<C: FrostCurve> LocalHarness<C> {
                 .iter()
                 .map(|p| FrostParty::new(p.device_id.clone()))
                 .collect(),
+            retired: Vec::new(),
             sessions: 0,
             last_run: None,
             now_ms: 0,
@@ -211,6 +217,19 @@ impl<C: FrostCurve> LocalHarness<C> {
 
     pub fn party_mut(&mut self, device_id: &str) -> Option<&mut FrostParty<C>> {
         self.parties.iter_mut().find(|p| p.party_id() == device_id)
+    }
+
+    /// A device that [`Self::replace`] took out of the group, as it was left.
+    pub fn retired(&self, device_id: &str) -> Option<&FrostParty<C>> {
+        self.retired.iter().find(|p| p.party_id() == device_id)
+    }
+
+    /// Drops every party's ceremony, as devices do when a session expires, so
+    /// the group can run another one after a failure.
+    pub fn abandon(&mut self) {
+        for p in &mut self.parties {
+            p.abandon();
+        }
     }
 
     pub fn last_run(&self) -> Option<&RunReport> {
@@ -359,6 +378,63 @@ impl<C: FrostCurve> LocalHarness<C> {
         self.finish(&report)?;
         let keys = self.collect(&participants, |p| p.keygen_result(&session))?;
         Self::unanimous(keys, "public key")
+    }
+
+    /// Replaces `replaced` with the fresh device `newcomer`, keeping the group
+    /// key: every other party helps repair a share for the newcomer, then all
+    /// of them refresh. On success the group record names the newcomer and
+    /// the replaced party moves to [`Self::retired`] with its old share; on
+    /// failure the group and every share stay as they were.
+    pub fn replace(
+        &mut self,
+        replaced: &str,
+        newcomer: &PartyRef,
+        delivery: &mut dyn Delivery,
+    ) -> Result<PublicKey> {
+        let next = replaced_group(&self.group, replaced, newcomer)?;
+        let key = self
+            .group
+            .parties
+            .iter()
+            .filter(|p| p.device_id != replaced)
+            .find_map(|p| self.party(&p.device_id)?.public_key().ok().flatten())
+            .ok_or_else(|| CoreError::Ceremony("replace before keygen".into()))?;
+        let bytes = hex::decode(&key.hex).map_err(|_| CoreError::Crypto("group key hex"))?;
+        let participants: Vec<String> = next.parties.iter().map(|p| p.device_id.clone()).collect();
+        let binding = reshare_binding_hex(&next, C::CURVE, replaced, &bytes);
+        let session = self.session(CeremonyKind::Reshare, &participants, Some(binding));
+        self.parties
+            .push(FrostParty::new(newcomer.device_id.clone()));
+        let group = self.group.clone();
+        let outcome = self
+            .run(&session, delivery, |p| {
+                p.reshare_start(&group, &session, replaced, newcomer, &key)
+            })
+            .and_then(|report| self.finish(&report))
+            .and_then(|()| self.collect(&participants, |p| p.keygen_result(&session)))
+            .and_then(|keys| Self::unanimous(keys, "public key"))
+            .and_then(|out| {
+                if out == key {
+                    Ok(out)
+                } else {
+                    Err(CoreError::Ceremony(
+                        "the reshare changed the group key".into(),
+                    ))
+                }
+            });
+        match outcome {
+            Ok(out) => {
+                self.group = next;
+                if let Some(i) = self.parties.iter().position(|p| p.party_id() == replaced) {
+                    self.retired.push(self.parties.remove(i));
+                }
+                Ok(out)
+            }
+            Err(e) => {
+                self.parties.retain(|p| p.party_id() != newcomer.device_id);
+                Err(e)
+            }
+        }
     }
 
     fn run(

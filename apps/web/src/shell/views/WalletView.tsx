@@ -160,7 +160,7 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
             <Button
               size="sm"
               variant="ghost"
-              title="Replace both devices' shares with fresh ones; the addresses stay the same"
+              title="Give every device a fresh share; the addresses stay the same"
               onClick={() =>
                 shell.openDialog({
                   kind: 'threshold',
@@ -169,6 +169,21 @@ export function WalletView({ state, wallet }: { state: DirectoryState; wallet: W
               }
             >
               Refresh shares…
+            </Button>
+          )}
+          {wallet.kind === 'tss' && (
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Move a lost device's share to a new one; the addresses stay the same"
+              onClick={() =>
+                shell.openDialog({
+                  kind: 'threshold',
+                  target: { mode: 'replace', walletId: wallet.id },
+                })
+              }
+            >
+              Replace a device…
             </Button>
           )}
           {wallet.kind !== 'single' && (

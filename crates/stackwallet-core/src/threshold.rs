@@ -8,6 +8,12 @@
 //! messages. Before this device's share joins a signing ceremony it checks
 //! what it is asked to sign, against its own policies, exactly as it would for
 //! a transaction proposed locally.
+//!
+//! A lost device is replaced without moving funds: the other parties repair a
+//! share for a fresh device and refresh together, so the group key and the
+//! address stay while the lost share stops combining with anything. Like a
+//! refresh, a replacement is settled by comparing share generations: nothing
+//! signs until every party reports the new one.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -16,11 +22,12 @@ use crate::audit::{Actor, AuditEvent};
 use crate::bitcoin::{self, BitcoinTx};
 use crate::intent::{Amount, Proposer, SignRequest, Signature, TxIntent, TxIntentKind};
 use crate::ledger;
-use crate::model::{AssetRef, ChainId, Curve, KeyGroup, PublicKey};
+use crate::model::{AssetRef, ChainId, Curve, KeyGroup, PartyRef, PublicKey};
 use crate::policy::{self, Decision};
 use crate::solana::{self, SolanaTx};
 use crate::tss::frost::{
-    keygen_binding_hex, refresh_binding_hex, Ed25519Sha512, FrostParty, Secp256K1Sha256TR,
+    keygen_binding_hex, refresh_binding_hex, replaced_group, reshare_binding_hex, Ed25519Sha512,
+    FrostParty, Secp256K1Sha256TR,
 };
 use crate::tss::{
     CeremonyKind, CeremonyMessage, CeremonyProgress, CeremonySession, CeremonyState, ShareBlob,
@@ -167,6 +174,19 @@ impl Party {
             Self::Tr(p) => p.sign_batch_start(request, session, messages),
         }
     }
+    fn reshare_start(
+        &mut self,
+        group: &KeyGroup,
+        session: &CeremonySession,
+        replaced: &str,
+        newcomer: &PartyRef,
+        key: &PublicKey,
+    ) -> Result<Vec<CeremonyMessage>> {
+        match self {
+            Self::Ed(p) => p.reshare_start(group, session, replaced, newcomer, key),
+            Self::Tr(p) => p.reshare_start(group, session, replaced, newcomer, key),
+        }
+    }
 }
 
 fn load(vault: &EncryptedVault, wallet_id: &str) -> Result<Option<Stored>> {
@@ -229,6 +249,15 @@ pub enum Proposal {
     Reconcile {
         session: CeremonySession,
     },
+    /// Replace a lost device: `newcomer` takes `replaced`'s place in `group`
+    /// under the same key. The newcomer has no copy of the group yet, so the
+    /// proposal carries it; every remaining party uses its own.
+    Reshare {
+        group: KeyGroup,
+        replaced: String,
+        newcomer: PartyRef,
+        session: CeremonySession,
+    },
 }
 
 impl Proposal {
@@ -237,15 +266,81 @@ impl Proposal {
             Proposal::KeyGen { session, .. }
             | Proposal::Sign { session, .. }
             | Proposal::Refresh { session }
-            | Proposal::Reconcile { session } => session,
+            | Proposal::Reconcile { session }
+            | Proposal::Reshare { session, .. } => session,
         }
     }
 }
 
 const PREVIOUS: &str = "tss-prev:";
+/// Marks a share this device got by joining a group as a replacement, until
+/// every party confirms the replacement.
+const JOINED: &str = "tss-join:";
 
 fn previous_label(wallet_id: &str) -> Result<String> {
     label(wallet_id).map(|l| format!("{PREVIOUS}{}", &l[PREFIX.len()..]))
+}
+
+fn joined_label(wallet_id: &str) -> Result<String> {
+    label(wallet_id).map(|l| format!("{JOINED}{}", &l[PREFIX.len()..]))
+}
+
+fn group_key(group: &KeyGroup, curve: Curve) -> Result<&PublicKey> {
+    group
+        .public_keys
+        .iter()
+        .find(|k| k.curve == curve)
+        .ok_or_else(|| invalid("group has no key on its curve"))
+}
+
+/// The session replacing `replaced` by `newcomer` runs under: every other
+/// party and the newcomer, bound to the group that results and to the key
+/// that must survive.
+pub fn reshare_session(
+    acc: &ThresholdAccount,
+    replaced: &str,
+    newcomer: &PartyRef,
+    id: &str,
+    now_ms: i64,
+) -> Result<CeremonySession> {
+    let next = replaced_group(&acc.group, replaced, newcomer)?;
+    reshare_session_for(&acc.group, &next, acc.curve, replaced, id, now_ms)
+}
+
+fn reshare_session_for(
+    group: &KeyGroup,
+    next: &KeyGroup,
+    curve: Curve,
+    replaced: &str,
+    id: &str,
+    now_ms: i64,
+) -> Result<CeremonySession> {
+    let key = group_key(group, curve)?;
+    let vk = hex::decode(&key.hex).map_err(|_| invalid("malformed group key"))?;
+    Ok(CeremonySession {
+        id: id.to_owned(),
+        kind: CeremonyKind::Reshare,
+        key_group_id: group.id.clone(),
+        curve,
+        payload_hash_hex: Some(reshare_binding_hex(next, curve, replaced, &vk)),
+        participants: next.parties.iter().map(|p| p.device_id.clone()).collect(),
+        state: CeremonyState::Rounds,
+        created_at_ms: now_ms,
+        expires_at_ms: now_ms + MAX_SESSION_MS,
+    })
+}
+
+/// Whether `session` is exactly the replacement this device would run.
+fn binds_reshare(session: &CeremonySession, expected: &CeremonySession) -> bool {
+    let mut given: Vec<&str> = session.participants.iter().map(String::as_str).collect();
+    let mut want: Vec<&str> = expected.participants.iter().map(String::as_str).collect();
+    given.sort_unstable();
+    want.sort_unstable();
+    session.kind == CeremonyKind::Reshare
+        && session.curve == expected.curve
+        && session.key_group_id == expected.key_group_id
+        && given == want
+        && session.payload_hash_hex == expected.payload_hash_hex
 }
 
 /// The session a share refresh runs under: every party of the group, bound to
@@ -271,12 +366,7 @@ pub fn refresh_session(acc: &ThresholdAccount, id: &str, now_ms: i64) -> Result<
 }
 
 fn refresh_binding(acc: &ThresholdAccount, participants: &[String]) -> Result<String> {
-    let key = acc
-        .group
-        .public_keys
-        .iter()
-        .find(|k| k.curve == acc.curve)
-        .ok_or_else(|| invalid("group has no key on its curve"))?;
+    let key = group_key(&acc.group, acc.curve)?;
     let vk = hex::decode(&key.hex).map_err(|_| invalid("malformed group key"))?;
     Ok(refresh_binding_hex(
         &acc.group.id,
@@ -287,10 +377,12 @@ fn refresh_binding(acc: &ThresholdAccount, participants: &[String]) -> Result<St
     ))
 }
 
-/// Whether a refresh finished here but has not been confirmed by every peer:
-/// the previous share is still sealed beside the new one.
+/// Whether a refresh or replacement finished here but has not been confirmed
+/// by every peer: the previous share is still sealed beside the new one, or
+/// the share came from joining and nobody has confirmed it yet.
 pub fn refresh_pending(vault: &EncryptedVault, wallet_id: &str) -> Result<bool> {
-    Ok(vault.handle_for(&previous_label(wallet_id)?).is_some())
+    Ok(vault.handle_for(&previous_label(wallet_id)?).is_some()
+        || vault.handle_for(&joined_label(wallet_id)?).is_some())
 }
 
 /// Which share generation this device holds, as a fingerprint of the group's
@@ -303,6 +395,9 @@ pub struct ShareFingerprint {
     pub current: String,
     /// Present while a finished refresh awaits reconciliation.
     pub previous: Option<String>,
+    /// Whether a refresh or replacement awaits reconciliation here (a device
+    /// that joined by replacement has no previous share to show for it).
+    pub pending: bool,
 }
 
 fn fingerprint_of(stored: &Stored) -> String {
@@ -322,9 +417,11 @@ fn load_previous(vault: &EncryptedVault, wallet_id: &str) -> Result<Option<Store
 
 pub fn share_fingerprint(vault: &EncryptedVault, wallet_id: &str) -> Result<ShareFingerprint> {
     let current = load(vault, wallet_id)?.ok_or_else(|| invalid("no share of that wallet"))?;
+    let previous = load_previous(vault, wallet_id)?.map(|p| fingerprint_of(&p));
     Ok(ShareFingerprint {
         current: fingerprint_of(&current),
-        previous: load_previous(vault, wallet_id)?.map(|p| fingerprint_of(&p)),
+        pending: previous.is_some() || vault.handle_for(&joined_label(wallet_id)?).is_some(),
+        previous,
     })
 }
 
@@ -338,14 +435,21 @@ pub enum Reconciled {
     Committed,
     /// The peer never sealed the refresh: the previous share is current again.
     RolledBack,
+    /// This device joined by replacement and a peer never sealed it: the
+    /// device holds no share of the wallet any more.
+    Dropped,
 }
 
-/// Settle a pending refresh against every other party's current fingerprint,
-/// received over authenticated ceremony channels. Commit only when all of
-/// them hold the new share; roll back only when one still holds the old one
-/// (a device reports the new generation only after sealing it, so nobody can
-/// have committed then). Anything else is refused, so a lost message can never
-/// leave the devices on different generations.
+/// Settle a pending refresh or replacement against every other party's
+/// current fingerprint, received over authenticated ceremony channels. Commit
+/// only when all of them hold the new share; roll back only when one still
+/// holds the old one, or none at all (a device reports the new generation
+/// only after sealing it, so nobody can have committed then). A party with no
+/// share of the wallet reports an empty fingerprint. Anything else is
+/// refused, so a lost message can never leave the devices on different
+/// generations. These are crash rules: a party that lies about its
+/// generation can stall a refresh, which is why every party is a device the
+/// user enrolled.
 pub fn reconcile_refresh(
     vault: &mut EncryptedVault,
     proof: &SessionProof,
@@ -362,36 +466,75 @@ pub fn reconcile_refresh(
         ));
     }
     let mine = share_fingerprint(vault, wallet_id)?;
-    let pending = mine.previous.is_some();
-    let known = |f: &String| *f == mine.current || mine.previous.as_ref() == Some(f);
-    if !peer_currents.iter().all(known) {
-        return Err(invalid(
-            "another device holds a share of neither generation; check every device before refreshing or signing",
-        ));
-    }
+    let joined = vault.handle_for(&joined_label(wallet_id)?).is_some();
     if peer_currents.iter().all(|f| *f == mine.current) {
-        if !pending {
+        if mine.previous.is_none() && !joined {
             return Ok(Reconciled::InSync);
         }
         commit_refresh(vault, wallet_id, device_id, now_ms)?;
         return Ok(Reconciled::Committed);
     }
+    // A device that joined held no share of the group before, so a
+    // replacement that did not finish everywhere leaves it nothing to keep.
+    if joined {
+        drop_join(vault, wallet_id, device_id, now_ms)?;
+        return Ok(Reconciled::Dropped);
+    }
+    let unsealed = |f: &String| f.is_empty() || mine.previous.as_ref() == Some(f);
+    if mine.previous.is_none()
+        || !peer_currents
+            .iter()
+            .all(|f| *f == mine.current || unsealed(f))
+    {
+        return Err(invalid(
+            "another device holds a share of neither generation; check every device before refreshing or signing",
+        ));
+    }
     rollback_refresh(vault, wallet_id, device_id, now_ms)?;
     Ok(Reconciled::RolledBack)
 }
 
-/// The peer holds the refreshed share: drop the previous one, so a copy of
-/// the old vault no longer pairs with anything current.
+fn drop_join(
+    vault: &mut EncryptedVault,
+    wallet_id: &str,
+    device_id: &str,
+    now_ms: i64,
+) -> Result<()> {
+    for l in [label(wallet_id)?, joined_label(wallet_id)?] {
+        if let Some(handle) = vault.handle_for(&l) {
+            vault.delete(&handle)?;
+        }
+    }
+    ledger::append_audit(
+        vault,
+        now_ms,
+        Actor::Device {
+            device_id: device_id.to_owned(),
+        },
+        AuditEvent::ShareJoinDropped {
+            wallet_id: wallet_id.to_owned(),
+        },
+    )
+}
+
+/// Every peer holds the new share: drop the previous one, so a copy of the
+/// old vault no longer pairs with anything current.
 fn commit_refresh(
     vault: &mut EncryptedVault,
     wallet_id: &str,
     device_id: &str,
     now_ms: i64,
 ) -> Result<()> {
-    let handle = vault
-        .handle_for(&previous_label(wallet_id)?)
-        .ok_or_else(|| invalid("no refresh is waiting to be committed"))?;
-    vault.delete(&handle)?;
+    let mut settled = false;
+    for l in [previous_label(wallet_id)?, joined_label(wallet_id)?] {
+        if let Some(handle) = vault.handle_for(&l) {
+            vault.delete(&handle)?;
+            settled = true;
+        }
+    }
+    if !settled {
+        return Err(invalid("no refresh is waiting to be committed"));
+    }
     ledger::append_audit(
         vault,
         now_ms,
@@ -637,7 +780,10 @@ pub struct Driver {
     party: Party,
     session: CeremonySession,
     wallet_id: String,
+    /// The group this ceremony leaves the wallet in.
     group: KeyGroup,
+    /// For a replacement: the device replaced and the one taking its place.
+    replacing: Option<(String, String)>,
 }
 
 impl Driver {
@@ -699,6 +845,7 @@ impl Driver {
                 session: session.clone(),
                 wallet_id: wallet_id.to_owned(),
                 group: group.clone(),
+                replacing: None,
             },
             out,
         ))
@@ -769,6 +916,7 @@ impl Driver {
                 session: session.clone(),
                 wallet_id: acc.wallet_id,
                 group: acc.group,
+                replacing: None,
             },
             out,
         ))
@@ -830,9 +978,208 @@ impl Driver {
                 session: session.clone(),
                 wallet_id: acc.wallet_id,
                 group: acc.group,
+                replacing: None,
             },
             out,
         ))
+    }
+
+    /// Help replace `replaced` by `newcomer` in this device's wallet: with the
+    /// other remaining parties it repairs a share for the newcomer, then all
+    /// of them refresh. Every remaining party must take part, since a share
+    /// left out of the refresh no longer combines with the others. Needs the
+    /// passphrase: it rewrites what the vault holds, and it lets a new device
+    /// into the wallet.
+    pub fn reshare(
+        vault: &mut EncryptedVault,
+        proof: &SessionProof,
+        replaced: &str,
+        newcomer: &PartyRef,
+        session: &CeremonySession,
+        now_ms: i64,
+    ) -> Result<(Self, Vec<CeremonyMessage>)> {
+        vault.verify_session(proof, true)?;
+        let acc = by_group(vault, &session.key_group_id)?;
+        if acc.device_id == replaced {
+            return Err(invalid("this device is the one being replaced"));
+        }
+        check_session(session, &acc.device_id, now_ms)?;
+        if refresh_pending(vault, &acc.wallet_id)? {
+            return Err(invalid(
+                "the last refresh or replacement is not confirmed yet; compare shares with the other devices first",
+            ));
+        }
+        let next = replaced_group(&acc.group, replaced, newcomer)?;
+        let expected = reshare_session_for(
+            &acc.group,
+            &next,
+            acc.curve,
+            replaced,
+            &session.id,
+            session.created_at_ms,
+        )?;
+        if !binds_reshare(session, &expected) {
+            return Err(invalid("the session does not bind this replacement"));
+        }
+        let key = group_key(&acc.group, acc.curve)?.clone();
+        let stored = load(vault, &acc.wallet_id)?.ok_or_else(|| invalid("share disappeared"))?;
+        let mut party = Party::new(acc.curve, &acc.device_id)?;
+        party.scheme_mut().import_share(&stored.share)?;
+        let out = party.reshare_start(&acc.group, session, replaced, newcomer, &key)?;
+        ledger::append_audit(
+            vault,
+            now_ms,
+            Actor::Device {
+                device_id: acc.device_id.clone(),
+            },
+            AuditEvent::CeremonyStarted {
+                session_id: session.id.clone(),
+                sign_request_id: None,
+            },
+        )?;
+        Ok((
+            Self {
+                party,
+                session: session.clone(),
+                wallet_id: acc.wallet_id,
+                group: next,
+                replacing: Some((replaced.to_owned(), newcomer.device_id.clone())),
+            },
+            out,
+        ))
+    }
+
+    /// Join `group` as `newcomer`, the fresh device taking `replaced`'s place.
+    /// The other parties repair a share for this device without any of them
+    /// learning it, and it is sealed under `wallet_id` when the ceremony
+    /// finishes. The group arrives from the proposer, so the user checks its
+    /// address on another device of the wallet before joining.
+    #[allow(clippy::too_many_arguments)]
+    pub fn join(
+        vault: &mut EncryptedVault,
+        proof: &SessionProof,
+        wallet_id: &str,
+        group: &KeyGroup,
+        replaced: &str,
+        newcomer: &PartyRef,
+        session: &CeremonySession,
+        now_ms: i64,
+    ) -> Result<(Self, Vec<CeremonyMessage>)> {
+        vault.verify_session(proof, true)?;
+        if load(vault, wallet_id)?.is_some() || refresh_pending(vault, wallet_id)? {
+            return Err(invalid("this wallet already holds a share"));
+        }
+        if list(vault)?.iter().any(|a| a.group.id == group.id) {
+            return Err(invalid("this device already holds a share of that group"));
+        }
+        group.validate()?;
+        let [curve] = group.curves[..] else {
+            return Err(invalid("a threshold wallet holds exactly one curve"));
+        };
+        if !CURVES.contains(&curve) {
+            return Err(invalid(
+                "only Ed25519 and Taproot threshold wallets are supported",
+            ));
+        }
+        let key = group_key(group, curve)?.clone();
+        group_address(&key)?;
+        check_session(session, &newcomer.device_id, now_ms)?;
+        let next = replaced_group(group, replaced, newcomer)?;
+        let expected = reshare_session_for(
+            group,
+            &next,
+            curve,
+            replaced,
+            &session.id,
+            session.created_at_ms,
+        )?;
+        if !binds_reshare(session, &expected) {
+            return Err(invalid("the session does not bind this replacement"));
+        }
+        let mut party = Party::new(curve, &newcomer.device_id)?;
+        let out = party.reshare_start(group, session, replaced, newcomer, &key)?;
+        ledger::append_audit(
+            vault,
+            now_ms,
+            Actor::Device {
+                device_id: newcomer.device_id.clone(),
+            },
+            AuditEvent::CeremonyStarted {
+                session_id: session.id.clone(),
+                sign_request_id: None,
+            },
+        )?;
+        Ok((
+            Self {
+                party,
+                session: session.clone(),
+                wallet_id: wallet_id.to_owned(),
+                group: next,
+                replacing: Some((replaced.to_owned(), newcomer.device_id.clone())),
+            },
+            out,
+        ))
+    }
+
+    /// Seal the share a replacement left this device with. A remaining party
+    /// keeps its previous share beside the new one, exactly as after a
+    /// refresh; the newcomer had none, so its share is marked unconfirmed
+    /// instead. Either way nothing signs until every party reports the new
+    /// generation.
+    pub fn finish_reshare(
+        &self,
+        vault: &mut EncryptedVault,
+        now_ms: i64,
+    ) -> Result<ThresholdAccount> {
+        let (Some((replaced, newcomer)), CeremonyKind::Reshare) =
+            (&self.replacing, self.session.kind)
+        else {
+            return Err(invalid("not a replacement ceremony"));
+        };
+        let scheme = self.party.scheme();
+        let key = scheme
+            .keygen_result(&self.session)?
+            .ok_or_else(|| invalid("the replacement has not finished"))?;
+        if !self.group.public_keys.iter().any(|k| k == &key) {
+            return Err(invalid("the replacement changed the group key"));
+        }
+        let fresh = Stored {
+            group: self.group.clone(),
+            share: scheme.export_share()?,
+        };
+        let new_bytes = serde_json::to_vec(&fresh).map_err(|e| invalid(e.to_string()))?;
+        // The previous share (or the marker) first: a crash between the two
+        // writes must never leave a share nobody knows is unconfirmed.
+        match load(vault, &self.wallet_id)? {
+            Some(old) => {
+                if old.group.id != self.group.id {
+                    return Err(invalid("this wallet holds another group"));
+                }
+                let old_bytes = serde_json::to_vec(&old).map_err(|e| invalid(e.to_string()))?;
+                vault.put(&previous_label(&self.wallet_id)?, Secret::new(old_bytes))?;
+            }
+            None => {
+                vault.put(
+                    &joined_label(&self.wallet_id)?,
+                    Secret::new(self.session.id.as_bytes().to_vec()),
+                )?;
+            }
+        }
+        vault.put(&label(&self.wallet_id)?, Secret::new(new_bytes))?;
+        ledger::append_audit(
+            vault,
+            now_ms,
+            Actor::Device {
+                device_id: scheme.party_id().to_owned(),
+            },
+            AuditEvent::DeviceReplaced {
+                wallet_id: self.wallet_id.clone(),
+                session_id: self.session.id.clone(),
+                replaced: replaced.clone(),
+                newcomer: newcomer.clone(),
+            },
+        )?;
+        account_of(&self.wallet_id, &fresh)
     }
 
     /// Seal the refreshed share, keeping the previous one beside it until
@@ -1848,5 +2195,368 @@ mod tests {
                 Reconciled::Committed
             );
         }
+    }
+
+    /// A 2-of-3 of laptop, phone and desk on `curve`.
+    fn trio(curve: Curve) -> (Vec<EncryptedVault>, Vec<ThresholdAccount>) {
+        let ids = ["laptop", "phone", "desk"];
+        let g = KeyGroup {
+            id: "g3".into(),
+            threshold: 2,
+            parties: ids
+                .iter()
+                .map(|d| PartyRef {
+                    device_id: (*d).into(),
+                    role: PartyRole::Human,
+                })
+                .collect(),
+            curves: vec![curve],
+            public_keys: vec![],
+        };
+        let mut vaults = vec![vault(), vault(), vault()];
+        let s = keygen_session(&g, "kg3", 10);
+        let mut outs = Vec::new();
+        let mut drivers: Vec<Driver> = vaults
+            .iter_mut()
+            .zip(ids)
+            .map(|(v, id)| {
+                let (d, out) = Driver::keygen(v, &proof(), "w", id, &g, &s, 11).unwrap();
+                outs.extend(out);
+                d
+            })
+            .collect();
+        pump_all(&mut drivers.iter_mut().collect::<Vec<_>>(), outs);
+        let accs = drivers
+            .iter()
+            .zip(vaults.iter_mut())
+            .map(|(d, v)| d.finish_keygen(v, 12).unwrap())
+            .collect();
+        (vaults, accs)
+    }
+
+    fn tablet() -> PartyRef {
+        PartyRef {
+            device_id: "tablet".into(),
+            role: PartyRole::Human,
+        }
+    }
+
+    /// Laptop and phone replace the lost desk with a fresh tablet, which will
+    /// keep the wallet as "w2". The ceremony finishes; nothing is sealed.
+    fn replace_desk(
+        vaults: &mut [EncryptedVault],
+        tablet_vault: &mut EncryptedVault,
+        acc: &ThresholdAccount,
+    ) -> Vec<Driver> {
+        let s = reshare_session(acc, "desk", &tablet(), "rs-1", 50).unwrap();
+        let mut outs = Vec::new();
+        let mut drivers = Vec::new();
+        for v in vaults.iter_mut().take(2) {
+            let (d, out) = Driver::reshare(v, &proof(), "desk", &tablet(), &s, 51).unwrap();
+            outs.extend(out);
+            drivers.push(d);
+        }
+        let (d, out) = Driver::join(
+            tablet_vault,
+            &proof(),
+            "w2",
+            &acc.group,
+            "desk",
+            &tablet(),
+            &s,
+            51,
+        )
+        .unwrap();
+        outs.extend(out);
+        drivers.push(d);
+        pump_all(&mut drivers.iter_mut().collect::<Vec<_>>(), outs);
+        drivers
+    }
+
+    /// The laptop proposes a spend from the wallet and signs it with `with`
+    /// (a co-signer holding the wallet as `with_wallet`).
+    fn spend(
+        curve: Curve,
+        va: &mut EncryptedVault,
+        with: (&mut EncryptedVault, &str),
+        address: &str,
+    ) -> TxState {
+        let tx = if curve == Curve::Secp256k1Tr {
+            propose_bitcoin(va, address, &[80_000]);
+            "b1"
+        } else {
+            propose_transfer(va, address, &bs58::encode([8; 32]).into_string());
+            "t1"
+        };
+        let (_, req) = ledger::begin_threshold(va, tx, &proof(), "laptop", 70).unwrap();
+        let req = req.unwrap();
+        let s = sign_session(&req, "sg-r", vec!["laptop".into(), with.1.into()], 70);
+        let (mut a, oa) = Driver::sign(va, &proof(), &req, &s, "laptop", 71).unwrap();
+        let (mut b, ob) = Driver::sign(with.0, &proof(), &req, &s, "laptop", 71).unwrap();
+        pump(&mut a, &mut b, oa, ob);
+        let sig = a.signature_hex().unwrap().unwrap();
+        ledger::complete_threshold(va, tx, &sig, "laptop", 72)
+            .unwrap()
+            .state
+    }
+
+    #[test]
+    fn a_lost_device_is_replaced_and_the_wallet_keeps_its_address() {
+        for curve in [Curve::Secp256k1Tr, Curve::Ed25519] {
+            let (mut vaults, accs) = trio(curve);
+            let mut vt = vault();
+            let drivers = replace_desk(&mut vaults, &mut vt, &accs[0]);
+            let sealed = [
+                drivers[0].finish_reshare(&mut vaults[0], 52).unwrap(),
+                drivers[1].finish_reshare(&mut vaults[1], 52).unwrap(),
+                drivers[2].finish_reshare(&mut vt, 52).unwrap(),
+            ];
+            for acc in &sealed {
+                assert_eq!(acc.address, accs[0].address, "{curve:?}: the address stays");
+                let ids: Vec<&str> = acc
+                    .group
+                    .parties
+                    .iter()
+                    .map(|p| p.device_id.as_str())
+                    .collect();
+                assert_eq!(ids, ["laptop", "phone", "tablet"]);
+            }
+            assert_eq!(
+                (sealed[2].wallet_id.as_str(), sealed[2].device_id.as_str()),
+                ("w2", "tablet")
+            );
+
+            // Nothing signs until every party has confirmed the new shares.
+            assert!(refresh_pending(&vaults[0], "w").unwrap());
+            assert!(refresh_pending(&vt, "w2").unwrap());
+            let fps = [
+                share_fingerprint(&vaults[0], "w").unwrap(),
+                share_fingerprint(&vaults[1], "w").unwrap(),
+                share_fingerprint(&vt, "w2").unwrap(),
+            ];
+            assert!(fps.iter().all(|f| f.current == fps[0].current));
+            assert!(fps[0].previous.is_some());
+            assert_eq!(fps[2].previous, None, "the newcomer had nothing before");
+            let peers = [fps[0].current.clone(), fps[0].current.clone()];
+            let [va, vb, _] = &mut vaults[..] else {
+                unreachable!()
+            };
+            for (v, wallet, device) in [
+                (va, "w", "laptop"),
+                (vb, "w", "phone"),
+                (&mut vt, "w2", "tablet"),
+            ] {
+                assert_eq!(
+                    reconcile_refresh(v, &proof(), wallet, &peers, device, 53).unwrap(),
+                    Reconciled::Committed
+                );
+                assert!(!refresh_pending(v, wallet).unwrap());
+            }
+
+            // The replacement signs with the laptop for the same address.
+            let [va, _, vd] = &mut vaults[..] else {
+                unreachable!()
+            };
+            assert_eq!(
+                spend(curve, va, (&mut vt, "tablet"), &accs[0].address),
+                TxState::Signed
+            );
+            // The lost desk is no party of the wallet any more.
+            let req = SignRequest {
+                id: "r-desk".into(),
+                tx_id: "x".into(),
+                key_group_id: "g3".into(),
+                curve,
+                payload_hash_hex: hex::encode(Sha256::digest([1u8; 32])),
+                payload_hex: hex::encode([1u8; 32]),
+            };
+            let s = sign_session(&req, "sg-d", vec!["laptop".into(), "desk".into()], 80);
+            let err = Driver::sign(va, &proof(), &req, &s, "desk", 81)
+                .err()
+                .unwrap();
+            assert!(err.to_string().contains("desk is not a party"), "{err}");
+            assert!(
+                lookup(vd, "w").unwrap().is_some(),
+                "the desk itself never heard of it"
+            );
+            load_ledger_ok(va);
+        }
+    }
+
+    #[test]
+    fn a_replacement_the_newcomer_never_sealed_rolls_back() {
+        let (mut vaults, accs) = trio(Curve::Ed25519);
+        let mut vt = vault();
+        let before = share_bytes(&vaults[0]);
+        let drivers = replace_desk(&mut vaults, &mut vt, &accs[0]);
+        drivers[0].finish_reshare(&mut vaults[0], 52).unwrap();
+        drivers[1].finish_reshare(&mut vaults[1], 52).unwrap();
+        // The tablet stopped before sealing: it holds nothing and says so.
+        assert!(lookup(&vt, "w2").unwrap().is_none());
+        let new = share_fingerprint(&vaults[1], "w").unwrap().current;
+        assert_eq!(
+            reconcile_refresh(
+                &mut vaults[0],
+                &proof(),
+                "w",
+                &[new, String::new()],
+                "laptop",
+                53
+            )
+            .unwrap(),
+            Reconciled::RolledBack
+        );
+        let old = share_fingerprint(&vaults[0], "w").unwrap().current;
+        assert_eq!(
+            reconcile_refresh(
+                &mut vaults[1],
+                &proof(),
+                "w",
+                &[old, String::new()],
+                "phone",
+                53
+            )
+            .unwrap(),
+            Reconciled::RolledBack
+        );
+        assert_eq!(share_bytes(&vaults[0]), before, "back to the share it had");
+        let acc = lookup(&vaults[0], "w").unwrap().unwrap();
+        assert_eq!(acc.group, accs[0].group, "and to the group it had");
+        // Signing works again, with the old group (desk included).
+        let [va, vb, _] = &mut vaults[..] else {
+            unreachable!()
+        };
+        assert_eq!(
+            spend(Curve::Ed25519, va, (vb, "phone"), &accs[0].address),
+            TxState::Signed
+        );
+    }
+
+    #[test]
+    fn a_newcomer_drops_its_share_when_a_helper_never_sealed() {
+        let (mut vaults, accs) = trio(Curve::Secp256k1Tr);
+        let mut vt = vault();
+        let drivers = replace_desk(&mut vaults, &mut vt, &accs[0]);
+        drivers[0].finish_reshare(&mut vaults[0], 52).unwrap();
+        drivers[2].finish_reshare(&mut vt, 52).unwrap();
+        // The phone never sealed: it still reports the old generation.
+        let old = share_fingerprint(&vaults[1], "w").unwrap().current;
+        let new = share_fingerprint(&vaults[0], "w").unwrap().current;
+        assert_ne!(old, new);
+        assert_eq!(
+            reconcile_refresh(&mut vt, &proof(), "w2", &[new, old.clone()], "tablet", 53).unwrap(),
+            Reconciled::Dropped
+        );
+        assert!(lookup(&vt, "w2").unwrap().is_none());
+        assert!(!refresh_pending(&vt, "w2").unwrap());
+        assert_eq!(
+            reconcile_refresh(
+                &mut vaults[0],
+                &proof(),
+                "w",
+                &[old, String::new()],
+                "laptop",
+                54
+            )
+            .unwrap(),
+            Reconciled::RolledBack
+        );
+        // The tablet may simply try again.
+        let s = reshare_session(&accs[0], "desk", &tablet(), "rs-2", 60).unwrap();
+        assert!(Driver::join(
+            &mut vt,
+            &proof(),
+            "w2",
+            &accs[0].group,
+            "desk",
+            &tablet(),
+            &s,
+            61
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn replacements_are_refused_unless_exactly_right() {
+        let (mut vaults, accs) = trio(Curve::Ed25519);
+        let s = reshare_session(&accs[0], "desk", &tablet(), "rs", 50).unwrap();
+        // Letting a new device in takes the passphrase.
+        let wrong = SessionProof::Passphrase(Secret::new(b"no".to_vec()));
+        assert!(Driver::reshare(&mut vaults[0], &wrong, "desk", &tablet(), &s, 51).is_err());
+        let mut vt = vault();
+        assert!(Driver::join(
+            &mut vt,
+            &wrong,
+            "w2",
+            &accs[0].group,
+            "desk",
+            &tablet(),
+            &s,
+            51
+        )
+        .is_err());
+        // The device being replaced does not take part in its own replacement.
+        let err = Driver::reshare(&mut vaults[2], &proof(), "desk", &tablet(), &s, 51)
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("being replaced"), "{err}");
+        // The session must bind exactly this newcomer, role included, and
+        // every remaining party, and still be open.
+        let relabelled = PartyRef {
+            device_id: "tablet".into(),
+            role: PartyRole::Automation,
+        };
+        assert!(Driver::reshare(&mut vaults[0], &proof(), "desk", &relabelled, &s, 51).is_err());
+        let mut partial = s.clone();
+        partial.participants.retain(|p| p != "phone");
+        assert!(
+            Driver::reshare(&mut vaults[0], &proof(), "desk", &tablet(), &partial, 51).is_err()
+        );
+        assert!(Driver::reshare(
+            &mut vaults[0],
+            &proof(),
+            "desk",
+            &tablet(),
+            &s,
+            s.expires_at_ms + 1
+        )
+        .is_err());
+        let mut rebound = s.clone();
+        rebound.payload_hash_hex = Some("00".repeat(32));
+        assert!(Driver::join(
+            &mut vt,
+            &proof(),
+            "w2",
+            &accs[0].group,
+            "desk",
+            &tablet(),
+            &rebound,
+            51
+        )
+        .is_err());
+        // A device that already holds a share of the group cannot join it.
+        assert!(Driver::join(
+            &mut vaults[0],
+            &proof(),
+            "w9",
+            &accs[0].group,
+            "desk",
+            &tablet(),
+            &s,
+            51
+        )
+        .is_err());
+        // A group that cannot spare a device (2-of-2) is refused up front.
+        let (mut va, mut vb) = (vault(), vault());
+        let (pair, _) = keygen(&mut va, &mut vb);
+        assert!(reshare_session(&pair, "phone", &tablet(), "rs2", 50)
+            .and_then(|s| Driver::reshare(&mut va, &proof(), "phone", &tablet(), &s, 51))
+            .is_err());
+        // Nothing above changed a share.
+        assert!(!refresh_pending(&vaults[0], "w").unwrap());
+        assert_eq!(
+            lookup(&vaults[0], "w").unwrap().unwrap().group,
+            accs[0].group
+        );
     }
 }

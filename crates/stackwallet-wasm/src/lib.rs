@@ -778,6 +778,86 @@ impl WasmVault {
         )?)
     }
 
+    /// The session replacing `replaced` by `newcomer_json` (`PartyRef`) in a
+    /// wallet this vault holds a share of.
+    pub fn threshold_reshare_session(
+        &self,
+        wallet_id: &str,
+        replaced: &str,
+        newcomer_json: &str,
+        session_id: &str,
+        now_ms: f64,
+    ) -> Result<String, JsError> {
+        let acc = threshold::lookup(&self.inner, wallet_id)
+            .map_err(core_err)?
+            .ok_or_else(|| JsError::new("this vault holds no share of that wallet"))?;
+        Ok(serde_json::to_string(
+            &threshold::reshare_session(
+                &acc,
+                replaced,
+                &serde_json::from_str(newcomer_json)?,
+                session_id,
+                now_ms as i64,
+            )
+            .map_err(core_err)?,
+        )?)
+    }
+
+    /// Help replace `replaced` by `newcomer_json` in the group the session names.
+    #[allow(clippy::too_many_arguments)]
+    pub fn threshold_reshare(
+        &mut self,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        replaced: &str,
+        newcomer_json: &str,
+        session_json: &str,
+        now_ms: f64,
+    ) -> Result<WasmThresholdDriver, JsError> {
+        let proof = session_from(session_slot, session_secret, session_device);
+        let (driver, outbox) = threshold::Driver::reshare(
+            &mut self.inner,
+            &proof,
+            replaced,
+            &serde_json::from_str(newcomer_json)?,
+            &serde_json::from_str(session_json)?,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(WasmThresholdDriver { driver, outbox })
+    }
+
+    /// Join `group_json` as the device replacing `replaced`, keeping the wallet
+    /// as `wallet_id` once the ceremony finishes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn threshold_join(
+        &mut self,
+        session_slot: Option<String>,
+        session_secret: Vec<u8>,
+        session_device: Option<Vec<u8>>,
+        wallet_id: &str,
+        group_json: &str,
+        replaced: &str,
+        newcomer_json: &str,
+        session_json: &str,
+        now_ms: f64,
+    ) -> Result<WasmThresholdDriver, JsError> {
+        let proof = session_from(session_slot, session_secret, session_device);
+        let (driver, outbox) = threshold::Driver::join(
+            &mut self.inner,
+            &proof,
+            wallet_id,
+            &serde_json::from_str(group_json)?,
+            replaced,
+            &serde_json::from_str(newcomer_json)?,
+            &serde_json::from_str(session_json)?,
+            now_ms as i64,
+        )
+        .map_err(core_err)?;
+        Ok(WasmThresholdDriver { driver, outbox })
+    }
+
     /// `ShareFingerprint` JSON: which share generation this device holds.
     pub fn threshold_share_fingerprint(&self, wallet_id: &str) -> Result<String, JsError> {
         Ok(serde_json::to_string(
@@ -785,8 +865,9 @@ impl WasmVault {
         )?)
     }
 
-    /// Settle a pending refresh against every other party's current fingerprint;
-    /// returns `"inSync" | "committed" | "rolledBack"`.
+    /// Settle a pending refresh or replacement against every other party's
+    /// current fingerprint (empty for a party with no share); returns
+    /// `"inSync" | "committed" | "rolledBack" | "dropped"`.
     #[allow(clippy::too_many_arguments)]
     pub fn threshold_reconcile_refresh(
         &mut self,
@@ -1117,6 +1198,15 @@ pub fn threshold_keygen_session(
     ))?)
 }
 
+/// Where a threshold group key (`PublicKey` JSON) lives on chain, as
+/// `{ chainId, address }`: a device shows it before joining a wallet.
+#[wasm_bindgen]
+pub fn threshold_group_address(public_key_json: &str) -> Result<String, JsError> {
+    let key: stackwallet_core::model::PublicKey = serde_json::from_str(public_key_json)?;
+    let at = threshold::group_address(&key).map_err(core_err)?;
+    Ok(serde_json::json!({ "chainId": at.chain_id, "address": at.address }).to_string())
+}
+
 /// Verify a `SignedCeremonyMessage` JSON against the sender's pinned public key.
 #[wasm_bindgen]
 pub fn verify_ceremony_message(signed_json: &str, public_hex: &str) -> Result<bool, JsError> {
@@ -1180,6 +1270,15 @@ impl WasmThresholdDriver {
         let acc = self
             .driver
             .finish_refresh(&mut vault.inner, now_ms as i64)
+            .map_err(core_err)?;
+        Ok(serde_json::to_string(&acc)?)
+    }
+
+    /// Seal the share a replacement left this device with; `ThresholdAccount` JSON.
+    pub fn finish_reshare(&self, vault: &mut WasmVault, now_ms: f64) -> Result<String, JsError> {
+        let acc = self
+            .driver
+            .finish_reshare(&mut vault.inner, now_ms as i64)
             .map_err(core_err)?;
         Ok(serde_json::to_string(&acc)?)
     }

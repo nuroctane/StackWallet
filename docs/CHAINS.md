@@ -657,9 +657,10 @@ threshold signer and proposes from local keys. What it would take to widen this,
   (P-256), Starknet (STARK curve, a secp256k1 seed only feeds grinding). A FROST group key is
   not a valid key under any of these schemes, so the wallet keeps them local-key only.
 
-Groups are t-of-n over two to five devices, and shares can be refreshed in place (SPEC §5.1).
-There is no re-sharing yet: a t-of-n wallet survives losing n−t devices but cannot replace one,
-which is one reason shared wallets stay gated to a testnet.
+Groups are t-of-n over two to five devices. Shares can be refreshed in place, and with n > t a
+lost device can be replaced by a new one under the same address (SPEC §5.1). Adding or removing
+a device (changing n) is not supported yet, and shared wallets stay gated to testnets until the
+support gates pass.
 
 ### Read-only families
 

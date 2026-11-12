@@ -12,6 +12,8 @@ import {
   type CeremonySession,
   type CosignSummary,
   type KeyGroup,
+  type PartyRef,
+  type Reconciled,
   type SessionProof,
   type ShareFingerprint,
   type SignRequest,
@@ -33,7 +35,7 @@ export const SESSION_MS = 10 * 60_000;
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
-export type Reconciled = 'inSync' | 'committed' | 'rolledBack';
+export type { Reconciled };
 
 /** The vault operations a ceremony needs; the page's vault store provides them. */
 export interface ThresholdOps {
@@ -66,6 +68,21 @@ export interface ThresholdOps {
     ceremony: CeremonySession;
   }): Promise<Result<ThresholdDriverHandle>>;
   thresholdFinishRefresh(driver: ThresholdDriverHandle): Promise<Result<ThresholdAccount>>;
+  thresholdReshare(req: {
+    session: SessionProof;
+    replaced: string;
+    newcomer: PartyRef;
+    ceremony: CeremonySession;
+  }): Promise<Result<ThresholdDriverHandle>>;
+  thresholdJoin(req: {
+    session: SessionProof;
+    walletId: string;
+    group: KeyGroup;
+    replaced: string;
+    newcomer: PartyRef;
+    ceremony: CeremonySession;
+  }): Promise<Result<ThresholdDriverHandle>>;
+  thresholdFinishReshare(driver: ThresholdDriverHandle): Promise<Result<ThresholdAccount>>;
   thresholdShareFingerprint(walletId: string): Promise<Result<ShareFingerprint>>;
   thresholdReconcile(
     session: SessionProof,
@@ -386,10 +403,12 @@ export async function joinSign(opts: {
 
 /**
  * Swap share fingerprints with every other party and settle any pending
- * refresh: the core commits only if all of them hold the new share and rolls
- * back only if one still holds the old one, so a message lost here cannot
- * split the devices. Fingerprints are public and broadcast; the hub forwards
- * each to the other parties.
+ * refresh or replacement: the core commits only if all of them hold the new
+ * share and rolls back only if one still holds the old one (or none), so a
+ * message lost here cannot split the devices. Fingerprints are public and
+ * broadcast; the hub forwards each to the other parties. A device holding no
+ * share of the wallet (`walletId` null: a replacement that never finished
+ * here) reports an empty fingerprint so the others can settle.
  */
 async function reconcile(opts: {
   ops: ThresholdOps;
@@ -398,11 +417,14 @@ async function reconcile(opts: {
   hub: boolean;
   ceremony: CeremonySession;
   localId: string;
-  walletId: string;
+  walletId: string | null;
   session: SessionProof;
 }): Promise<Reconciled> {
   const { ops, links, ceremony } = opts;
-  const mine = unwrap(await ops.thresholdShareFingerprint(opts.walletId));
+  const mine =
+    opts.walletId === null
+      ? ''
+      : unwrap(await ops.thresholdShareFingerprint(opts.walletId)).current;
   for (const l of links)
     await l.send({
       sessionId: ceremony.id,
@@ -410,7 +432,7 @@ async function reconcile(opts: {
       fromDeviceId: opts.localId,
       toDeviceId: null,
       round: FINGERPRINT_ROUND,
-      bodyHex: mine.current,
+      bodyHex: mine,
     });
   const others = ceremony.participants.filter((p) => p !== opts.localId);
   const heard = new Map<string, string>();
@@ -422,12 +444,13 @@ async function reconcile(opts: {
       m.toDeviceId !== null ||
       !others.includes(m.fromDeviceId) ||
       heard.has(m.fromDeviceId) ||
-      !/^[0-9a-f]{64}$/.test(m.bodyHex)
+      !/^(?:[0-9a-f]{64})?$/.test(m.bodyHex)
     )
       throw new Error('a device did not report its share generation properly');
     heard.set(m.fromDeviceId, m.bodyHex);
     if (opts.hub) for (const l of links) if (l !== link) await l.forward(env.signed);
   }
+  if (opts.walletId === null) return 'dropped';
   return unwrap(await ops.thresholdReconcile(opts.session, opts.walletId, [...heard.values()]));
 }
 
@@ -484,6 +507,96 @@ export async function joinRefresh(opts: {
   });
 }
 
+/**
+ * Proposer side of replacing a lost device: this device and every other
+ * remaining one repair a share for the newcomer, then all of them refresh.
+ * The address stays, and the lost device's share stops working once every
+ * device confirms. `links` reach every other participant, newcomer included;
+ * `group` is this device's own record of the wallet, which the newcomer
+ * needs and the others check against theirs.
+ */
+export async function proposeReshare(opts: {
+  ops: ThresholdOps;
+  links: CeremonyLink[];
+  localId: string;
+  walletId: string;
+  group: KeyGroup;
+  replaced: string;
+  newcomer: PartyRef;
+  ceremony: CeremonySession;
+  session: SessionProof;
+}): Promise<Reconciled> {
+  const { ops, links } = opts;
+  const driver = unwrap(
+    await ops.thresholdReshare({
+      session: opts.session,
+      replaced: opts.replaced,
+      newcomer: opts.newcomer,
+      ceremony: opts.ceremony,
+    }),
+  );
+  return guarded(ops, driver, links, async () => {
+    const box = new Mailbox(links);
+    await sendProposal(
+      {
+        kind: 'reshare',
+        group: opts.group,
+        replaced: opts.replaced,
+        newcomer: opts.newcomer,
+        session: opts.ceremony,
+      },
+      links,
+      opts.localId,
+    );
+    await hubRounds(driver, box, links, opts.localId);
+    unwrap(await ops.thresholdFinishReshare(driver));
+    return reconcile({ ...opts, box, hub: true });
+  });
+}
+
+/**
+ * A remaining device's side of a replacement, or the newcomer's, after the
+ * user agreed. The newcomer keeps the wallet as `walletId`; `onSealed` hears
+ * of its share as soon as it is sealed, before the devices compare
+ * generations, so the wallet is listed even if that comparison is cut short.
+ */
+export async function joinReshare(opts: {
+  ops: ThresholdOps;
+  link: CeremonyLink;
+  localId: string;
+  walletId: string;
+  proposal: Extract<ThresholdProposal, { kind: 'reshare' }>;
+  session: SessionProof;
+  onSealed?: (account: ThresholdAccount) => void;
+}): Promise<Reconciled> {
+  const { ops, link, proposal } = opts;
+  const common = {
+    session: opts.session,
+    replaced: proposal.replaced,
+    newcomer: proposal.newcomer,
+    ceremony: proposal.session,
+  };
+  const driver = unwrap(
+    proposal.newcomer.deviceId === opts.localId
+      ? await ops.thresholdJoin({ ...common, walletId: opts.walletId, group: proposal.group })
+      : await ops.thresholdReshare(common),
+  );
+  return guarded(ops, driver, [link], async () => {
+    const box = new Mailbox([link]);
+    await peerRounds(driver, box, link, opts.localId);
+    // Sealed whether or not anyone listens: an optional call would skip it.
+    const account = unwrap(await ops.thresholdFinishReshare(driver));
+    opts.onSealed?.(account);
+    return reconcile({
+      ...opts,
+      box,
+      links: [link],
+      hub: false,
+      ceremony: proposal.session,
+    });
+  });
+}
+
 /** Settle a refresh left pending (a dropped connection) with every other device. */
 export async function proposeReconcile(opts: {
   ops: ThresholdOps;
@@ -504,11 +617,12 @@ export async function proposeReconcile(opts: {
   }
 }
 
+/** `walletId` is null on a device that holds no share of the wallet. */
 export async function joinReconcile(opts: {
   ops: ThresholdOps;
   link: CeremonyLink;
   localId: string;
-  walletId: string;
+  walletId: string | null;
   proposal: Extract<ThresholdProposal, { kind: 'reconcile' }>;
   session: SessionProof;
 }): Promise<Reconciled> {

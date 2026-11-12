@@ -2,8 +2,11 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type {
   CosignSummary,
   Device,
+  GroupAddress,
   IdentityHandle,
   KeyGroup,
+  PartyRef,
+  PartyRole,
   ThresholdAccount,
   ThresholdProposal,
   TxRecord,
@@ -24,10 +27,12 @@ import {
   joinKeygen,
   joinReconcile,
   joinRefresh,
+  joinReshare,
   joinSign,
   proposeKeygen,
   proposeReconcile,
   proposeRefresh,
+  proposeReshare,
   proposeSign,
   readProposal,
   type Reconciled,
@@ -57,7 +62,8 @@ export type ThresholdTarget =
   | { mode: 'create'; folderId?: string | undefined }
   | { mode: 'join' }
   | { mode: 'sign'; txId: string }
-  | { mode: 'refresh'; walletId: string };
+  | { mode: 'refresh'; walletId: string }
+  | { mode: 'replace'; walletId: string };
 
 /**
  * Shared (threshold) wallets between paired devices. Each device keeps one
@@ -83,22 +89,34 @@ export function ThresholdDialog({
         ? 'Join a ceremony'
         : target?.mode === 'refresh'
           ? 'Refresh shares'
-          : 'New shared wallet';
+          : target?.mode === 'replace'
+            ? 'Replace a device'
+            : 'New shared wallet';
   return (
     <Dialog open={open} onClose={onClose} title={title} meta="threshold · frost">
       {target?.mode === 'create' && <CreateFlow folderId={target.folderId} onClose={onClose} />}
       {target?.mode === 'join' && <JoinFlow onClose={onClose} />}
       {target?.mode === 'sign' && <SignFlow txId={target.txId} onClose={onClose} />}
       {target?.mode === 'refresh' && <RefreshFlow walletId={target.walletId} onClose={onClose} />}
+      {target?.mode === 'replace' && <ReplaceFlow walletId={target.walletId} onClose={onClose} />}
     </Dialog>
   );
 }
 
 const RECONCILED: Record<Reconciled, string> = {
-  committed: 'Every device holds the refreshed shares; the old ones are gone',
+  committed: 'Every device holds the new shares; the old ones are gone',
   inSync: 'Every device already holds the same shares',
   rolledBack: 'Another device kept its old share, so this one went back to it',
+  dropped:
+    'The replacement did not finish on every device, so this device holds no share of the wallet; start it again from one of its devices',
 };
+
+const ROLES: readonly PartyRole[] = ['human', 'automation', 'agent'];
+
+/** A paired device's name, or a short form of an id this device never paired with. */
+function deviceName(id: string): string {
+  return devices.getSnapshot().devices.find((d) => d.id === id)?.name ?? `${id.slice(0, 10)}…`;
+}
 
 /** The wallet this device holds a share of in `keyGroupId`, if any. */
 async function walletOfGroup(keyGroupId: string): Promise<ThresholdAccount> {
@@ -562,6 +580,8 @@ function JoinFlow({ onClose }: { onClose: () => void }) {
   const conn = useConnection();
   const [proposal, setProposal] = useState<ThresholdProposal | null>(null);
   const [review, setReview] = useState<CosignSummary | null>(null);
+  /** Where the wallet this device is invited to join as a replacement lives. */
+  const [joining, setJoining] = useState<GroupAddress | null>(null);
   const [name, setName] = useState('Shared');
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -590,6 +610,11 @@ function JoinFlow({ onClose }: { onClose: () => void }) {
           if (!r.ok) throw new Error(r.error);
           setReview(r.value);
         }
+        if (p.kind === 'reshare' && p.newcomer.deviceId === local.id) {
+          const key = p.group.publicKeys.find((k) => k.curve === p.session.curve);
+          if (!key || !vault.core) throw new Error('The proposal names no wallet key');
+          setJoining(await vault.core.thresholdGroupAddress(key));
+        }
         setProposal(p);
       } catch (err) {
         if (live) setError(message(err));
@@ -612,7 +637,9 @@ function JoinFlow({ onClose }: { onClose: () => void }) {
           ? 'generating'
           : proposal.kind === 'refresh'
             ? 'refreshing'
-            : 'comparing',
+            : proposal.kind === 'reshare'
+              ? 'replacing'
+              : 'comparing',
     );
     setError(null);
     try {
@@ -632,13 +659,60 @@ function JoinFlow({ onClose }: { onClose: () => void }) {
       } else if (proposal.kind === 'sign') {
         await joinSign({ ops: vault, link, localId: local.id, proposal, session });
         toasts.push(`Co-signed with ${link.peer.name}`);
-      } else {
+      } else if (proposal.kind === 'reshare' && proposal.newcomer.deviceId === local.id) {
+        let listed: string | null = null;
+        const out = await joinReshare({
+          ops: vault,
+          link,
+          localId: local.id,
+          walletId: crypto.randomUUID(),
+          proposal,
+          session,
+          onSealed: (account) => {
+            if (addWallet(account, name, root.id).ok) listed = account.walletId;
+          },
+        });
+        if (out === 'dropped' && listed) directory.deleteWallet(listed);
+        toasts.push(
+          out === 'committed' ? `${name} joined; this device holds one share` : RECONCILED[out],
+        );
+      } else if (proposal.kind === 'reshare') {
         const account = await walletOfGroup(proposal.session.keyGroupId);
-        const common = { ops: vault, link, localId: local.id, walletId: account.walletId, session };
-        const out =
-          proposal.kind === 'refresh'
-            ? await joinRefresh({ ...common, proposal })
-            : await joinReconcile({ ...common, proposal });
+        const out = await joinReshare({
+          ops: vault,
+          link,
+          localId: local.id,
+          walletId: account.walletId,
+          proposal,
+          session,
+        });
+        toasts.push(RECONCILED[out]);
+      } else if (proposal.kind === 'refresh') {
+        const account = await walletOfGroup(proposal.session.keyGroupId);
+        const out = await joinRefresh({
+          ops: vault,
+          link,
+          localId: local.id,
+          walletId: account.walletId,
+          proposal,
+          session,
+        });
+        toasts.push(RECONCILED[out]);
+      } else {
+        // A device whose replacement never finished holds no share, and
+        // still reports that so the others can settle.
+        const account =
+          (await vault.thresholdList()).find((a) => a.group.id === proposal.session.keyGroupId) ??
+          null;
+        const out = await joinReconcile({
+          ops: vault,
+          link,
+          localId: local.id,
+          walletId: account?.walletId ?? null,
+          proposal,
+          session,
+        });
+        if (out === 'dropped' && account) directory.deleteWallet(account.walletId);
         toasts.push(RECONCILED[out]);
       }
       onClose();
@@ -650,6 +724,7 @@ function JoinFlow({ onClose }: { onClose: () => void }) {
   };
 
   const denied = review?.decision.decision === 'deny';
+  const localId = devices.getSnapshot().localDevice?.id;
   return (
     <div className="flex flex-col gap-4 p-4 text-[12px]">
       {!conn.code ? (
@@ -680,13 +755,50 @@ function JoinFlow({ onClose }: { onClose: () => void }) {
           </Field>
           <SessionStep label="Join" working={working} onRun={(s) => void run(s)} />
         </>
+      ) : proposal.kind === 'reshare' && proposal.newcomer.deviceId !== localId ? (
+        <>
+          <p className="text-muted">
+            <span className="text-ink">{conn.link.peer.name}</span> proposes replacing{' '}
+            <span className="text-ink">{deviceName(proposal.replaced)}</span> with{' '}
+            <span className="text-ink">{deviceName(proposal.newcomer.deviceId)}</span> (
+            {proposal.newcomer.role}) in a shared wallet. The address stays the same.
+          </p>
+          <p className="text-danger">
+            Agree only if {deviceName(proposal.replaced)} is lost or retired:{' '}
+            {deviceName(proposal.newcomer.deviceId)} gets a share of this wallet, and{' '}
+            {deviceName(proposal.replaced)}&apos;s share stops working once every device confirms.
+          </p>
+          <SessionStep label="Replace device" working={working} onRun={(s) => void run(s)} />
+        </>
+      ) : proposal.kind === 'reshare' ? (
+        <>
+          <p className="text-muted">
+            <span className="text-ink">{conn.link.peer.name}</span> invites this device to take{' '}
+            <span className="text-ink">{deviceName(proposal.replaced)}</span>&apos;s place in a
+            shared {KINDS[proposal.session.curve as SharedCurve]?.label ?? proposal.session.curve}{' '}
+            wallet: any {proposal.group.threshold} of its {proposal.group.parties.length} devices
+            approve every transaction.
+          </p>
+          {joining && (
+            <p className="text-faint">
+              address <span className="font-mono break-all text-ink">{joining.address}</span>
+            </p>
+          )}
+          <p className="text-muted">
+            Join only if another device of the wallet shows this same address.
+          </p>
+          <Field label="Name here" htmlFor={nameId}>
+            <Input id={nameId} value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <SessionStep label="Join wallet" working={working} onRun={(s) => void run(s)} />
+        </>
       ) : proposal.kind === 'refresh' || proposal.kind === 'reconcile' ? (
         <>
           <p className="text-muted">
             <span className="text-ink">{conn.link.peer.name}</span>{' '}
             {proposal.kind === 'refresh'
               ? 'proposes replacing every share of a shared wallet with fresh ones. The addresses stay the same; the old shares stop working once every device confirms.'
-              : 'asks to compare share generations after an unfinished refresh. This device keeps whichever share the other devices hold.'}
+              : 'asks to compare share generations after an unfinished refresh or replacement. This device keeps whichever share the other devices hold.'}
           </p>
           <SessionStep
             label={proposal.kind === 'refresh' ? 'Refresh' : 'Compare'}
@@ -862,7 +974,7 @@ function RefreshFlow({ walletId, onClose }: { walletId: string; onClose: () => v
       setAccount(found);
       if (!found) return;
       const fp = await vault.thresholdShareFingerprint(walletId);
-      if (fp.ok) setPending(fp.value.previous !== null);
+      if (fp.ok) setPending(fp.value.pending);
     })();
   }, [walletId]);
   if (account === undefined) return <LoadingWord label="reading shares" />;
@@ -893,6 +1005,7 @@ function RefreshFlow({ walletId, onClose }: { walletId: string; onClose: () => v
         session,
       };
       const out = pending ? await proposeReconcile(common) : await proposeRefresh(common);
+      if (out === 'dropped') directory.deleteWallet(walletId);
       toasts.push(RECONCILED[out]);
       onClose();
     } catch (err) {
@@ -906,7 +1019,7 @@ function RefreshFlow({ walletId, onClose }: { walletId: string; onClose: () => v
     <div className="flex flex-col gap-4 p-4 text-[12px]">
       <p className="text-faint">
         {pending
-          ? 'A refresh on this device was not confirmed by every other device. Connect to compare: this device keeps whichever share the others hold. Do not sign until this is settled.'
+          ? 'A refresh or replacement on this device was not confirmed by every other device. Connect to compare: this device keeps whichever share the others hold. Nothing signs until this is settled.'
           : 'Every device gets a fresh share of the same key: the addresses and balances stay, and a copy of an old vault stops being useful. Every device must take part.'}
       </p>
       {!started ? (
@@ -924,6 +1037,188 @@ function RefreshFlow({ walletId, onClose }: { walletId: string; onClose: () => v
               working={working}
               onRun={(s) => void run(s)}
             />
+          )}
+        </>
+      )}
+      {error && <p className="text-danger">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * Replace a lost device of this wallet with a paired device that holds no
+ * share of it yet. Every other device of the wallet and the newcomer take
+ * part: the others rebuild a share for the newcomer and then all of them
+ * refresh, so the address stays and the lost device's share stops working
+ * once every device confirms.
+ */
+function ReplaceFlow({ walletId, onClose }: { walletId: string; onClose: () => void }) {
+  const devState = useDevices();
+  const toasts = useToasts();
+  const ids = { lost: useId(), newcomer: useId(), role: useId() };
+  const [account, setAccount] = useState<ThresholdAccount | null | undefined>(undefined);
+  const [pending, setPending] = useState(false);
+  const [lost, setLost] = useState<string | null>(null);
+  const [newcomer, setNewcomer] = useState<string | null>(null);
+  const [role, setRole] = useState<PartyRole | null>(null);
+  const [started, setStarted] = useState(false);
+  const [working, setWorking] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const local = devState.localDevice;
+  const active = activeDevices(devState);
+  const members = account?.group.parties ?? [];
+  const lostChoices = members.filter((p) => p.deviceId !== local?.id);
+  const lostParty = lostChoices.find((p) => p.deviceId === lost) ?? lostChoices[0];
+  const newcomerChoices = active.filter((d) => !members.some((p) => p.deviceId === d.id));
+  const newcomerId = newcomer ?? newcomerChoices[0]?.id ?? null;
+  const newcomerRole = role ?? lostParty?.role ?? 'human';
+  const remaining = members.filter(
+    (p) => p.deviceId !== local?.id && p.deviceId !== lostParty?.deviceId,
+  );
+  const unpaired = remaining.filter((p) => !active.some((d) => d.id === p.deviceId));
+  const participants = active.filter(
+    (d) => d.id === newcomerId || remaining.some((p) => p.deviceId === d.id),
+  );
+  const conns = useLinks(started ? participants : []);
+  useEffect(() => {
+    void (async () => {
+      const found = (await vault.thresholdList()).find((a) => a.walletId === walletId) ?? null;
+      setAccount(found);
+      if (!found) return;
+      const fp = await vault.thresholdShareFingerprint(walletId);
+      if (fp.ok) setPending(fp.value.pending);
+    })();
+  }, [walletId]);
+  if (account === undefined) return <LoadingWord label="reading shares" />;
+  if (!account || !local)
+    return <p className="p-4 text-[12px] text-faint">This device holds no share of that wallet.</p>;
+  const n = members.length;
+  const t = account.group.threshold;
+  if (n - 1 < t)
+    return (
+      <p className="p-4 text-[12px] text-faint">
+        A {t}-of-{n} wallet cannot spare a device: rebuilding a share takes {t} of the remaining
+        devices.
+      </p>
+    );
+  if (pending)
+    return (
+      <p className="p-4 text-[12px] text-faint">
+        A refresh or replacement of this wallet is not settled yet. Compare shares first (Refresh
+        shares…), then replace the device.
+      </p>
+    );
+  if (newcomerChoices.length === 0 || !newcomerId || !lostParty)
+    return (
+      <p className="p-4 text-[12px] text-faint">
+        Pair the new device with this one first (Devices), and with every other device of the
+        wallet. It must not hold a share of this wallet yet.
+      </p>
+    );
+
+  const run = async (choice: SessionChoice) => {
+    if (!conns.ready) return;
+    setWorking('replacing');
+    setError(null);
+    try {
+      const session = await vault.proveSession(choice);
+      const party: PartyRef = { deviceId: newcomerId, role: newcomerRole };
+      const ceremony = await vault.thresholdReshareSession(walletId, lostParty.deviceId, party);
+      if (!ceremony.ok) throw new Error(ceremony.error);
+      const out = await proposeReshare({
+        ops: vault,
+        links: conns.links,
+        localId: local.id,
+        walletId,
+        group: account.group,
+        replaced: lostParty.deviceId,
+        newcomer: party,
+        ceremony: ceremony.value,
+        session,
+      });
+      toasts.push(RECONCILED[out]);
+      onClose();
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4 p-4 text-[12px]">
+      {!started ? (
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setStarted(true);
+          }}
+        >
+          <Field label="Device to replace" htmlFor={ids.lost}>
+            <Select
+              id={ids.lost}
+              value={lostParty.deviceId}
+              onChange={(e) => setLost(e.target.value)}
+            >
+              {lostChoices.map((p) => (
+                <option key={p.deviceId} value={p.deviceId}>
+                  {deviceName(p.deviceId)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Replacement" htmlFor={ids.newcomer}>
+            <Select
+              id={ids.newcomer}
+              value={newcomerId}
+              onChange={(e) => setNewcomer(e.target.value)}
+            >
+              {newcomerChoices.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Its role" htmlFor={ids.role}>
+            <Select
+              id={ids.role}
+              value={newcomerRole}
+              onChange={(e) => setRole(e.target.value as PartyRole)}
+            >
+              {ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <p className="text-muted">
+            The other devices rebuild a share for {deviceName(newcomerId)}, then every device gets a
+            fresh one. The address and balances stay; {deviceName(lostParty.deviceId)}&apos;s share
+            stops working once every device confirms.
+          </p>
+          <p className="text-danger">
+            Only replace a device you have lost or retired. Every other device of the wallet and the
+            replacement must take part.
+          </p>
+          {unpaired.length > 0 && (
+            <p className="text-danger">
+              Pair {unpaired.map((p) => deviceName(p.deviceId)).join(', ')} with this device first.
+            </p>
+          )}
+          <div className="flex justify-end">
+            <Button type="submit" variant="primary" disabled={unpaired.length > 0}>
+              Next
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <>
+          {conns.view}
+          {conns.ready && (
+            <SessionStep label="Replace device" working={working} onRun={(s) => void run(s)} />
           )}
         </>
       )}
