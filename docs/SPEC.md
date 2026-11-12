@@ -286,6 +286,13 @@ sighash per input in a single ceremony: each message gets fresh nonces, and the 
 carry the per-message items in input order. frost applies the BIP341 unspendable-script-path
 tweak at DKG, so the group key is the output key `Q` and the address is built from it directly.
 
+DKG consistency. FROST's DKG assumes every party sees the same round-1 broadcasts; over
+point-to-point links a party could show two consistent transcripts to two groups of parties,
+which would then finish on different group keys without any error (and fund an address the group
+cannot sign for). So every round-2 body, in key generation and in refresh, leads with a hash of
+all round-1 packages its sender saw, and a receiver whose own view differs aborts. Every pair of
+honest parties exchanges round 2 directly, so any split between them shows.
+
 Share refresh. Every party of a group refreshes together (frost's refresh DKG, bound to the group
 key, which must come out unchanged). Each device seals the new share but keeps the previous one
 under `tss-prev:` until it has heard every other party's share fingerprint, a hash of the group's
@@ -864,6 +871,19 @@ client for which folder a wallet sits in; the wallet key is bound to the wallet 
    are sealed in the vault (`agent-session:<id>`) and searchable. Remaining: the agent as a
    TSS party, policy overlays per grant.
 6. **Automations + scheduler**: triggers / actions, headless CLI as automation device.
+   First increment: the automation party. `stackwallet run <dir> --listen … --policy <file>` is
+   `serve` under its own policies: every signing request must decode, in the core, as a transfer
+   from the group's own address (a Solana Devnet transfer or a Signet Taproot spend, the same
+   decoding a browser co-signer uses), and must pass the policy file before this device's share
+   joins. The file must enforce a destination allowlist and a cooldown (the tight overlay §10
+   asks of an autonomous lane); the cooldown counts every signing ceremony this device started,
+   from its own audit log; USD spend caps fail closed, since the CLI has no prices; a policy
+   that asks for approvers fails closed too. Opaque payloads are refused unread, new groups are
+   joined only with `--accept-keygen`, and every refusal is audited. `serve` and `net sign` sign
+   the same core-derived messages whenever a payload decodes as a transfer, so all three agree.
+   Remaining: the scheduler that originates proposals on the CLI (it needs chain preparation the
+   Rust core does not have), a transport the browser and desktop can reach the CLI over, and
+   alerts as automation triggers.
 7. **Markets**: aggregation, registry, charts, portfolio analytics, alerts, and the market
    elements of §11.1 (trades, candles, positions, lending, NFT floors, holders, transfers,
    transactions, trending, metrics).
