@@ -169,6 +169,14 @@ pub trait ThresholdScheme {
         request: &SignRequest,
         session: &CeremonySession,
     ) -> Result<Vec<CeremonyMessage>>;
+    /// Sign messages the caller's core derived from the request's payload
+    /// (one Taproot sighash per input, say) under one ceremony.
+    fn sign_batch_start(
+        &mut self,
+        request: &SignRequest,
+        session: &CeremonySession,
+        messages: Vec<Vec<u8>>,
+    ) -> Result<Vec<CeremonyMessage>>;
     fn refresh_start(&mut self, session: &CeremonySession) -> Result<Vec<CeremonyMessage>>;
     fn handle(
         &mut self,

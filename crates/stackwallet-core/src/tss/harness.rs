@@ -286,6 +286,38 @@ impl<C: FrostCurve> LocalHarness<C> {
         Self::unanimous(sigs, "signature")
     }
 
+    /// Signs several messages under one ceremony among `signers` (one Taproot
+    /// sighash per input, say); the signature is the per-message signatures
+    /// concatenated in order.
+    pub fn sign_batch(
+        &mut self,
+        signers: &[&str],
+        request: &SignRequest,
+        messages: &[Vec<u8>],
+        delivery: &mut dyn Delivery,
+    ) -> Result<Signature> {
+        let signers: Vec<String> = signers.iter().map(|s| (*s).to_owned()).collect();
+        for s in &signers {
+            if self.party(s).is_none() {
+                return Err(CoreError::Invalid {
+                    what: "signer set",
+                    reason: format!("{s} is not in the key group"),
+                });
+            }
+        }
+        let session = self.session(
+            CeremonyKind::Sign,
+            &signers,
+            Some(request.payload_hash_hex.clone()),
+        );
+        let report = self.run(&session, delivery, |p| {
+            p.sign_batch_start(request, &session, messages.to_vec())
+        })?;
+        self.finish(&report)?;
+        let sigs = self.collect(&signers, |p| p.sign_result(&session))?;
+        Self::unanimous(sigs, "signature")
+    }
+
     /// Refreshes every party's share; the public key must come back unchanged.
     pub fn refresh(&mut self, delivery: &mut dyn Delivery) -> Result<PublicKey> {
         let all = self.device_ids();

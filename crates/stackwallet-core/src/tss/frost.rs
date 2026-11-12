@@ -12,6 +12,13 @@
 //! bodies for the same round is equivocating and the ceremony aborts, since
 //! frost has no way to tell which one the other parties used.
 //!
+//! FROST's DKG assumes every party sees the same round-1 broadcasts. Over
+//! point-to-point links a party could show two consistent transcripts to two
+//! groups of parties, which would then finish on different group keys without
+//! any error. So each round-2 body leads with a hash of every round-1 package
+//! its sender saw, and a receiver whose own view differs aborts. Every pair of
+//! honest parties exchanges round 2 directly, so any split between them shows.
+//!
 //! A sign ceremony may cover several messages at once (one Taproot sighash per
 //! transaction input), each with its own fresh nonces, so one approval and one
 //! round trip sign the whole transaction. With a single message the round
@@ -222,6 +229,33 @@ fn decode_all<T>(body: &[u8], n: usize, parse: impl Fn(&[u8]) -> Option<T>) -> O
     decode_items(body, n)?.into_iter().map(parse).collect()
 }
 
+const ECHO_LEN: usize = 32;
+
+/// Hash of every round-1 package of a DKG or refresh, this party's included,
+/// in identifier order.
+fn round1_transcript<C: Ciphersuite>(
+    own_id: Identifier<C>,
+    own: &dkg::round1::Package<C>,
+    others: &BTreeMap<Identifier<C>, dkg::round1::Package<C>>,
+) -> Result<[u8; ECHO_LEN]> {
+    let mut all: BTreeMap<Identifier<C>, &dkg::round1::Package<C>> =
+        others.iter().map(|(id, p)| (*id, p)).collect();
+    all.insert(own_id, own);
+    let mut h = Sha256::new();
+    h.update(b"stackwallet-tss-dkg-echo");
+    for (id, pkg) in all {
+        let id = id.serialize();
+        let pkg = pkg
+            .serialize()
+            .map_err(|_| CoreError::Crypto("round 1 package serialization"))?;
+        h.update((id.len() as u32).to_be_bytes());
+        h.update(&id);
+        h.update((pkg.len() as u32).to_be_bytes());
+        h.update(&pkg);
+    }
+    Ok(h.finalize().into())
+}
+
 fn body_digest(body: &[u8]) -> [u8; 32] {
     Sha256::digest(body).into()
 }
@@ -236,7 +270,8 @@ fn frost_err<C: Ciphersuite>(ctx: &str) -> impl Fn(frost_core::Error<C>) -> Core
 
 enum Body<C: Ciphersuite> {
     Dkg1(dkg::round1::Package<C>),
-    Dkg2(dkg::round2::Package<C>),
+    /// The sender's round-1 transcript hash, then its package.
+    Dkg2([u8; ECHO_LEN], dkg::round2::Package<C>),
     Commitments(Vec<SigningCommitments<C>>),
     Share(Vec<SignatureShare<C>>),
 }
@@ -244,12 +279,15 @@ enum Body<C: Ciphersuite> {
 enum Phase<C: Ciphersuite> {
     DkgRound1 {
         secret: dkg::round1::SecretPackage<C>,
+        own: dkg::round1::Package<C>,
         packages: BTreeMap<Identifier<C>, dkg::round1::Package<C>>,
     },
     DkgRound2 {
         secret: dkg::round2::SecretPackage<C>,
         round1: BTreeMap<Identifier<C>, dkg::round1::Package<C>>,
         round2: BTreeMap<Identifier<C>, dkg::round2::Package<C>>,
+        /// This party's own round-1 transcript, which every peer must echo.
+        transcript: [u8; ECHO_LEN],
     },
     SignRound1 {
         nonces: Vec<SigningNonces<C>>,
@@ -498,9 +536,14 @@ impl<C: FrostCurve> FrostParty<C> {
             Phase::DkgRound1 { .. } => dkg::round1::Package::<C>::deserialize(&body)
                 .ok()
                 .map(Body::Dkg1),
-            Phase::DkgRound2 { .. } => dkg::round2::Package::<C>::deserialize(&body)
-                .ok()
-                .map(Body::Dkg2),
+            Phase::DkgRound2 { .. } => {
+                body.split_first_chunk::<ECHO_LEN>()
+                    .and_then(|(echo, rest)| {
+                        dkg::round2::Package::<C>::deserialize(rest)
+                            .ok()
+                            .map(|p| Body::Dkg2(*echo, p))
+                    })
+            }
             Phase::SignRound1 { .. } => {
                 decode_all(&body, n, |b| SigningCommitments::<C>::deserialize(b).ok())
                     .map(Body::Commitments)
@@ -520,7 +563,17 @@ impl<C: FrostCurve> FrostParty<C> {
             (Phase::DkgRound1 { packages, .. }, Body::Dkg1(p)) => {
                 packages.insert(id, p);
             }
-            (Phase::DkgRound2 { round2, .. }, Body::Dkg2(p)) => {
+            (
+                Phase::DkgRound2 {
+                    round2, transcript, ..
+                },
+                Body::Dkg2(echo, p),
+            ) => {
+                if echo != *transcript {
+                    return Err(c.abort(format!(
+                        "{sender} saw different round-1 packages than this device; a party sent conflicting broadcasts"
+                    )));
+                }
                 round2.insert(id, p);
             }
             (Phase::SignRound1 { commitments, .. }, Body::Commitments(p)) => {
@@ -565,7 +618,12 @@ impl<C: FrostCurve> FrostParty<C> {
     fn step(&mut self, c: &mut Ceremony<C>) -> Result<Vec<CeremonyMessage>> {
         let phase = std::mem::replace(&mut c.phase, Phase::Finished);
         match phase {
-            Phase::DkgRound1 { secret, packages } => {
+            Phase::DkgRound1 {
+                secret,
+                own,
+                packages,
+            } => {
+                let transcript = round1_transcript(self.own_identifier()?, &own, &packages)?;
                 let (secret2, outgoing) = if c.kind == CeremonyKind::Refresh {
                     refresh::refresh_dkg_part2(secret, &packages)
                         .map_err(frost_err("refresh part 2"))?
@@ -577,15 +635,18 @@ impl<C: FrostCurve> FrostParty<C> {
                     let pkg = outgoing
                         .get(id)
                         .ok_or_else(|| ceremony_err(format!("no round 2 package for {device}")))?;
-                    let body = pkg
-                        .serialize()
-                        .map_err(frost_err("dkg round 2 serialization"))?;
+                    let mut body = transcript.to_vec();
+                    body.extend(
+                        pkg.serialize()
+                            .map_err(frost_err("dkg round 2 serialization"))?,
+                    );
                     out.push(c.envelope(&self.device_id, Some(device.clone()), 2, &body));
                 }
                 c.phase = Phase::DkgRound2 {
                     secret: secret2,
                     round1: packages,
                     round2: BTreeMap::new(),
+                    transcript,
                 };
                 c.round = 2;
                 Ok(out)
@@ -594,6 +655,7 @@ impl<C: FrostCurve> FrostParty<C> {
                 secret,
                 round1,
                 round2,
+                ..
             } => {
                 let (kp, pkp) = if c.kind == CeremonyKind::Refresh {
                     let (old_kp, old_pkp, _) = self.require_key()?;
@@ -876,6 +938,7 @@ impl<C: FrostCurve> ThresholdScheme for FrostParty<C> {
             peers,
             Phase::DkgRound1 {
                 secret,
+                own: package,
                 packages: BTreeMap::new(),
             },
             None,
@@ -889,7 +952,16 @@ impl<C: FrostCurve> ThresholdScheme for FrostParty<C> {
         session: &CeremonySession,
     ) -> Result<Vec<CeremonyMessage>> {
         let message = message_to_sign(request)?;
-        self.sign_batch_start(request, session, vec![message])
+        FrostParty::sign_batch_start(self, request, session, vec![message])
+    }
+
+    fn sign_batch_start(
+        &mut self,
+        request: &SignRequest,
+        session: &CeremonySession,
+        messages: Vec<Vec<u8>>,
+    ) -> Result<Vec<CeremonyMessage>> {
+        FrostParty::sign_batch_start(self, request, session, messages)
     }
 
     fn refresh_start(&mut self, session: &CeremonySession) -> Result<Vec<CeremonyMessage>> {
@@ -939,6 +1011,7 @@ impl<C: FrostCurve> ThresholdScheme for FrostParty<C> {
             peers,
             Phase::DkgRound1 {
                 secret,
+                own: package,
                 packages: BTreeMap::new(),
             },
             None,

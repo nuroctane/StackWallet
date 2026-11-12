@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use stackwallet_core::intent::SignRequest;
 use stackwallet_core::model::{Curve, KeyGroup, PartyRef, PartyRole};
 use stackwallet_core::tss::frost::{
-    keygen_binding_hex, Ed25519Party, FrostCurve, FrostParty, Secp256k1TrParty,
+    keygen_binding_hex, refresh_binding_hex, Ed25519Party, FrostCurve, FrostParty, Secp256k1TrParty,
 };
 use stackwallet_core::tss::harness::{Delivery, Faithful, LocalHarness, Shuffled};
 use stackwallet_core::tss::{
@@ -721,6 +721,145 @@ fn equivocation_aborts_but_identical_duplicate_does_not() {
     // Unrelated parties are untouched.
     assert_eq!(a.state(), CeremonyState::Rounds);
     assert_eq!(c.state(), CeremonyState::Rounds);
+}
+
+/// One party runs two consistent DKG instances and shows each to a different
+/// honest party, so neither honest party ever sees two bodies from it. Without
+/// a check that every party saw the same round-1 packages, both honest
+/// parties would finish on different group keys.
+///
+/// `parties` are laptop, phone, then the malicious cli twice: the instance
+/// laptop talks to and the one phone talks to.
+fn split_view<C: FrostCurve>(
+    mut parties: Vec<FrostParty<C>>,
+    session: &CeremonySession,
+    mut start: impl FnMut(&mut FrostParty<C>) -> Vec<CeremonyMessage>,
+) -> (FrostParty<C>, FrostParty<C>) {
+    let mut in_flight: Vec<(usize, CeremonyMessage)> = Vec::new();
+    for (i, p) in parties.iter_mut().enumerate() {
+        for m in start(p) {
+            in_flight.push((i, m));
+        }
+    }
+    let route = |from: usize, m: &CeremonyMessage| -> Vec<usize> {
+        let to = m.to_device_id.as_deref();
+        match from {
+            0 | 1 => match to {
+                None => [0, 1, 2, 3].into_iter().filter(|i| *i != from).collect(),
+                Some("cli") => vec![2, 3],
+                Some("laptop") => vec![0],
+                Some("phone") => vec![1],
+                _ => vec![],
+            },
+            2 => match to {
+                None | Some("laptop") => vec![0],
+                _ => vec![],
+            },
+            _ => match to {
+                None | Some("phone") => vec![1],
+                _ => vec![],
+            },
+        }
+    };
+    let mut steps = 0;
+    while let Some((from, m)) = in_flight.pop() {
+        steps += 1;
+        assert!(steps < 1000, "split ceremony did not settle");
+        for to in route(from, &m) {
+            if let Ok(out) = parties[to].handle(session, m.clone()) {
+                in_flight.extend(out.into_iter().map(|o| (to, o)));
+            }
+        }
+    }
+    let mut it = parties.into_iter();
+    (it.next().unwrap(), it.next().unwrap())
+}
+
+fn split_group(curve: Curve) -> KeyGroup {
+    group(
+        "split",
+        2,
+        &[
+            ("laptop", PartyRole::Human),
+            ("phone", PartyRole::Human),
+            ("cli", PartyRole::Automation),
+        ],
+        curve,
+    )
+}
+
+fn split_session(g: &KeyGroup, kind: CeremonyKind, binding: String) -> CeremonySession {
+    CeremonySession {
+        id: format!("split-{kind:?}"),
+        kind,
+        key_group_id: g.id.clone(),
+        curve: g.curves[0],
+        payload_hash_hex: Some(binding),
+        participants: vec!["laptop".into(), "phone".into(), "cli".into()],
+        state: CeremonyState::Rounds,
+        created_at_ms: 0,
+        expires_at_ms: 60_000,
+    }
+}
+
+fn assert_split_caught<C: FrostCurve>(laptop: &FrostParty<C>, phone: &FrostParty<C>) {
+    let keys = (laptop.public_key().unwrap(), phone.public_key().unwrap());
+    if let (Some(a), Some(b)) = &keys {
+        assert_eq!(a, b, "honest parties finished on different group keys");
+    }
+    assert!(
+        laptop.state() == CeremonyState::Aborted || phone.state() == CeremonyState::Aborted,
+        "the split view went unnoticed: {:?} / {:?}",
+        laptop.state(),
+        phone.state()
+    );
+}
+
+fn split_keygen_is_caught<C: FrostCurve>() {
+    let g = split_group(C::CURVE);
+    let session = split_session(&g, CeremonyKind::KeyGen, keygen_binding_hex(&g, C::CURVE));
+    let parties = ["laptop", "phone", "cli", "cli"]
+        .iter()
+        .map(|d| FrostParty::<C>::new(*d))
+        .collect();
+    let (laptop, phone) = split_view(parties, &session, |p| p.keygen_start(&g, &session).unwrap());
+    assert_split_caught(&laptop, &phone);
+}
+
+fn split_refresh_is_caught<C: FrostCurve>() {
+    let g = split_group(C::CURVE);
+    let mut h = LocalHarness::<C>::new(&g).unwrap();
+    h.keygen(&mut Faithful).unwrap();
+    // Every party, the malicious one twice, starts from its real share.
+    let parties: Vec<FrostParty<C>> = ["laptop", "phone", "cli", "cli"]
+        .iter()
+        .map(|d| {
+            let mut p = FrostParty::new(*d);
+            p.import_share(&h.party(d).unwrap().export_share().unwrap())
+                .unwrap();
+            p
+        })
+        .collect();
+    let vk = parties[0].verifying_key_bytes().unwrap().unwrap();
+    let ids: Vec<String> = ["laptop", "phone", "cli"]
+        .iter()
+        .map(|s| (*s).into())
+        .collect();
+    let binding = refresh_binding_hex(&g.id, C::CURVE, 2, &ids, &vk);
+    let session = split_session(&g, CeremonyKind::Refresh, binding);
+    let (laptop, phone) = split_view(parties, &session, |p| p.refresh_start(&session).unwrap());
+    assert_split_caught(&laptop, &phone);
+}
+
+#[test]
+fn a_party_cannot_split_others_onto_different_dkg_keys() {
+    split_keygen_is_caught::<frost_secp256k1_tr::Secp256K1Sha256TR>();
+    split_keygen_is_caught::<frost_ed25519::Ed25519Sha512>();
+}
+
+#[test]
+fn a_party_cannot_split_a_refresh_either() {
+    split_refresh_is_caught::<frost_secp256k1_tr::Secp256K1Sha256TR>();
 }
 
 #[test]
