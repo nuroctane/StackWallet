@@ -5,6 +5,13 @@
  * bundle has not been built.
  */
 import { describe, expect, it } from 'vitest';
+import {
+  getCompiledTransactionMessageDecoder,
+  getPublicKeyFromAddress,
+  getTransactionDecoder,
+  verifySignature,
+  type Address,
+} from '@solana/kit';
 import { BITCOIN_SIGNET, verifyTaprootSpend } from '@stackwallet/chains-bitcoin';
 import type { BitcoinTx } from '@stackwallet/core-client';
 
@@ -70,7 +77,20 @@ describe.skipIf(!built)('threshold wallets across browsers', () => {
     const [signed, [review]] = await signTogether(a, [b], 't1');
     expect(review).toMatchObject({ to, amount: '1000', decision: { decision: 'allow' } });
     expect(signed.state).toBe('signed');
-    expect(signed.rawSignedHex?.length).toBeGreaterThan(2 + 2 * 64);
+    // Solana's own decoder and verifier: one signature, by the group address,
+    // over a transfer of exactly what was proposed.
+    const wire = Uint8Array.from(Buffer.from(signed.rawSignedHex!.slice(2), 'hex'));
+    const decoded = getTransactionDecoder().decode(wire);
+    expect(Object.keys(decoded.signatures)).toEqual([accA.address]);
+    const sig = decoded.signatures[accA.address as Address]!;
+    const groupKey = await getPublicKeyFromAddress(accA.address as Address);
+    expect(await verifySignature(groupKey, sig, decoded.messageBytes)).toBe(true);
+    const message = getCompiledTransactionMessageDecoder().decode(decoded.messageBytes);
+    expect(message.staticAccounts).toEqual(expect.arrayContaining([accA.address, to]));
+    // Any other bytes under the same signature are refused.
+    const tampered = Uint8Array.from(decoded.messageBytes);
+    tampered[tampered.length - 1] = tampered.at(-1)! ^ 1;
+    expect(await verifySignature(groupKey, sig, tampered)).toBe(false);
   }, 60_000);
 
   it('spends a Taproot output with a Signet key split between the two browsers', async () => {
