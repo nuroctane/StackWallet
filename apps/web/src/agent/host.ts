@@ -2,13 +2,23 @@ import type { AgentHost, HostBalance } from '@stackwallet/agent';
 import type { ChainRegistry } from '@stackwallet/chains';
 
 import { findChain } from '../lib/chains.js';
-import { labelFor } from '../lib/labels.js';
+import { labelFor, type AddressLabel } from '../lib/labels.js';
 import { parseUnits } from '../lib/format.js';
 import { balanceCache } from '../store/balances.js';
 import { directory } from '../store/persist.js';
 import { tokenStore } from '../store/tokens.js';
 import { proposeSend } from '../store/txs.js';
 import { vault } from '../core/bridge.js';
+
+/**
+ * The source the agent's destination check sees. Only the user's own keyed
+ * wallets and contacts count as known; a watched address sits in the
+ * directory but belongs to someone else, so it must be flagged like any
+ * address the model brought.
+ */
+export function agentSource(l: Pick<AddressLabel, 'source' | 'sourceText'>): string {
+  return l.source === 'wallet' && l.sourceText === 'watched' ? 'watched' : l.source;
+}
 
 /**
  * The app side of the agent's tools. It reads the directory, balances and
@@ -68,7 +78,7 @@ export function createAgentHost(
         ledger: vault.getSnapshot().ledger,
         contacts: s.contacts,
       });
-      return { label: l.label, source: l.source };
+      return { label: l.label, source: agentSource(l) };
     },
     proposeTransfer: async (input) => {
       const s = directory.getSnapshot();
