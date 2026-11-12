@@ -1,6 +1,6 @@
 //! Headless StackWallet: the encrypted vault, the device identity, pairing
-//! and threshold ceremonies over the LAN without a UI. `run` (the scheduler
-//! that makes this binary the automation device) is not wired yet and says so.
+//! and threshold ceremonies over the LAN without a UI. `run` makes this binary
+//! the automation party: an always-on co-signer under its own policies.
 
 mod discovery;
 mod harness_cmd;
@@ -32,7 +32,9 @@ devices revoke <dir> <id>    tombstone a peer; the record stays, connections are
                                accept connections from paired devices and act as a
                                FROST party in the ceremonies they start
   net keygen|sign              start a ceremony with paired devices (see `net` for usage)
-  run                          agent runtime (not implemented yet)
+  run <dir> --listen host:port --policy <file> [--accept-keygen] [--no-mdns]
+                               `serve` as the automation party: co-signs only transfers
+                               it can decode and its own policies allow
 
 The passphrase is read from STACKWALLET_PASSPHRASE or the first line of stdin.
 ";
@@ -109,7 +111,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("devices") => pair_cmd::devices(&args[1..]),
         Some("serve") => net_cmd::serve(&args[1..]),
         Some("net") => net_cmd::run(&args[1..]),
-        Some("run") => Err("the agent runtime is not implemented yet".into()),
+        Some("run") => net_cmd::automation(&args[1..]),
         _ => {
             eprint!("{USAGE}");
             Ok(ExitCode::from(64))

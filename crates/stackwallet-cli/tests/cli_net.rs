@@ -494,3 +494,174 @@ fn three_party_keygen_and_sign_through_the_hub() {
     let _ = std::fs::remove_dir_all(&dir_b);
     let _ = std::fs::remove_dir_all(&dir_c);
 }
+
+/// A Solana address for a 32-byte key, as the core computes it.
+fn solana_address(key: [u8; 32]) -> String {
+    stackwallet_core::threshold::group_address(&stackwallet_core::model::PublicKey {
+        curve: stackwallet_core::model::Curve::Ed25519,
+        hex: hex::encode(key),
+    })
+    .unwrap()
+    .address
+}
+
+/// A Devnet transfer message from the group's address, as hex.
+fn transfer_hex(group_pk_hex: &str, to: &str, blockhash_seed: u8) -> String {
+    let group: [u8; 32] = hex::decode(group_pk_hex).unwrap().try_into().unwrap();
+    let tx = stackwallet_core::solana::SolanaTx {
+        chain_id: stackwallet_core::solana::DEVNET.into(),
+        from: solana_address(group),
+        to: to.into(),
+        lamports: "1000".into(),
+        recent_blockhash: solana_address([blockhash_seed; 32]),
+        last_valid_block_height: 100,
+        message_version: Default::default(),
+    };
+    hex::encode(tx.message().unwrap())
+}
+
+fn net_sign(dir: &str, payload_hex: &str, peer: &str) -> Output {
+    run(&[
+        "net",
+        "sign",
+        dir,
+        "--group",
+        "lane",
+        "--curve",
+        "ed25519",
+        "--payload-hex",
+        payload_hex,
+        "--peers",
+        peer,
+    ])
+}
+
+/// `run` is the automation party: it co-signs only transfers it can decode,
+/// to destinations its own policy allows, no faster than its cooldown, and it
+/// joins new groups only when told to.
+#[test]
+fn automation_run_cosigns_only_what_its_policy_allows() {
+    let dir_h = temp_dir("rh");
+    let dir_r = temp_dir("rr");
+    let (h, r) = (dir_h.to_str().unwrap(), dir_r.to_str().unwrap());
+    init(h, "laptop");
+    let id_r = init(r, "always-on");
+    let addr_h = format!("127.0.0.1:{}", free_port());
+    let addr_r = format!("127.0.0.1:{}", free_port());
+    pair(h, &addr_h, r, &addr_r);
+
+    let allowed = solana_address([8; 32]);
+    let elsewhere = solana_address([7; 32]);
+    let policy = dir_r.join("lane.json");
+    let lane = |rules: serde_json::Value| {
+        serde_json::json!([{ "id": "lane", "name": "lane", "mode": "enforce", "rules": rules }])
+            .to_string()
+    };
+
+    // No tight overlay, no automation party.
+    std::fs::write(
+        &policy,
+        lane(serde_json::json!([{ "rule": "destinationAllow", "addresses": [allowed] }])),
+    )
+    .unwrap();
+    let refused = run(&[
+        "run",
+        r,
+        "--listen",
+        &addr_r,
+        "--policy",
+        policy.to_str().unwrap(),
+    ]);
+    assert!(!refused.status.success());
+    assert!(
+        stderr_of(&refused).contains("allowlist and cooldown"),
+        "{}",
+        stderr_of(&refused)
+    );
+
+    std::fs::write(
+        &policy,
+        lane(serde_json::json!([
+            { "rule": "destinationAllow", "addresses": [allowed] },
+            { "rule": "cooldown", "seconds": 3600 }
+        ])),
+    )
+    .unwrap();
+    let peer = format!("{id_r}:automation");
+    let keygen = |dir: &str| {
+        run(&[
+            "net",
+            "keygen",
+            dir,
+            "--group",
+            "lane",
+            "--curve",
+            "ed25519",
+            "--threshold",
+            "2",
+            "--peers",
+            &peer,
+        ])
+    };
+
+    // Without --accept-keygen it refuses to join a new group.
+    {
+        let mut server = Server::spawn(&[
+            "run",
+            r,
+            "--listen",
+            &addr_r,
+            "--policy",
+            policy.to_str().unwrap(),
+            "--no-mdns",
+        ]);
+        server.read_line();
+        assert!(!keygen(h).status.success());
+    }
+
+    let mut server = Server::spawn(&[
+        "run",
+        r,
+        "--listen",
+        &addr_r,
+        "--policy",
+        policy.to_str().unwrap(),
+        "--accept-keygen",
+        "--no-mdns",
+    ]);
+    server.read_line();
+    let pk_hex = ok_json(&keygen(h))["publicKey"]["hex"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let joined: serde_json::Value = serde_json::from_str(&server.read_line()).unwrap();
+    assert_eq!(joined["ceremony"], "keyGen");
+
+    // Opaque bytes and destinations outside the allowlist are refused unread.
+    assert!(!net_sign(h, "68656c6c6f", &id_r).status.success());
+    assert!(!net_sign(h, &transfer_hex(&pk_hex, &elsewhere, 1), &id_r)
+        .status
+        .success());
+
+    // An allowed transfer is co-signed, and the signature is the plain
+    // Ed25519 signature Solana checks over the message.
+    let payload = transfer_hex(&pk_hex, &allowed, 2);
+    let signed = ok_json(&net_sign(h, &payload, &id_r));
+    let sig_hex = signed["signature"]["signatureHex"].as_str().unwrap();
+    verify_ed25519(&pk_hex, sig_hex, &payload);
+    let served: serde_json::Value = serde_json::from_str(&server.read_line()).unwrap();
+    assert_eq!(served["ceremony"], "sign");
+
+    // The cooldown holds the next one, however legitimate.
+    assert!(!net_sign(h, &transfer_hex(&pk_hex, &allowed, 3), &id_r)
+        .status
+        .success());
+    drop(server);
+
+    // Every refusal is on the automation party's audit chain.
+    let status = ok_json(&run(&["vault", "status", r, "--unlock"]));
+    assert_eq!(status["audit"]["verified"], true);
+
+    let _ = std::fs::remove_dir_all(&dir_h);
+    let _ = std::fs::remove_dir_all(&dir_r);
+}

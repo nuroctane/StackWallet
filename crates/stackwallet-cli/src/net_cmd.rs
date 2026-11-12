@@ -24,9 +24,11 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use stackwallet_core::audit::{Actor, AuditEvent};
 use stackwallet_core::identity::{self, SignedCeremonyMessage};
-use stackwallet_core::intent::{SignRequest, Signature};
-use stackwallet_core::model::{Curve, KeyGroup, PartyRef, PartyRole, PublicKey};
+use stackwallet_core::intent::{Amount, Proposer, SignRequest, Signature, TxIntent, TxIntentKind};
+use stackwallet_core::model::{AssetRef, ChainId, Curve, KeyGroup, PartyRef, PartyRole, PublicKey};
+use stackwallet_core::policy::{self, Decision, Policy, PolicyContext, PolicyMode, Rule};
 use stackwallet_core::store::{Device, KeyGroupRecord};
+use stackwallet_core::threshold;
 use stackwallet_core::transport::{Endpoint, Frame, HandshakeRole, Session, SessionEvent};
 use stackwallet_core::tss::frost::{keygen_binding_hex, FrostCurve, FrostParty};
 use stackwallet_core::tss::{
@@ -48,6 +50,18 @@ Accept IK connections from paired devices and take part in the ceremonies
 they start. The share this device produces or uses is stored in the vault as
 `share/<group-id>/<curve>`. --once exits after the first completed ceremony;
 --no-mdns skips the LAN advertisement.
+";
+
+pub const RUN_USAGE: &str = "stackwallet run <dir> --listen host:port --policy <policies.json>
+                [--accept-keygen] [--no-mdns]
+
+Run this device as the automation party: like `serve`, but every signing
+request must decode as a transfer this core can read (a Solana Devnet transfer
+or a Signet Taproot spend from the group's own address) and pass the policies
+in --policy before this device's share joins. The policy file must enforce a
+destination allowlist and a cooldown (the tight overlay an autonomous lane
+needs); USD spend caps fail closed, since this device has no prices. Refusals
+are audited. New groups are joined only with --accept-keygen.
 ";
 
 pub const NET_USAGE: &str = "stackwallet net <command>
@@ -137,14 +151,146 @@ impl Proposal {
         Ok(proposal)
     }
 
-    fn start(&self, party: &mut dyn ThresholdScheme) -> Result<Vec<CeremonyMessage>, String> {
-        match self {
-            Proposal::KeyGen { group, session } => party.keygen_start(group, session),
-            Proposal::Sign { request, session } => party.sign_start(request, session),
+    /// `messages` are what a sign ceremony signs when the payload decoded as
+    /// a transfer; otherwise the request's payload or hash is signed as given.
+    fn start(
+        &self,
+        party: &mut dyn ThresholdScheme,
+        messages: Option<Vec<Vec<u8>>>,
+    ) -> Result<Vec<CeremonyMessage>, String> {
+        match (self, messages) {
+            (Proposal::KeyGen { group, session }, _) => party.keygen_start(group, session),
+            (Proposal::Sign { request, session }, Some(m)) => {
+                party.sign_batch_start(request, session, m)
+            }
+            (Proposal::Sign { request, session }, None) => party.sign_start(request, session),
         }
         .map_err(fmt_err)
     }
 }
+
+/// What every party of a CLI ceremony signs for `request`. A payload that
+/// decodes as a transfer from the group's own address is signed the way the
+/// core derives it (the Solana message, one Taproot sighash per input), so
+/// the CLI agrees with every other co-signer; anything else is signed as
+/// given. Each party decides this from the same request and group key, so
+/// they always agree.
+fn sign_messages(record: &KeyGroupRecord, request: &SignRequest) -> Option<Vec<Vec<u8>>> {
+    let key = public_key_of(&record.group, request.curve)?;
+    threshold::decode_transfer(&key, request)
+        .ok()
+        .map(|t| t.messages)
+}
+
+/// The policies an automation device co-signs under, checked at startup.
+struct Guard {
+    policies: Vec<Policy>,
+    accept_keygen: bool,
+}
+
+impl Guard {
+    fn load(path: &str, accept_keygen: bool) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+        let policies: Vec<Policy> =
+            serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+        let enforced = |want: fn(&Rule) -> bool| {
+            policies
+                .iter()
+                .filter(|p| p.mode == PolicyMode::Enforce)
+                .flat_map(|p| &p.rules)
+                .any(want)
+        };
+        if !enforced(|r| matches!(r, Rule::DestinationAllow { addresses } if !addresses.is_empty()))
+            || !enforced(|r| matches!(r, Rule::Cooldown { seconds } if *seconds > 0))
+        {
+            return Err(
+                "an automation device needs an enforced destination allowlist and cooldown in --policy"
+                    .into(),
+            );
+        }
+        Ok(Self {
+            policies,
+            accept_keygen,
+        })
+    }
+
+    /// Decode and judge one signing request; the messages to sign on allow.
+    fn review(
+        &self,
+        opened: &Opened,
+        request: &SignRequest,
+        proposer: &Device,
+    ) -> Result<Vec<Vec<u8>>, String> {
+        let record = load_group(opened, &request.key_group_id)?;
+        let key = public_key_of(&record.group, request.curve)
+            .ok_or("the group has no key on the request's curve")?;
+        let transfer = threshold::decode_transfer(&key, request)
+            .map_err(|e| format!("not a transfer this device can read: {e}"))?;
+        let now = now_ms();
+        let intent = TxIntent {
+            id: format!("auto-{}", request.id),
+            wallet_id: record.group.id.clone(),
+            account_id: String::new(),
+            chain_id: ChainId(transfer.chain_id.clone()),
+            proposer: Proposer::Human {
+                device_id: proposer.id.clone(),
+            },
+            kind: TxIntentKind::Transfer {
+                to: transfer.to.clone(),
+                asset: AssetRef(format!("{}:native", transfer.chain_id)),
+                amount: Amount(transfer.amount.clone()),
+            },
+            usd_micros: None,
+            untrusted_destinations: vec![],
+            created_at_ms: now,
+        };
+        let ctx = PolicyContext {
+            now_ms: now,
+            last_tx_at_ms: last_signing_ms(opened)?,
+            key_group: Some(record.group.clone()),
+            ..Default::default()
+        };
+        match policy::evaluate(&self.policies, &intent, &ctx) {
+            Decision::Deny { reasons, .. } => {
+                Err(format!("refused by policy: {}", reasons.join("; ")))
+            }
+            // Nobody stands behind this device to approve; a policy that asks
+            // for approvers fails closed here.
+            Decision::Allow {
+                required_approvers, ..
+            } if !required_approvers.is_empty() => {
+                Err("the policy asks for approvers this device cannot collect".into())
+            }
+            Decision::Allow { .. } => Ok(transfer.messages),
+        }
+    }
+}
+
+/// When this device last let its share into a signing ceremony, from its own
+/// audit log: every start counts, finished or not, since its signature share
+/// may have left either way.
+fn last_signing_ms(opened: &Opened) -> Result<Option<i64>, String> {
+    let self_id = opened.identity.device_id();
+    Ok(opened
+        .store
+        .audit_entries()
+        .map_err(fmt_err)?
+        .into_iter()
+        .filter(|e| matches!(&e.actor, Actor::Device { device_id } if *device_id == self_id))
+        .filter(|e| {
+            matches!(
+                &e.event,
+                AuditEvent::CeremonyStarted {
+                    sign_request_id: Some(_),
+                    ..
+                }
+            )
+        })
+        .map(|e| e.at_ms)
+        .max())
+}
+
+impl Proposal {}
 
 fn share_label(group_id: &str, curve: Curve) -> String {
     format!("share/{group_id}/{}", curve_slug(curve))
@@ -556,6 +702,7 @@ fn hub_ceremony(
     peers: &mut [Peer],
     proposal: &Proposal,
     party: &mut dyn ThresholdScheme,
+    messages: Option<Vec<Vec<u8>>>,
 ) -> Result<(), String> {
     let self_id = opened.identity.device_id();
     let session = proposal.session().clone();
@@ -590,7 +737,7 @@ fn hub_ceremony(
         Ok::<(), String>(())
     };
 
-    let mut outbox: Vec<CeremonyMessage> = proposal.start(party)?;
+    let mut outbox: Vec<CeremonyMessage> = proposal.start(party, messages)?;
     loop {
         // Anything the local party produced is signed here; anything relayed
         // keeps the author's signature untouched.
@@ -722,7 +869,14 @@ fn keygen(args: &[String]) -> Result<serde_json::Value, String> {
     };
     let mut party = new_party(curve, &self_id)?;
     let result = audited(&mut opened, session.id.clone(), None, |opened| {
-        hub_ceremony(opened, &mut hub, &mut peers, &proposal, party.as_mut())?;
+        hub_ceremony(
+            opened,
+            &mut hub,
+            &mut peers,
+            &proposal,
+            party.as_mut(),
+            None,
+        )?;
         let public_key = party
             .keygen_result(&session)
             .map_err(fmt_err)?
@@ -805,12 +959,20 @@ fn sign(args: &[String]) -> Result<serde_json::Value, String> {
     };
     let mut party = new_party(curve, &self_id)?;
     party.import_share(&blob).map_err(fmt_err)?;
+    let messages = sign_messages(&record, &request);
     let result = audited(
         &mut opened,
         session.id.clone(),
         Some(request.id.clone()),
         |opened| {
-            hub_ceremony(opened, &mut hub, &mut peers, &proposal, party.as_mut())?;
+            hub_ceremony(
+                opened,
+                &mut hub,
+                &mut peers,
+                &proposal,
+                party.as_mut(),
+                messages,
+            )?;
             party
                 .sign_result(&session)
                 .map_err(fmt_err)?
@@ -917,6 +1079,7 @@ fn party_ceremony(
     conn: usize,
     proposal: &Proposal,
     identities: &BTreeMap<String, String>,
+    messages: Option<Vec<Vec<u8>>>,
 ) -> Result<Outcome, String> {
     let self_id = opened.identity.device_id();
     let session = proposal.session().clone();
@@ -926,7 +1089,7 @@ fn party_ceremony(
         party.import_share(&blob).map_err(fmt_err)?;
     }
     let statics = statics_of(opened, &session.participants, &self_id)?;
-    let mut outbox = proposal.start(party.as_mut())?;
+    let mut outbox = proposal.start(party.as_mut(), messages)?;
     loop {
         for msg in outbox.drain(..) {
             let signed = sign_out(opened, &statics, msg)?;
@@ -995,6 +1158,7 @@ fn serve_connection(
     opened: &mut Opened,
     hub: &mut Hub,
     conn: usize,
+    guard: Option<&Guard>,
 ) -> Result<serde_json::Value, String> {
     let self_id = opened.identity.device_id();
     let proposer = loop {
@@ -1039,8 +1203,25 @@ fn serve_connection(
             None => return Err("connection closed before a proposal".into()),
         }
     };
-    let identities = match check_proposal(opened, &proposal, &proposer, &self_id) {
-        Ok(identities) => identities,
+    let checked = check_proposal(opened, &proposal, &proposer, &self_id).and_then(|identities| {
+        let messages = match (&proposal, guard) {
+            (Proposal::KeyGen { .. }, Some(g)) if !g.accept_keygen => {
+                return Err(
+                    "this automation device joins new groups only with --accept-keygen".into(),
+                )
+            }
+            (Proposal::KeyGen { .. }, _) => None,
+            (Proposal::Sign { request, .. }, Some(g)) => {
+                Some(g.review(opened, request, &proposer)?)
+            }
+            (Proposal::Sign { request, .. }, None) => {
+                sign_messages(&load_group(opened, &request.key_group_id)?, request)
+            }
+        };
+        Ok((identities, messages))
+    });
+    let (identities, messages) = match checked {
+        Ok(checked) => checked,
         Err(e) => {
             // A refusal is a security event; keep it in the audit log, not
             // just on stderr. Best-effort: a store error must not mask the
@@ -1068,7 +1249,7 @@ fn serve_connection(
         opened,
         session.id.clone(),
         proposal.sign_request_id(),
-        |opened| party_ceremony(opened, hub, conn, &proposal, &identities),
+        |opened| party_ceremony(opened, hub, conn, &proposal, &identities, messages),
     )?;
     opened.save()?;
     let mut out = serde_json::json!({
@@ -1096,10 +1277,27 @@ fn print_line(v: &serde_json::Value) -> Result<(), String> {
 }
 
 pub fn serve(args: &[String]) -> Result<ExitCode, String> {
-    let (Some(dir), Ok(Some(listen))) = (args.first(), flag(args, "--listen")) else {
+    let (Some(dir), Ok(Some(_))) = (args.first(), flag(args, "--listen")) else {
         eprint!("{SERVE_USAGE}");
         return Ok(ExitCode::from(64));
     };
+    serve_loop(dir, args, None)
+}
+
+/// `run`: `serve` as the automation party, under its own policies.
+pub fn automation(args: &[String]) -> Result<ExitCode, String> {
+    let (Some(dir), Ok(Some(_)), Ok(Some(policy))) =
+        (args.first(), flag(args, "--listen"), flag(args, "--policy"))
+    else {
+        eprint!("{RUN_USAGE}");
+        return Ok(ExitCode::from(64));
+    };
+    let guard = Guard::load(policy, args.iter().any(|a| a == "--accept-keygen"))?;
+    serve_loop(dir, args, Some(&guard))
+}
+
+fn serve_loop(dir: &str, args: &[String], guard: Option<&Guard>) -> Result<ExitCode, String> {
+    let listen = required(args, "--listen")?;
     let listen: SocketAddr = listen
         .parse()
         .map_err(|_| "--listen must be host:port".to_owned())?;
@@ -1158,7 +1356,7 @@ pub fn serve(args: &[String]) -> Result<ExitCode, String> {
         .and_then(|session| {
             let mut hub = Hub::new();
             let conn = hub.add(stream, session)?;
-            let out = serve_connection(&mut opened, &mut hub, conn);
+            let out = serve_connection(&mut opened, &mut hub, conn, guard);
             hub.close_all(if out.is_ok() { BYE_COMPLETE } else { "aborted" });
             out
         });

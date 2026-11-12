@@ -73,13 +73,17 @@ pub struct ThresholdAccount {
     pub address: String,
 }
 
-fn account_of(wallet_id: &str, stored: &Stored) -> Result<ThresholdAccount> {
-    let key = stored
-        .group
-        .public_keys
-        .iter()
-        .find(|k| k.curve == stored.share.curve)
-        .ok_or_else(|| invalid("group has no key on its share's curve"))?;
+/// Where a FROST group key lives on chain: the one chain its curve signs on,
+/// the group key as that chain's address, and the 32-byte key the chain sees
+/// (the Ed25519 key, or the x-only Taproot output key).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupAddress {
+    pub chain_id: String,
+    pub address: String,
+    pub key32: [u8; 32],
+}
+
+pub fn group_address(key: &PublicKey) -> Result<GroupAddress> {
     let bytes = hex::decode(&key.hex).map_err(|_| invalid("malformed group key"))?;
     let (key32, chain_id, address): ([u8; 32], &str, String) = match key.curve {
         Curve::Ed25519 => {
@@ -100,14 +104,29 @@ fn account_of(wallet_id: &str, stored: &Stored) -> Result<ThresholdAccount> {
         }
         Curve::Secp256k1 => return Err(invalid("secp256k1 ECDSA is not a threshold curve here")),
     };
+    Ok(GroupAddress {
+        chain_id: chain_id.to_owned(),
+        address,
+        key32,
+    })
+}
+
+fn account_of(wallet_id: &str, stored: &Stored) -> Result<ThresholdAccount> {
+    let key = stored
+        .group
+        .public_keys
+        .iter()
+        .find(|k| k.curve == stored.share.curve)
+        .ok_or_else(|| invalid("group has no key on its share's curve"))?;
+    let at = group_address(key)?;
     Ok(ThresholdAccount {
         wallet_id: wallet_id.to_owned(),
         group: stored.group.clone(),
         device_id: stored.share.device_id.clone(),
         curve: key.curve,
-        public_key_hex: hex::encode(key32),
-        chain_id: chain_id.to_owned(),
-        address,
+        public_key_hex: hex::encode(at.key32),
+        chain_id: at.chain_id,
+        address: at.address,
     })
 }
 
@@ -460,25 +479,39 @@ pub struct CosignSummary {
 }
 
 /// A transfer decoded from a sign request's payload by this device's core.
-struct Decoded {
-    from: String,
-    to: String,
-    amount: String,
-    fee: Option<String>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedTransfer {
+    pub chain_id: String,
+    pub from: String,
+    pub to: String,
+    /// In the chain's base unit (lamports, satoshis).
+    pub amount: String,
+    /// The network fee the transaction pays, where it fixes one (Bitcoin).
+    pub fee: Option<String>,
     /// What each share signs: the Solana message, or one sighash per input.
-    messages: Vec<Vec<u8>>,
+    pub messages: Vec<Vec<u8>>,
 }
 
 /// Rebuild the transaction from the payload the session binds, and the exact
 /// messages to sign from it. Only a native Solana Devnet transfer or a Signet
 /// P2TR spend from the group's own address is recognised; anything else is
 /// refused unread.
-fn decode(acc: &ThresholdAccount, request: &SignRequest) -> Result<Decoded> {
+pub fn decode_transfer(group_key: &PublicKey, request: &SignRequest) -> Result<DecodedTransfer> {
+    if request.curve != group_key.curve {
+        return Err(invalid(
+            "the request is for another curve than the group key",
+        ));
+    }
+    let at = group_address(group_key)?;
     let payload = hex::decode(&request.payload_hex).map_err(|_| invalid("payload is not hex"))?;
-    let decoded = match acc.curve {
+    if hex::encode(Sha256::digest(&payload)) != request.payload_hash_hex {
+        return Err(invalid("payload hash does not bind the request"));
+    }
+    let decoded = match group_key.curve {
         Curve::Ed25519 => {
             let tx = SolanaTx::from_message(solana::DEVNET, &payload)?;
-            Decoded {
+            DecodedTransfer {
+                chain_id: at.chain_id.clone(),
                 from: tx.from,
                 to: tx.to,
                 amount: tx.lamports,
@@ -493,7 +526,8 @@ fn decode(acc: &ThresholdAccount, request: &SignRequest) -> Result<Decoded> {
                 .into_iter()
                 .map(|h| h.to_vec())
                 .collect();
-            Decoded {
+            DecodedTransfer {
+                chain_id: at.chain_id.clone(),
                 from: tx.from,
                 to: tx.to,
                 amount: tx.amount,
@@ -503,10 +537,20 @@ fn decode(acc: &ThresholdAccount, request: &SignRequest) -> Result<Decoded> {
         }
         Curve::Secp256k1 => return Err(invalid("secp256k1 ECDSA is not a threshold curve here")),
     };
-    if decoded.from != acc.address {
+    if decoded.from != at.address {
         return Err(invalid("the transfer is not from this group's address"));
     }
     Ok(decoded)
+}
+
+fn decode(acc: &ThresholdAccount, request: &SignRequest) -> Result<DecodedTransfer> {
+    let key = acc
+        .group
+        .public_keys
+        .iter()
+        .find(|k| k.curve == acc.curve)
+        .ok_or_else(|| invalid("group has no key on its curve"))?;
+    decode_transfer(key, request)
 }
 
 /// Decode a signing proposal for a co-signer and evaluate it against this
