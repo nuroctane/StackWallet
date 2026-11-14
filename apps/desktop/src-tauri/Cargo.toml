@@ -15,6 +15,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 stackwallet-core = { path = "../../../crates/stackwallet-core" }
-tauri = { version = "2", features = [] }
+tauri = { version = "2.11.1", features = [] }
 serde.workspace = true
 serde_json.workspace = true

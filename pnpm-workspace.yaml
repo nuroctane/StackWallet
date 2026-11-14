@@ -2,6 +2,11 @@ packages:
   - apps/*
   - packages/*
 
+overrides:
+  sharp: 0.35.5
+  tinypool: 2.1.2
+  undici: 7.30.1
+
 allowBuilds:
   esbuild: true
   '@tauri-apps/cli': true
