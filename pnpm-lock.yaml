@@ -508,8 +508,8 @@ importers:
         specifier: workspace:*
         version: link:../core-client
       bitcoinjs-lib:
-        specifier: 7.0.1
-        version: 7.0.1(typescript@7.0.2)
+        specifier: 7.0.2
+        version: 7.0.2(typescript@7.0.2)
       zod:
         specifier: ^4.0.0
         version: 4.6.6
@@ -3383,8 +3383,8 @@ packages:
     resolution: {integrity: sha512-avOnOoLOwdjw1MebWKh3bHqWOH558Q9VpqmRKUv2S63vjw0pnX7Y+yRihxIibgP55twhc7+YfC0IAH43IF5FqQ==}
     engines: {node: '>=18.0.0'}
 
-  bitcoinjs-lib@7.0.1:
-    resolution: {integrity: sha512-vwEmpL5Tpj0I0RBdNkcDMXePoaYSTeKY6mL6/l5esbnTs+jGdPDuLp4NY1hSh6Zk5wSgePygZ4Wx5JJao30Pww==}
+  bitcoinjs-lib@7.0.2:
+    resolution: {integrity: sha512-ugLk9SR+2gvhpNA7kqQL1eVDKyBNo/rbr+df72nrZj4OOdZvQRHDVtyogPGXAU2MLQimLL7EbUdz95QGh6Th5Q==}
     engines: {node: '>=18.0.0'}
 
   blake3-wasm@2.1.5:
@@ -5805,7 +5805,7 @@ snapshots:
       uint8array-tools: 0.0.10
       varuint-bitcoin: 2.0.1
 
-  bitcoinjs-lib@7.0.1(typescript@7.0.2):
+  bitcoinjs-lib@7.0.2(typescript@7.0.2):
     dependencies:
       '@noble/hashes': 1.8.0
       bech32: 2.0.0
