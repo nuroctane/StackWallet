@@ -11,7 +11,7 @@ import { weierstrass } from '@noble/curves/abstract/weierstrass.js';
 import { bytesToNumberBE } from '@noble/curves/utils.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
-import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import {
   BaseAdapter,
   MemoryRpcPool,
@@ -277,8 +277,8 @@ export function starknetAddressFromPublicKey(starkPublicKey: Uint8Array): string
   if (starkPublicKey.length !== 32)
     throw new Error('a Starknet public key is the 32-byte Stark key x coordinate');
   const x = bytesToNumberBE(starkPublicKey);
-  // A valid key's x has a curve point; fromHex rejects otherwise.
-  StarkPoint.fromHex(`02${bytesToHex(starkPublicKey)}`);
+  // A valid key's x has a curve point; fromBytes rejects otherwise.
+  StarkPoint.fromBytes(Uint8Array.from([2, ...starkPublicKey]));
   const constructorHash = computeHashOnElements([x]);
   const raw = computeHashOnElements([
     bytesToNumberBE(utf8ToBytes('STARKNET_CONTRACT_ADDRESS')),

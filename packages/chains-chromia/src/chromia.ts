@@ -334,7 +334,7 @@ export function isValidChromiaAddress(addr: string): boolean {
 
 /** Compressed secp256k1 public key -> 32-byte FT4 account id, lowercase hex. */
 export function chromiaAccountIdFromPublicKey(sec1: Uint8Array): string {
-  const compressed = secp256k1.Point.fromHex(bytesToHex(sec1)).toBytes(true);
+  const compressed = secp256k1.Point.fromBytes(sec1).toBytes(true);
   // A lone leaf hashes identically under merkle versions 1 and 2.
   return bytesToHex(sha256(Uint8Array.from([1, ...gtvEncode(compressed)])));
 }
@@ -344,7 +344,7 @@ export function chromiaAccountIdFromPublicKey(sec1: Uint8Array): string {
  * (the economy chain mandates both flags).
  */
 export function chromiaAuthDescriptor(sec1: Uint8Array): Gtv {
-  const compressed = secp256k1.Point.fromHex(bytesToHex(sec1)).toBytes(true);
+  const compressed = secp256k1.Point.fromBytes(sec1).toBytes(true);
   return [0, [['A', 'T'], compressed], null];
 }
 
